@@ -1,23 +1,13 @@
-(generic) ubuntu@192.168.11.218 ~/rubin $ pixi install
- WARN Encountered 1 warning while parsing the manifest:
-  ⚠ The feature 'flaml' is defined but not used in any environment. Dependencies
-  │ of unused features are not resolved or checked, and use wildcard (*) version
-  │ specifiers by default, disregarding any set `pinning-strategy`
-    ╭─[/mnt/rubin/pixi.toml:52:10]
- 51 │ # ── Feature: flaml (optional, alternatives AutoML-Backend) ──
- 52 │ [feature.flaml.dependencies]
-    ·          ─────
- 53 │ flaml = ">=2.1"
-    ╰────
-  help: Remove the feature from the manifest or add it to an environment
-
- WARN Skipped running the post-link scripts because `run-post-link-scripts` = `false`
-        - bin/.librsvg-pre-unlink.sh
-
-To enable them, run:
-        pixi config set --local run-post-link-scripts insecure
-
-More info:
-        https://pixi.sh/latest/reference/pixi_configuration/#run-post-link-scripts
-
-✔ The default environment has been installed.
+15:47:47 INFO [rubin.analysis] Metriken für 9 Modelle berechnet. Vorläufiger Champion: Ensemble. Diagnostik-Plots: Champion + Challenger
+15:49:23 WARNING [rubin.evaluation.drtester_plots] DRTester evaluate_all fehlgeschlagen: 'NoneType' object is not subscriptable
+Traceback (most recent call last):
+  File "/mnt/rubin/rubin/evaluation/drtester_plots.py", line 829, in evaluate_cate_with_plots
+    res = tester.evaluate_all(X_val.values, X_train.values if X_train is not None else None, n_groups=n_groups, n_bootstrap=n_bootstrap, seed=seed)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/rubin/evaluation/drtester_plots.py", line 383, in evaluate_all
+    cal_res = self.evaluate_cal(n_groups=n_groups)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/validate/drtester.py", line 405, in evaluate_cal
+    cuts = np.quantile(self.cate_preds_train_[:, k], np.linspace(0, 1, n_groups + 1))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+TypeError: 'NoneType' object is not subscriptable
