@@ -1,8 +1,16 @@
-c=mse, estimator=['catboost'], X=(279992, 99), timeout=120s, max_iter=50
-18:00:24 WARNING [rubin.tuning] FLAML-Tuning 'catboost__outcome_regression__regressor__all__with_t__y' fehlgeschlagen: Changing param values is not allowed. Param with key='early_stopping_rounds' was already logged with value='10' for run ID='19993f1f61e14b13b02c5fbbd7e36095'. Attempted logging new value '11'.. Fallback auf Defaults.
-18:00:24 INFO [rubin.tuning] FLAML-Tuning 'catboost__grouped_outcome_regression__regressor__group_specific_shared_params__no_t__y': Task-Familie 'grouped_outcome_regression' nicht FLAML-kompatibel (gruppenspezifisch oder Pseudo-Outcome). Fallback auf Optuna.
-18:00:24 INFO [rubin.tuning] Tuning-Task 'catboost__grouped_outcome_regression__regressor__group_specific_shared_params__no_t__y': X_input=279992 rows, indices=279992, X_task=(279992, 98), target=(279992,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=grouped_outcome_regression
-18:02:09 INFO [rubin.tuning] FLAML-Tuning 'catboost__propensity__classifier__all__no_t__t': task=classification, metric=log_loss, estimator=['catboost'], X=(279992, 98), timeout=120s, max_iter=50
-18:04:08 WARNING [rubin.tuning] FLAML-Tuning 'catboost__propensity__classifier__all__no_t__t' fehlgeschlagen: Changing param values is not allowed. Param with key='early_stopping_rounds' was already logged with value='10' for run ID='19993f1f61e14b13b02c5fbbd7e36095'. Attempted logging new value '11'.. Fallback auf Defaults.
-18:04:08 INFO [rubin.tuning] FLAML-Tuning 'catboost__pseudo_effect__regressor__group_specific_shared_params__no_t__d': Task-Familie 'pseudo_effect' nicht FLAML-kompatibel (gruppenspezifisch oder Pseudo-Outcome). Fallback auf Optuna.
-18:04:08 INFO [rubin.tuning] Tuning-Task 'catboost__pseudo_effect__regressor__group_specific_shared_params__no_t__d': X_input=279992 rows, indices=279992, X_task=(279992, 98), target=(279992,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=D, objective=pseudo_effect
+Managing pypi packages with pixi
+Pixi is primarily a Conda package manager. But can be used to solve and install pypi packages together with Conda packages as well. Note that Conda package versions are preferred over pypi packages. Only use pypi package versions if the Conda version is not suitable or non-existent.
+
+Managing pypi package works via integrated uv. Pypi packages can be installed via --pypi flag, e.g.
+
+pixi add --pypi black
+To make this work in lan we have to set the following environment variable
+
+export PIXI_TLS_ROOT_CERTS="all"
+and add the following properties to the pixi.toml file
+
+[workspace] # former project
+conda-pypi-map = {"https://nexus3.lan.huk-coburg.de/repository/conda-forge" = "https://nexus.lan.huk-coburg.de/repository/raw-githubusercontent/prefix-dev/parselmouth/refs/heads/main/files/compressed_mapping.json"}
+
+[pypi-options]
+index-url = "https://nexus.lan.huk-coburg.de/repository/pypi/simple"
