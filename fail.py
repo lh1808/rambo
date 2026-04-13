@@ -1,25 +1,77 @@
- WARN Encountered 1 warning while parsing the manifest:
-  ⚠ The `project` field is deprecated. Use `workspace` instead.
-    ╭─[/mnt/rubin/pixi.toml:1:1]
-  1 │ ╭─▶ [project]
-  2 │ │   name = "rubin"
-  3 │ │   description = "Causal ML Framework – Analyse- und Production-Pipelines"
-  4 │ │   channels = [
-  5 │ │     "https://nexus3.lan.huk-coburg.de/repository/conda-qc-huk",
-  6 │ │     "https://nexus3.lan.huk-coburg.de/repository/conda-forge",
-  7 │ │   ]
-  8 │ │   platforms = ["linux-64"]
-  9 │ ├─▶ conda-pypi-map = {"https://nexus3.lan.huk-coburg.de/repository/conda-forge" = "https://nexus.lan.huk-coburg.de/repository/raw-githubusercontent/prefix-dev/parselmouth/refs/heads/main/files/compressed_mapping.json"}
-    · ╰──── replace this with 'workspace'
- 10 │     
-    ╰────
+[workspace]
+name = "rubin"
+description = "Causal ML Framework – Analyse- und Production-Pipelines"
+channels = [
+  "https://nexus3.lan.huk-coburg.de/repository/conda-qc-huk",
+  "https://nexus3.lan.huk-coburg.de/repository/conda-forge",
+]
+platforms = ["linux-64"]
+conda-pypi-map = {"https://nexus3.lan.huk-coburg.de/repository/conda-forge" = "https://nexus.lan.huk-coburg.de/repository/raw-githubusercontent/prefix-dev/parselmouth/refs/heads/main/files/compressed_mapping.json"}
 
-  ⠈ default:linux-64     [00:00:02] resolving pyyaml==6.0.3                              Error:   × failed to solve the pypi requirements of environment 'default' for platform 'linux-
-  │ 64'
-  ├─▶ failed to resolve pypi dependencies
-  ├─▶ Failed to fetch: `https://nexus.lan.huk-coburg.de/repository/pypi/simple/flaml/`
-  ├─▶ Request failed after 3 retries
-  ├─▶ error sending request for url (https://nexus.lan.huk-coburg.de/repository/pypi/
-  │   simple/flaml/)
-  ├─▶ client error (Connect)
-  ╰─▶ invalid peer certificate: UnknownIssuer
+[pypi-options]
+index-url = "https://nexus.lan.huk-coburg.de/repository/pypi/simple"
+
+[tasks]
+analyze = { cmd = "python run_analysis.py", description = "Analyse-Pipeline starten. Beispiel: pixi run analyze -- --config configs/config_quickstart.yml" }
+analyze-quick = { cmd = "python run_analysis.py --config configs/config_quickstart.yml", description = "Analyse mit Quickstart-Config (Smoke-Test)" }
+dataprep = { cmd = "python run_dataprep.py", description = "Datenaufbereitung. Beispiel: pixi run dataprep -- --config configs/config_full.yml" }
+score = { cmd = "python run_production.py", description = "Production-Scoring. Beispiel: pixi run score -- --bundle runs/bundles/... --x data.csv --out scores.csv" }
+explain = { cmd = "python run_explain.py", description = "Explainability-Artefakte erzeugen. Beispiel: pixi run explain -- --bundle runs/bundles/... --x data/X.parquet" }
+promote = { cmd = "python run_promote.py", description = "Champion im Bundle wechseln. Beispiel: pixi run promote -- --bundle runs/bundles/... --model TLearner" }
+sync-requirements = { cmd = "python scripts/sync_requirements.py", description = "requirements.txt und app/requirements_app.txt aus pyproject.toml generieren" }
+build-app = { cmd = "python scripts/build_app_html.py", description = "React-App bauen: Libraries herunterladen und in rubin_ui.html einbetten (einmalig, braucht Internet)" }
+info = { cmd = "python scripts/info.py", description = "Zeigt Framework-Informationen" }
+
+[dependencies]
+python = ">=3.10,<3.13"
+numpy = ">=1.24"
+pandas = ">=2.0"
+pydantic = ">=2.0"
+scikit-learn = ">=1.3"
+mlflow = ">=2.10"
+optuna = ">=3.5"
+matplotlib-base = ">=3.7"
+scipy = ">=1.11"
+lightgbm = ">=4.0"
+catboost = ">=1.2"
+econml = ">=0.15"
+pyarrow = ">=12"
+openpyxl = ">=3.0"
+pyyaml = ">=6.0"
+
+# ── PyPI-Pakete (via pixi add --pypi) ──
+# Voraussetzung im Firmennetz:
+#   export PIXI_TLS_ROOT_CERTS="all"
+#   export UV_NATIVE_TLS=true
+[pypi-dependencies]
+rubin = { path = ".", editable = true }
+scikit-uplift = ">=0.5"
+flaml = { version = ">=2.1", extras = ["automl"] }
+
+# ── Feature: shap (optional) ──
+[feature.shap.dependencies]
+shap = ">=0.43"
+
+# ── Feature: app (React-UI + Flask-Backend) ──
+[feature.app.dependencies]
+flask = ">=3.0"
+
+[feature.app.tasks]
+app = { cmd = "bash app.sh", description = "rubin-UI starten (lokal: Port 8501, Domino: $DOMINO_APP_PORT)" }
+
+# ── Feature: dev (Test- und Lint-Tools) ──
+[feature.dev.dependencies]
+pytest = ">=7.4"
+pytest-cov = ">=4.1"
+ruff = ">=0.3"
+
+[feature.dev.tasks]
+test = { cmd = "python -m pytest tests/ -v --tb=short" }
+test-cov = { cmd = "python -m pytest tests/ -v --cov=rubin --cov-report=term-missing" }
+lint = "ruff check rubin/ app/ tests/ run_*.py"
+lint-fix = "ruff check --fix rubin/ app/ tests/ run_*.py"
+
+[environments]
+default = { features = ["shap"], solve-group = "default" }
+app = { features = ["shap", "app"], solve-group = "default" }
+dev = { features = ["shap", "dev"], solve-group = "default" }
