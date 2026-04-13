@@ -306,6 +306,15 @@ class DataPrepPipeline:
                     "MLflow ist nicht installiert. Für DataPrep-Läufe mit Logging wird MLflow benötigt (pip install mlflow)."
                 ) from e
 
+            # MLflow Tracking: Konsolidiert unter work_dir.
+            # MLFLOW_TRACKING_URI hat Vorrang (z.B. Remote-Server).
+            import os
+            work_dir = self.cfg.constants.resolved_work_dir
+            os.makedirs(work_dir, exist_ok=True)
+            if not os.environ.get("MLFLOW_TRACKING_URI"):
+                mlflow_dir = os.path.join(work_dir, "mlruns")
+                mlflow.set_tracking_uri(f"file://{os.path.abspath(mlflow_dir)}")
+
             exp_name = dp.mlflow_experiment_name or self.cfg.mlflow.experiment_name
             mlflow.set_experiment(exp_name)
 

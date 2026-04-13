@@ -43,6 +43,10 @@ pixi task list
 | `app` | default + Flask | Web-UI starten (`pixi run app`) |
 | `dev` | default + pytest + ruff | Entwicklung und CI |
 
+Pakete, die nicht über conda-forge verfügbar sind (`scikit-uplift`, `flaml[automl]`), werden automatisch über pixi's integrierte PyPI-Unterstützung (via uv) installiert — kein manuelles `pip install` nötig. Das editierbare Paket (`rubin` selbst) wird ebenfalls via `[pypi-dependencies]` installiert.
+
+> **Hinweis LAN:** Für die PyPI-Installation im Firmennetz muss `PIXI_TLS_ROOT_CERTS="all"` und `UV_NATIVE_TLS=true` gesetzt sein. Die `[pypi-options]` in `pixi.toml` verweisen auf den internen Nexus-Mirror.
+
 ## Grundprinzipien
 
 1. **Analyse ≠ Produktion**  
@@ -166,11 +170,13 @@ Wichtig:
 
 ## 5) Task-basiertes Optuna-Tuning
 
-Das Base-Learner-Tuning arbeitet task-basiert. Das bedeutet:
+Das Base-Learner-Tuning arbeitet task-basiert und unterstützt zwei AutoML-Backends: **Optuna** (Standard, Bayesian TPE) und **FLAML** (Microsoft AutoML). Das bedeutet:
 
 1. aus `models_to_train` wird ein interner Trainingsplan erzeugt
 2. identische Base-Learner-Aufgaben werden dedupliziert
 3. die besten Parameter werden anschließend allen passenden Rollen zugeordnet
+
+Bei FLAML werden gruppenspezifische Tasks (TLearner, XLearner: `grouped_outcome_regression`, `pseudo_effect`) automatisch auf Optuna zurückgefallen, da FLAML keine gruppenweise Modellierung (K separate Modelle pro Treatment-Gruppe) unterstützt. Die Dispatch-Logik ist in `_tune_task()` → `_tune_task_flaml()` → `_tune_task_optuna_fallback()` implementiert.
 
 Eine Tuning-Task wird über folgende Merkmale beschrieben:
 - Base-Learner-Familie
@@ -195,11 +201,15 @@ Nicht zusammengelegt werden Aufgaben, die auf anderer Datengrundlage, mit andere
 Einige Learner besitzen ein Final-Modell, das den CATE aus Residuen oder Pseudo-Outcomes lernt.
 In **rubin** läuft dieses Tuning getrennt vom Base-Learner-Tuning über `final_model_tuning`.
 
+Für NonParamDML kann zwischen zwei Scoring-Methoden gewählt werden: **RScorer** (Standard, Schuler et al. 2018) und **DR-Score** (Mahajan et al. 2024, Doubly-Robust-Pseudo-Outcomes). DRLearner nutzt immer den eingebauten DR-basierten `score()+CV`. FMT verwendet immer Optuna — FLAML ist hier nicht verfügbar, da die kausale Objective-Funktion keinen Standard-ML-Task darstellt.
+
 Praktische Konsequenzen:
 - `model_final` ist typischerweise ein Regressor
 - Parameter für `model_final` werden getrennt von `model_y`, `model_t` oder `model_propensity` behandelt
 - das Tuning wird bewusst nur einmal durchgeführt und danach wiederverwendet
-- `stability_penalty` (0.0–2.0) ergänzt den R-Score um einen Stabilitäts-Term: `score = R_score − λ · log(1 + CV)`, wobei CV = std(CATE) / |median(CATE)|. Das bestraft Parameterkombinationen, die zu extremer CATE-Streuung führen — ein häufiges Overfitting-Problem bei kleinen Treatment-Effekten. Die Berechnung findet auf den Tuning-Daten statt und verursacht keinen zusätzlichen Fit.
+- `stability_penalty` (0.0–2.0) ergänzt den Score um einen Stabilitäts-Term: `score = R_score − λ · log(1 + CV)`, wobei CV = std(CATE) / |median(CATE)|. Das bestraft Parameterkombinationen, die zu extremer CATE-Streuung führen — ein häufiges Overfitting-Problem bei kleinen Treatment-Effekten. Die Berechnung findet auf den Tuning-Daten statt und verursacht keinen zusätzlichen Fit.
+
+Nach dem BLT wird optional die **Combined Loss Diagnostic** (Bach et al., 2024) berechnet — das Produkt der CV-evaluierten Outcome- und Propensity-Fehler. Bei aktivem Task-Sharing werden Modelle mit identischen Nuisance-Parametern gruppiert. Die Diagnostic ist nur für DML/DR-Modelle verfügbar (SLearner, TLearner, XLearner haben keine separate Outcome+Propensity-Nuisance-Stufe).
 
 ## 7) Modell-Management (Champion/Challenger)
 

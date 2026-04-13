@@ -254,6 +254,7 @@ class CausalForestConfig(BaseModel):
     use_econml_tune: bool = False
     econml_tune_params: Any = "auto"
     tune_max_rows: Optional[int] = None
+    tune_intensive: bool = False
 
 
 class SearchSpaceParameterConfig(BaseModel):
@@ -293,7 +294,7 @@ class OptunaTuningConfig(BaseModel):
     model_config = _STRICT
 
     enabled: bool = False
-    n_trials: int = 30
+    n_trials: int = 100
     timeout_seconds: Optional[int] = None
     cv_splits: int = 3
     single_fold: bool = False
@@ -305,19 +306,24 @@ class OptunaTuningConfig(BaseModel):
     storage_path: Optional[str] = None
     study_name_prefix: str = "baselearner"
     reuse_study_if_exists: bool = True
-    optuna_seed: int = 18
+    optuna_seed: int = 42
     search_space: SearchSpaceConfig = Field(default_factory=SearchSpaceConfig)
+    automl: Literal["optuna", "flaml"] = "optuna"
+    combined_loss_diagnostic: bool = True
+    # Welche Modelle per BLT optimiert werden. null = alle in models_to_train.
+    # Bei expliziter Liste werden nur die Nuisance-Tasks dieser Modelle getuned.
+    # Nicht-ausgewählte Modelle nutzen base_learner.fixed_params.
+    models: Optional[List[str]] = None
 
 
 class FinalModelTuningConfig(BaseModel):
     model_config = _STRICT
 
     enabled: bool = False
-    n_trials: int = 30
+    n_trials: int = 50
     timeout_seconds: Optional[int] = None
-    cv_splits: int = 3
     max_tuning_rows: Optional[int] = None
-    method: Literal["rscorer"] = "rscorer"
+    method: Literal["rscorer", "dr_score"] = "rscorer"
     models: Optional[List[str]] = None
     single_fold: bool = False
     stability_penalty: float = Field(0.0, ge=0.0, le=2.0)
@@ -403,23 +409,40 @@ class ConstantsConfig(BaseModel):
     # Wir unterstützen beides. Intern wird konsequent `random_seed` verwendet.
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    random_seed: int = Field(18, alias="SEED")
+    random_seed: int = Field(42, alias="SEED")
 
     # Parallelisierungs-Level:
     #   1 = Minimal:  Base Learner nutzen 1 Kern, Folds sequentiell.
     #                 Minimaler RAM-Verbrauch, sicher auf jeder Maschine.
     #   2 = Moderat:  Base Learner nutzen alle Kerne, Folds sequentiell.
-    #                 Standard — guter Kompromiss aus Speed und RAM.
-    #   3 = Hoch:     Base Learner nutzen alle Kerne, Folds auto-parallel
-    #                 (2–4 gleichzeitig, abhängig von Kernzahl).
-    #   4 = Maximum:  Base Learner nutzen alle Kerne, alle Folds parallel.
-    #                 Höchster RAM-Verbrauch, aber schnellste Laufzeit.
-    parallel_level: int = Field(2, ge=1, le=4)
+    #   3 = Empfohlen: Base Learner + Tuning-Trials parallel. Bester Kompromiss
+    #                 aus Suchraum-Exploration und Geschwindigkeit. Nutzt alle
+    #                 verfügbaren Kerne sowohl für parallele Optuna-Trials als
+    #                 auch für parallele CV-Folds.
+    #   4 = Maximum:  Wie Level 3, aber mit mehr parallelen Trials und Folds.
+    #                 Höchster RAM-Verbrauch, marginal schneller als Level 3.
+    parallel_level: int = Field(3, ge=1, le=4)
+
+    # Arbeitsverzeichnis für alle erzeugten Artefakte (MLflow, Report, Cache,
+    # Uploads, Bundles). Hält das Repository-Verzeichnis sauber.
+    # Priorität: Env RUBIN_WORK_DIR > Config work_dir > "./runs"
+    work_dir: Optional[str] = None
 
     @property
     def SEED(self) -> int:  # pragma: no cover
         """Kompatibilitäts-Property (z. B. für ältere Codepfade)."""
         return int(self.random_seed)
+
+    @property
+    def resolved_work_dir(self) -> str:
+        """Aufgelöstes Arbeitsverzeichnis (Priorität: Env > Config > Default)."""
+        import os
+        env = os.environ.get("RUBIN_WORK_DIR")
+        if env:
+            return os.path.abspath(env)
+        if self.work_dir:
+            return os.path.abspath(self.work_dir)
+        return os.path.abspath("runs")
 
 
 class AnalysisConfig(BaseModel):

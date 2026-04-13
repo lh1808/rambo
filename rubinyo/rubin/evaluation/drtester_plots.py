@@ -379,6 +379,16 @@ passen (gleiche Reihenfolge/Länge)."""
         if hasattr(self, 'cate_preds_train_') and self.cate_preds_train_ is not None:
             self.cate_preds_train_ = self._sanitize_dr(self.cate_preds_train_)
 
+        # Fallback: EconML's evaluate_cal() benötigt cate_preds_train_ und
+        # dr_train_ für die Quantil-Berechnung. Wenn kein Train-Split
+        # vorhanden ist (z.B. Ensemble-Modell, fehlende Train-CATEs),
+        # verwende die Val-Daten als Fallback. Weniger rigoros, aber die
+        # Calibration-Plots bleiben informativ.
+        if not hasattr(self, 'cate_preds_train_') or self.cate_preds_train_ is None:
+            self.cate_preds_train_ = self.cate_preds_val_
+        if not hasattr(self, 'dr_train_') or self.dr_train_ is None:
+            self.dr_train_ = self.dr_val_
+
         blp_res = self.evaluate_blp()
         cal_res = self.evaluate_cal(n_groups=n_groups)
         # Seed vor Bootstrap setzen — EconML's evaluate_uplift nutzt intern
@@ -676,7 +686,7 @@ def _native_treatment_balance(
         ax.set_xlabel("Fraction (sorted by pred. uplift, descending)")
         ax.set_ylabel("Treatment Rate")
         ax.set_title("Treatment Balance Curve")
-        ax.legend()
+        ax.legend(loc="upper left")
         fig.tight_layout()
         return fig
     except Exception as e:
@@ -976,7 +986,7 @@ def plot_custom_qini_curve(
         ax.set_ylabel("Inkrementelles Ergebnis")
 
     ax.set_title(f"Qini-Vergleich: {causal_score_label}")
-    ax.legend()
+    ax.legend(loc="upper left")
 
     return ax
 
@@ -1044,7 +1054,7 @@ def policy_value_comparison_plots(
         ax.set_title(f"Policy Value Vergleich: {model_name} vs. {comparison_model_name}")
         ax.set_xlabel("Treated Percentage")
         ax.set_ylabel("Policy Value")
-        ax.legend()
+        ax.legend(loc="upper left")
         ax.grid(True)
 
         plots[model_name] = fig

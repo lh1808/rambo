@@ -68,19 +68,28 @@ class CausalForestAdapter(BaseCateEstimator):
     # max_depth: Baumkomplexität (None → unbegrenzt, begrenzt → Regularisierung)
     # max_samples: Anteil für Honest Estimation
     TUNE_GRID = [
-        {"min_samples_leaf": msl, "max_depth": md, "max_samples": ms, "criterion": cr}
+        {"min_samples_leaf": msl, "max_depth": md, "max_samples": ms}
         for msl in [5, 20]
         for md in [None, 10, 20]
         for ms in [0.3, 0.5]
-        for cr in ["mse", "het"]
-    ]  # 2 × 3 × 2 × 2 = 24 Kombinationen
+    ]  # 2 × 3 × 2 = 12 Kombinationen
 
-    def tune(self, X_train, T_train, Y_train, X_val, T_val, Y_val):
+    TUNE_GRID_INTENSIVE = [
+        {"min_samples_leaf": msl, "max_depth": md, "max_samples": ms, "criterion": cr}
+        for msl in [5, 10, 20]
+        for md in [None, 10, 20, 30]
+        for ms in [0.3, 0.5]
+        for cr in ["mse", "het"]
+    ]  # 3 × 4 × 2 × 2 = 48 Kombinationen
+
+    def tune(self, X_train, T_train, Y_train, X_val, T_val, Y_val, intensive=False):
         """Grid-Search über CausalForest-Waldparameter auf dem ersten CV-Fold.
 
         Fittet jede Kombination auf den Train-Daten des ersten Folds und
         bewertet auf den Val-Daten über R-Loss. Die besten Parameter werden
         eingefroren — die Cross-Predictions verwenden dann Klone mit diesen Params.
+
+        intensive=True verwendet das erweiterte Grid (160 Kombinationen statt 24).
         """
         import numpy as np
         from econml.grf import CausalForest
@@ -111,8 +120,9 @@ class CausalForestAdapter(BaseCateEstimator):
 
         best_loss = np.inf
         best_params = {}
+        grid = self.TUNE_GRID_INTENSIVE if intensive else self.TUNE_GRID
 
-        for combo in self.TUNE_GRID:
+        for combo in grid:
             try:
                 cf = CausalForest(**fixed_params, **combo)
                 cf.fit(X_tr, T_tr, Y_tr)
@@ -131,14 +141,14 @@ class CausalForestAdapter(BaseCateEstimator):
         self._tune_result = {
             "best_params": best_params,
             "best_r_loss": float(best_loss) if best_params else None,
-            "n_combos": len(self.TUNE_GRID),
+            "n_combos": len(grid),
         }
         return self._tune_result
 
 
 @dataclass
 class ModelContext:
-    seed: int = 18
+    seed: int = 42
     base_learner_type: str = "lgbm"  # "lgbm" | "catboost"
     # Fixe Standardparameter für Base Learner aus der globalen Konfiguration.
     # Diese werden immer gesetzt und können durch getunte Parameter ergänzt/überschrieben werden.

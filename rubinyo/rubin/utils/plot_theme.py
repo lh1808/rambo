@@ -337,6 +337,9 @@ def recolor_figure(
         # ── Legend ──
         legend = ax.get_legend()
         if legend:
+            # loc="best" ist langsam bei vielen Datenpunkten → fixe Position
+            if getattr(legend, "_loc", None) == 0:  # 0 = "best"
+                legend._loc = 2  # 2 = "upper left"
             for handle in legend.legend_handles if hasattr(legend, "legend_handles") else legend.legendHandles:
                 if isinstance(handle, mlines.Line2D):
                     c = handle.get_color()

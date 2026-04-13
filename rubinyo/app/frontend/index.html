@@ -364,7 +364,7 @@ const ColumnPicker = ({columns,roles,setRoles}) => (
 
 // ── Presets ──
 // ── Preset system: Treatment Type → Base (exclusive) → Add-ons (additive) ──
-const DEFAULT_CFG = {expName:"rubin",seed:18,models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"catboost",ensembleEnabled:false,tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"log_loss",tuningMetricReg:"neg_mse",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:0,fmtStabilityPenalty:0,cfTune:false,cfTuneMaxRows:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,fsMaxFeatures:0,downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,outputDir:"",blFixed:{},fmtFixed:{},cfFixed:{},tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,maxPredRows:0,savePreds:false,predsFormat:"csv",parallelLevel:2,mcIters:null,mcAgg:"mean"};
+const DEFAULT_CFG = {expName:"rubin",seed:42,models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"catboost",ensembleEnabled:false,tuningEnabled:true,tuningTrials:100,tuningSingleFold:false,tuningMetric:"log_loss",tuningMetricReg:"neg_mse",tuningPerRole:false,tuningPerLearner:false,tuningAutoml:"optuna",tuningModels:[],fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,fmtStabilityPenalty:0,fmtMethod:"rscorer",cfTune:false,cfTuneIntensive:false,bundleEnabled:false,bundleDir:"runs/bundles",bundleChallengers:true,bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,fsMaxFeatures:0,downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,outputDir:"",blFixed:{},fmtFixed:{},cfFixed:{},tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,maxPredRows:0,savePreds:false,predsFormat:"csv",parallelLevel:3,workDir:null,mcIters:null,mcAgg:"mean"};
 
 const BT_PRESETS = [
   {key:"bt_quickstart",label:"Quickstart",desc:"2 Meta-Learner – schnellster Einstieg",
@@ -392,14 +392,18 @@ const MT_PRESETS = [
 
 const ADDON_PRESETS = [
   // ── Tuning (Pipeline-Reihenfolge: BL → FMT → GRF) ──
-  {key:"bl_tuning",label:"BL-Tuning",desc:"Nuisance-Hyperparameter optimieren (50 Trials)",group:"tuning",
-    cfg:{tuningEnabled:true,tuningTrials:50}},
-  {key:"bl_tuning_intensiv",label:"BL-Tuning Intensiv",desc:"120 Trials, Single-Fold – tiefere Suche",group:"tuning",
-    cfg:{tuningEnabled:true,tuningTrials:120,tuningSingleFold:true}},
-  {key:"fmt",label:"R-Score-Tuning (FMT)",desc:"CATE-Effektmodell optimieren (30 Trials)",group:"tuning",
-    cfg:{fmtEnabled:true,fmtTrials:30,fmtModels:["NonParamDML","DRLearner"]}},
-  {key:"grf_tuning",label:"GRF-Tuning",desc:"Grid-Search für CausalForest / CausalForestDML",group:"tuning",
+  {key:"bl_tuning",label:"BL-Tuning",desc:"Nuisance-Hyperparameter optimieren (100 Trials)",group:"tuning",
+    cfg:{tuningEnabled:true,tuningTrials:100}},
+  {key:"bl_tuning_intensiv",label:"BL-Tuning Intensiv",desc:"160 Trials – 10 TPE-Wellen bei voller Parallelisierung",group:"tuning",
+    cfg:{tuningEnabled:true,tuningTrials:160}},
+  {key:"fmt",label:"FMT",desc:"CATE-Effektmodell optimieren (50 Trials)",group:"tuning",
+    cfg:{fmtEnabled:true,fmtTrials:50,fmtModels:["NonParamDML","DRLearner"]}},
+  {key:"fmt_intensiv",label:"FMT Intensiv",desc:"160 Trials – tiefe CATE-Optimierung",group:"tuning",
+    cfg:{fmtEnabled:true,fmtTrials:160,fmtModels:["NonParamDML","DRLearner"]}},
+  {key:"grf_tuning",label:"GRF-Tuning",desc:"Grid-Search für CausalForest / CausalForestDML (je 12 Kombis)",group:"tuning",
     cfg:{cfTune:true}},
+  {key:"grf_tuning_intensiv",label:"GRF-Tuning Intensiv",desc:"Erweitertes Grid mit je 48 Kombis (+ criterion, max_depth)",group:"tuning",
+    cfg:{cfTune:true,cfTuneIntensive:true}},
   // ── Production & Export ──
   {key:"bundle",label:"Bundle & Surrogate",desc:"Production-Export mit Surrogate-Einzelbaum",group:"production",
     cfg:{bundleEnabled:true,refitChamp:true,surrEnabled:true}},
@@ -472,7 +476,7 @@ const POverview = ({setPg}) => (
 // ── DataPrep YAML Builder ──
 const buildDataPrepYaml = (dp, cfg) => {
   const l=[],a=s=>l.push(s);
-  const outPath = dp.outputPath||"data/processed";
+  const outPath = dp.outputPath||"runs/data";
   a("# rubin DataPrep – generiert von der Web-UI");
   a("");
   // data_files ist Pflicht in AnalysisConfig – Pfade zeigen auf DataPrep-Output
@@ -663,7 +667,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
 
   const runDataPrep = async () => {
     setDpRunning(true); setDpDone(false); setDpProgress(0); setDpError(null);
-    const outPath = dp.outputPath || "data/processed";
+    const outPath = dp.outputPath || "runs/data";
     try {
       // Config an Backend senden und DataPrep starten
       const yaml = buildDataPrepYaml(dp, cfg);
@@ -1105,7 +1109,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
 
           <Divider/>
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Ausgabe</div>
-          <Inp label="Ausgabepfad" value={dp.outputPath||"data/processed"} onChange={v=>setDp(prev=>({...prev,outputPath:v}))} help="Zielordner für X/T/Y.parquet + Preprocessing-Artefakte"/>
+          <Inp label="Ausgabepfad" value={dp.outputPath||"runs/data"} onChange={v=>setDp(prev=>({...prev,outputPath:v}))} help="Zielordner für X/T/Y.parquet + Preprocessing-Artefakte"/>
 
           {(hasCSV || hasSAS) && <><Divider/>
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Dateiformat</div>
@@ -1175,7 +1179,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
 
 // ── YAML Import: parses config.yml back to cfg state ──
 const YAML_TO_CFG = {
-  "mlflow.experiment_name":"expName","constants.SEED":"seed","constants.parallel_level":"parallelLevel",
+  "mlflow.experiment_name":"expName","constants.SEED":"seed","constants.parallel_level":"parallelLevel","constants.work_dir":"workDir",
   "data_files.x_file":"x_file","data_files.t_file":"t_file","data_files.y_file":"y_file","data_files.s_file":"s_file",
   "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file",
   "treatment.type":"treatmentType","treatment.reference_group":"refGroup",
@@ -1185,10 +1189,10 @@ const YAML_TO_CFG = {
   "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.top_pct":"fsTopPct","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",
   "models.models_to_train":"models","models.ensemble":"ensembleEnabled",
   "base_learner.type":"baseLearner","base_learner.fixed_params":"blFixed",
-  "causal_forest.use_econml_tune":"cfTune","causal_forest.tune_max_rows":"cfTuneMaxRows",
+  "causal_forest.use_econml_tune":"cfTune","causal_forest.tune_intensive":"cfTuneIntensive",
   "tuning.enabled":"tuningEnabled","tuning.n_trials":"tuningTrials","tuning.single_fold":"tuningSingleFold","tuning.metric":"tuningMetric","tuning.metric_regression":"tuningMetricReg",
-  "tuning.per_role":"tuningPerRole","tuning.per_learner":"tuningPerLearner","tuning.timeout_seconds":"tuningTimeout","tuning.max_tuning_rows":"tuningMaxRows",
-  "final_model_tuning.enabled":"fmtEnabled","final_model_tuning.models":"fmtModels","final_model_tuning.single_fold":"fmtSingleFold","final_model_tuning.stability_penalty":"fmtStabilityPenalty","final_model_tuning.n_trials":"fmtTrials",
+  "tuning.per_role":"tuningPerRole","tuning.per_learner":"tuningPerLearner","tuning.timeout_seconds":"tuningTimeout","tuning.max_tuning_rows":"tuningMaxRows","tuning.automl":"tuningAutoml","tuning.models":"tuningModels",
+  "final_model_tuning.enabled":"fmtEnabled","final_model_tuning.models":"fmtModels","final_model_tuning.single_fold":"fmtSingleFold","final_model_tuning.stability_penalty":"fmtStabilityPenalty","final_model_tuning.n_trials":"fmtTrials","final_model_tuning.method":"fmtMethod",
   "final_model_tuning.max_tuning_rows":"fmtMaxRows","final_model_tuning.timeout_seconds":"fmtTimeout","final_model_tuning.fixed_params":"fmtFixed",
   "shap_values.calculate_shap_values":"explEnabled","shap_values.n_shap_values":"explSampleSize","shap_values.top_n_features":"explTopN","shap_values.num_bins":"shapBins",
   "selection.metric":"selMetric","selection.higher_is_better":"higherBetter","selection.refit_champion_on_full_data":"refitChamp","selection.manual_champion":"manualChamp",
@@ -1293,7 +1297,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
     setActiveBase(p.key);
   };
 
-  const MUTEX = [["bl_tuning","bl_tuning_intensiv"]];
+  const MUTEX = [["bl_tuning","bl_tuning_intensiv"],["fmt","fmt_intensiv"],["grf_tuning","grf_tuning_intensiv"]];
   const toggleAddon = (p) => {
     const next = new Set(activeAddons);
     if(next.has(p.key)) {
@@ -1354,11 +1358,11 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
         <Tabs tabs={["Dateipfade","Datei-Upload"]} active={tab} onSelect={setTab}/>
         {tab==="Dateipfade" ? (
           <Row><Col>
-            <Inp label="X-Datei (Features)" placeholder="data/processed/X.parquet" value={cfg.x_file} onChange={v=>set({...cfg,x_file:v})}/>
-            <Inp label="T-Datei (Treatment)" placeholder="data/processed/T.parquet" value={cfg.t_file} onChange={v=>set({...cfg,t_file:v})}/>
+            <Inp label="X-Datei (Features)" placeholder="runs/data/X.parquet" value={cfg.x_file} onChange={v=>set({...cfg,x_file:v})}/>
+            <Inp label="T-Datei (Treatment)" placeholder="runs/data/T.parquet" value={cfg.t_file} onChange={v=>set({...cfg,t_file:v})}/>
           </Col><Col>
-            <Inp label="Y-Datei (Outcome)" placeholder="data/processed/Y.parquet" value={cfg.y_file} onChange={v=>set({...cfg,y_file:v})}/>
-            <Inp label="S-Datei (Hist. Score, optional)" placeholder="data/processed/S.parquet" value={cfg.s_file} onChange={v=>set({...cfg,s_file:v})}/>
+            <Inp label="Y-Datei (Outcome)" placeholder="runs/data/Y.parquet" value={cfg.y_file} onChange={v=>set({...cfg,y_file:v})}/>
+            <Inp label="S-Datei (Hist. Score, optional)" placeholder="runs/data/S.parquet" value={cfg.s_file} onChange={v=>set({...cfg,s_file:v})}/>
           </Col></Row>
         ) : (
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
@@ -1398,11 +1402,11 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
           <Info>Trainiert wird auf den obigen Daten. Evaluiert wird auf den hier angegebenen Daten. Kein Data-Leakage – Preprocessing wurde getrennt auf den Trainingsdaten gefittet.</Info>
           {tab==="Dateipfade" ? (
             <Row><Col>
-              <Inp label="Eval X-Datei" placeholder="data/processed/X_eval.parquet" value={cfg.eval_x_file||""} onChange={v=>set({...cfg,eval_x_file:v})}/>
-              <Inp label="Eval T-Datei" placeholder="data/processed/T_eval.parquet" value={cfg.eval_t_file||""} onChange={v=>set({...cfg,eval_t_file:v})}/>
+              <Inp label="Eval X-Datei" placeholder="runs/data/X_eval.parquet" value={cfg.eval_x_file||""} onChange={v=>set({...cfg,eval_x_file:v})}/>
+              <Inp label="Eval T-Datei" placeholder="runs/data/T_eval.parquet" value={cfg.eval_t_file||""} onChange={v=>set({...cfg,eval_t_file:v})}/>
             </Col><Col>
-              <Inp label="Eval Y-Datei" placeholder="data/processed/Y_eval.parquet" value={cfg.eval_y_file||""} onChange={v=>set({...cfg,eval_y_file:v})}/>
-              <Inp label="Eval S-Datei (optional)" placeholder="data/processed/S_eval.parquet" value={cfg.eval_s_file||""} onChange={v=>set({...cfg,eval_s_file:v})}/>
+              <Inp label="Eval Y-Datei" placeholder="runs/data/Y_eval.parquet" value={cfg.eval_y_file||""} onChange={v=>set({...cfg,eval_y_file:v})}/>
+              <Inp label="Eval S-Datei (optional)" placeholder="runs/data/S_eval.parquet" value={cfg.eval_s_file||""} onChange={v=>set({...cfg,eval_s_file:v})}/>
             </Col></Row>
           ) : (
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
@@ -1647,7 +1651,10 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
 };
 
 // Remaining pages (Config, Models, Selection, Explain) - compact
-const PConfig = ({cfg,set}) => (<>
+const PConfig = ({cfg,set}) => {
+  const [workDirInfo,setWorkDirInfo] = useState(null);
+  useEffect(() => { fetch("./api/work-dir").then(r=>r.json()).then(d=>setWorkDirInfo(d)).catch(()=>{}); }, []);
+  return (<>
   <Sec title="Allgemein">
     <div style={{marginBottom:14}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -1660,13 +1667,25 @@ const PConfig = ({cfg,set}) => (<>
     <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:8}}>Parallelisierungs-Level</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:8}}>
       {[{v:1,l:"Minimal",d:"1 Kern, sequentiell. Sicher, minimaler RAM."},{v:2,l:"Moderat",d:"Alle Kerne pro Fit, Folds sequentiell. Guter Kompromiss."},{v:3,l:"Hoch",d:"Folds und Trials parallel. DRTester reduziert. Mehr RAM."},{v:4,l:"Maximum",d:"Max. Parallelisierung. DRTester nur Champion. Höchster RAM."}].map(o=>{
-        const active=(cfg.parallelLevel||2)===o.v;
+        const active=(cfg.parallelLevel||3)===o.v;
         return(<button key={o.v} onClick={()=>set({...cfg,parallelLevel:o.v})} style={{padding:"12px 14px",borderRadius:10,border:active?"2px solid #9B111E":"1.5px solid #e0d6d7",background:active?"#FDF2F3":"#fff",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:13,fontWeight:active?700:500,color:active?"#6B0D15":"#24292f"}}>{o.l}</span><span style={{fontSize:10,color:"#999"}}>L{o.v}</span></div>
           <div style={{fontSize:10.5,color:"#57606a",lineHeight:1.4}}>{o.d}</div>
         </button>);
       })}
     </div>
+    {workDirInfo && <><Divider/>
+    <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:8}}>Arbeitsverzeichnis</div>
+    <div style={{fontSize:11,color:C.textSec,lineHeight:1.5,marginBottom:10}}>Alle erzeugten Artefakte (MLflow, Report, Uploads, Cache) landen hier. Konfigurierbar per Env <code style={{fontSize:10,background:C.rose,padding:"1px 6px",borderRadius:4}}>RUBIN_WORK_DIR</code> oder <code style={{fontSize:10,background:C.rose,padding:"1px 6px",borderRadius:4}}>constants.work_dir</code>.</div>
+    <div style={{background:"#f6f8fa",border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px",fontSize:11,fontFamily:"'JetBrains Mono',monospace",lineHeight:1.7}}>
+      <div><span style={{color:"#57606a",minWidth:80,display:"inline-block"}}>Pfad:</span> <strong style={{color:C.dark}}>{workDirInfo.work_dir}</strong></div>
+      <div><span style={{color:"#57606a",minWidth:80,display:"inline-block"}}>Quelle:</span> {workDirInfo.source}</div>
+      <div style={{marginTop:6,color:"#57606a",fontSize:10}}>MLflow: {workDirInfo.mlruns_dir}</div>
+      <div style={{color:"#57606a",fontSize:10}}>Uploads: {workDirInfo.upload_dir}</div>
+      <div style={{color:"#57606a",fontSize:10}}>Cache: {workDirInfo.cache_dir}</div>
+    </div>
+    <Inp label="work_dir (optional)" type="text" value={cfg.workDir||""} onChange={v=>set({...cfg,workDir:v||null})} help="Leer = Env-Variable oder ./runs"/>
+    </>}
   </Sec>
 
   <Sec title="Feature-Selektion" accent="#0891b2">
@@ -1738,8 +1757,6 @@ const PConfig = ({cfg,set}) => (<>
       <Col><Sld label="Anzahl Iterationen" min={2} max={5} step={1} value={cfg.mcIters||3} onChange={v=>set({...cfg,mcIters:Number(v)})} help="2–3 für guten Kompromiss, 5 für maximale Stabilität"/></Col>
       <Col><Sel label="Aggregation" options={["mean","median"]} value={cfg.mcAgg||"mean"} onChange={v=>set({...cfg,mcAgg:v})} help="mean (Standard) oder median (robuster bei Ausreißern)"/></Col>
     </Row>}
-    <Expander title="Erweiterte Cross-Fitting-Parameter">
-    </Expander>
 
   </Sec>
 
@@ -1769,7 +1786,7 @@ const PConfig = ({cfg,set}) => (<>
       <Row><Col><Inp label="Max. Prediction-Rows (0=alle)" type="number" value={cfg.maxPredRows||0} onChange={v=>set({...cfg,maxPredRows:Number(v)})} help="Begrenzt die Anzahl gespeicherter Predictions – nützlich bei sehr großen Datensätzen"/></Col></Row>
     </Expander>
   </Sec>
-</>);
+</>); };
 
 // ── Tuning Plan (mirrors tuning_optuna.py logic) ──
 const rolesForModel = m => {
@@ -1783,7 +1800,7 @@ const rolesForModel = m => {
   ];
   if(n==="drlearner") return [
     {role:"model_propensity",label:"Propensity",sig:"propensity__clf__no_t__all__T"},
-    {role:"model_regression",label:"Outcome-Regression",sig:"outcome_regression__reg__no_t__all__Y"},
+    {role:"model_regression",label:"Outcome-Regression (mit T)",sig:"outcome_regression__reg__with_t__all__Y"},
   ];
   if(["nonparamdml","paramdml","causalforestdml"].includes(n)) return [
     {role:"model_y",label:"Outcome (Classifier)",sig:"outcome__clf__no_t__all__Y"},
@@ -1809,7 +1826,7 @@ const computeTuningPlan = (models, perRole, perLearner) => {
 
 const TuningPlanPreview = ({models, perRole, perLearner, trials, cv}) => {
   const plan = computeTuningPlan(models, perRole, perLearner);
-  const nTrials = trials || 30;
+  const nTrials = trials || 100;
   const nCv = cv || 3;
   const K = 2; // Binary Treatment
   if(plan.length === 0) return <Info type="warn">Keine Modelle ausgewählt – kein Tuning noetig.</Info>;
@@ -1902,7 +1919,7 @@ const TuningPlanPreview = ({models, perRole, perLearner, trials, cv}) => {
 
 // ── Final-Model Tuning Plan ──
 const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, fmtTrials, fmtCv, mcIters}) => {
-  const nTrials = fmtTrials || 20;
+  const nTrials = fmtTrials || 50;
   const nCv = fmtCv || 3;
   const dc = fmtCv || 5;
   const mc = mcIters || 1;
@@ -1913,20 +1930,18 @@ const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, f
     if(!fmtEnabled) return;
     const mn = m.toLowerCase();
     if(mn === "nonparamdml") {
-      const internalFits = mc*dc*2+1;
-      const total = nTrials * internalFits;
-      rows.push({model:m, method:"RScorer", trials:nTrials, fitsPerTrial:internalFits, totalFits:total,
-        detail:nTrials+"T x "+internalFits+" intern",
-        note:"Pro Trial: 1 NonParamDML-Fit (cv="+dc+": "+dc+"x model_y + "+dc+"x model_t"+(mc>1?" x "+mc+" mc_iters":"")+", + 1x model_final = "+internalFits+")."});
+      const total = nTrials;
+      rows.push({model:m, method:"RScorer", trials:nTrials, fitsPerTrial:1, totalFits:total,
+        detail:nTrials+"T × 1",
+        note:"RScorer wird einmal vorab gefittet (berechnet Residuen mit CV). Danach 1 Kandidaten-Fit pro Trial, Bewertung über vorberechnete Residuen."});
     }
     if(mn === "drlearner") {
       const drFolds = fmtSingleFold ? 1 : nCv;
-      const internalPerFold = mc*dc*2+1;
-      const fitsPerTrial = drFolds * internalPerFold;
+      const fitsPerTrial = drFolds;
       const total = nTrials * fitsPerTrial;
       rows.push({model:m, method:fmtSingleFold?"score() 1-Fold":"score() + CV", trials:nTrials, fitsPerTrial, totalFits:total,
-        detail:nTrials+"T x "+drFolds+"F x "+internalPerFold+" intern",
-        note:"Pro Trial: "+drFolds+" Fold(s), je 1 DRLearner-Fit (cv="+dc+": "+dc+"x propensity + "+dc+"x regression"+(mc>1?" x "+mc+" mc_iters":"")+", + 1x model_final = "+internalPerFold+")."});
+        detail:nTrials+"T × "+drFolds+"F",
+        note:"Pro Trial: "+drFolds+" Fold(s), je 1 DRLearner-Fit (score). Kein RScorer verfügbar (andere Nuisance-Struktur)."});
     }
   });
 
@@ -2035,18 +2050,18 @@ const PModels = ({cfg,set,sp,setSp,spFmt,setSpFmt}) => {
               </button>
             );
           })}
-        </div>{!cfg.tuningEnabled && <><Divider/><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:600,color:C.dark}}>Nuisance-Hyperparameter</span><span style={{fontSize:10,background:"#fffbeb",color:"#7a5a00",padding:"3px 12px",borderRadius:12,border:"1px solid #e8d49c",fontWeight:600,letterSpacing:0.2}}>Aktiv – Tuning ist deaktiviert</span></div><Info>Tuning ist deaktiviert. Diese Parameter werden direkt für alle Nuisance-Modelle (Outcome, Propensity) verwendet.</Info><FixedParamsEditor params={cfg.blFixed||{}} defaults={(cfg.baseLearner||"catboost")==="catboost"?CB_DEFAULTS:LGBM_DEFAULTS} onChange={v=>set({...cfg,blFixed:v})}/></>}</Sec><Sec title="Base-Learner-Tuning" accent="#C4343F"><Toggle label="Aktivieren" checked={cfg.tuningEnabled} onChange={v=>set({...cfg,tuningEnabled:v})}/>{cfg.tuningEnabled&&<><Divider/><Row><Col><Inp label="Trials" type="number" value={cfg.tuningTrials||30} onChange={v=>set({...cfg,tuningTrials:Number(v)})} help="Anzahl Optuna-Kandidaten pro Study"/></Col><Col><Sel label="Metrik (Klassifikation)" options={["log_loss","roc_auc","accuracy"]} value={cfg.tuningMetric||"log_loss"} onChange={v=>set({...cfg,tuningMetric:v})} help="Für Propensity-Modelle (T) und Outcome-Klassifikation (Y binär)"/></Col><Col><Sel label="Metrik (Regression)" options={["neg_mse","neg_rmse","neg_mae","r2"]} value={cfg.tuningMetricReg||"neg_mse"} onChange={v=>set({...cfg,tuningMetricReg:v})} help="Für Outcome-Regression (Y kontinuierlich, z.B. SLearner/TLearner)"/></Col></Row><div style={{marginTop:10}}><Toggle label="Single-Fold-Tuning" checked={cfg.tuningSingleFold||false} onChange={v=>set({...cfg,tuningSingleFold:v})} help="Nur 1 Fold pro Trial evaluieren statt aller K. Deutlich schneller, etwas verrauschter."/></div>{cfg.tuningSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: Jeder Trial wird auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} Folds evaluiert.</div>}<Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Task-Sharing</div><Info>Default: Nuisance-Modelle mit gleicher Signatur teilen sich ein Tuning. Per Role und Per Learner erzeugen spezialisierte Hyperparameter – genauer, aber rechenintensiver.</Info><Row><Col><Toggle label="Per Role" checked={cfg.tuningPerRole||false} onChange={v=>set({...cfg,tuningPerRole:v})} help="Separate Parameter je Rolle (model_y, model_t)"/></Col><Col><Toggle label="Per Learner" checked={cfg.tuningPerLearner||false} onChange={v=>set({...cfg,tuningPerLearner:v})} help="Separate Parameter je kausalem Modell"/></Col></Row><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Plan</div><TuningPlanPreview models={cfg.models} perRole={cfg.tuningPerRole||false} perLearner={cfg.tuningPerLearner||false} trials={cfg.tuningTrials||30} cv={cfg.tuningSingleFold?1:(cfg.cvSplits||5)}/><Divider/><SSEditor bl={cfg.baseLearner||"catboost"} sp={sp} setSp={setSp}/><Expander title="Erweiterte Tuning-Einstellungen"><Row><Col><Inp label="Timeout (Sek., 0=unbegrenzt)" type="number" value={cfg.tuningTimeout||0} onChange={v=>set({...cfg,tuningTimeout:Number(v)})} help="Zeitlimit pro Optuna-Study in Sekunden"/></Col></Row></Expander></>}</Sec><Sec title="Final-Model-Tuning (R-Score)" accent="#D4A853"><Info>Optimiert das CATE-Effektmodell (model_final) via Optuna R-Score. Nur für NonParamDML und DRLearner.</Info><Toggle label="R-Score-Tuning aktivieren" checked={cfg.fmtEnabled} onChange={v=>set({...cfg,fmtEnabled:v})} help="NonParamDML (RScorer): 1 Fit/Trial. DRLearner (score+CV): K Fits/Trial."/>{cfg.fmtEnabled&&<><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Modelle für Final-Tuning</div><Info>Wähle, welche Modelle per R-Score/CV optimiert werden. Nicht ausgewählte Modelle verwenden die festen Hyperparameter (unten).</Info><div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:14}}>{(cfg.models||[]).filter(m=>["NonParamDML","DRLearner"].includes(m)).map(m=>{const active=(cfg.fmtModels||[]).includes(m);return(<label key={m} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",fontSize:12.5,fontWeight:active?600:400,transition:"all 0.15s"}}><input type="checkbox" checked={active} style={{accentColor:"#D4A853"}} onChange={e=>{const s=new Set(cfg.fmtModels||[]);e.target.checked?s.add(m):s.delete(m);set({...cfg,fmtModels:[...s]})}}/>{m}</label>)})}{!(cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m))&&<Info type="warn">Keine R-Score-fähigen Modelle (NonParamDML/DRLearner) ausgewählt.</Info>}{(cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m)) && (cfg.fmtModels||[]).length===0 && <Info type="warn">Kein Modell für Final-Tuning ausgewählt. Alle verwenden die festen Hyperparameter.</Info>}</div><Row><Col><Inp label="Trials" type="number" value={cfg.fmtTrials||20} onChange={v=>set({...cfg,fmtTrials:Number(v)})}/></Col></Row><div style={{marginTop:10}}><Toggle label="Single-Fold (DRLearner)" checked={cfg.fmtSingleFold||false} onChange={v=>set({...cfg,fmtSingleFold:v})} help="DRLearner: 1 Fold pro Trial statt K. NonParamDML nutzt RScorer (1 Fit/Trial)."/></div>{cfg.fmtSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: DRLearner evaluiert auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} Folds pro Trial.</div>}<Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:6}}>Stability Penalty</div><div style={{fontSize:11,color:C.textSec,lineHeight:1.5,marginBottom:12}}>Bestraft CATE-Modelle, deren Effektschätzungen stark streuen. Verhindert, dass Optuna Konfigurationen bevorzugt, die zwar einen hohen R-Score erreichen, aber instabile, schwer interpretierbare Heterogenität produzieren. Bei 0 wird nur der R-Score optimiert.</div><Row><Col><Sld label="Penalty-Faktor" min={0} max={2} step={0.1} value={cfg.fmtStabilityPenalty||0} onChange={v=>set({...cfg,fmtStabilityPenalty:v})}/></Col></Row><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Suchraum (Final-Modell)</div><SSEditor bl={cfg.baseLearner||"catboost"} sp={spFmt||{lgbm:{},catboost:{}}} setSp={setSpFmt||setSp} fmt/><Expander title="Erweiterte Final-Tuning-Einstellungen"><Row><Col><Inp label="Timeout (Sek., 0=unbegrenzt)" type="number" value={cfg.fmtTimeout||0} onChange={v=>set({...cfg,fmtTimeout:Number(v)})} help="Zeitlimit pro Final-Model-Optuna-Study"/></Col></Row></Expander><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Plan</div><FinalTuningPlanPreview models={cfg.models} fmtEnabled={cfg.fmtEnabled} fmtModels={cfg.fmtModels||[]} fmtSingleFold={cfg.fmtSingleFold||false} fmtTrials={cfg.fmtTrials||20} fmtCv={cfg.cvSplits||5} mcIters={cfg.mcIters||1}/></>}{!cfg.fmtEnabled && (cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m)) && <><Divider/><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:600,color:C.dark}}>Final-Modell-Hyperparameter</span><span style={{fontSize:10,background:"#fffbeb",color:"#7a5a00",padding:"3px 12px",borderRadius:12,border:"1px solid #e8d49c",fontWeight:600,letterSpacing:0.2}}>Direkt verwendet</span></div><Info>R-Score-Tuning ist deaktiviert. Diese Parameter werden direkt für das CATE-Effektmodell (model_final) von NonParamDML und DRLearner verwendet.</Info><FixedParamsEditor params={cfg.fmtFixed||{}} defaults={(cfg.baseLearner||"catboost")==="catboost"?CB_FINAL_DEFAULTS:LGBM_FINAL_DEFAULTS} onChange={v=>set({...cfg,fmtFixed:v})}/></>}</Sec>{((cfg.models||[]).includes("CausalForestDML")||(cfg.models||[]).includes("CausalForest"))&&<Sec title="GRF-Tuning (CausalForest / CausalForestDML)" accent="#2d6a4f"><Info>CausalForest und CausalForestDML nutzen Grid-Search-basiertes Tuning — ein Grid-Search über Wald-Parameter. Dies ist kein Optuna-Tuning und unabhängig vom R-Score Final-Model-Tuning oben.</Info><Toggle label="EconML tune() aktivieren" checked={cfg.cfTune||false} onChange={v=>set({...cfg,cfTune:v})} help="CausalForestDML: EconML Grid-Search (12 Kombis). CausalForest: eigener Grid-Search über min_samples_leaf, max_depth, max_samples, criterion (24 Kombis, R-Loss)"/>{cfg.cfTune&&<>{(() => {
+        </div>{!cfg.tuningEnabled && <><Divider/><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:600,color:C.dark}}>Nuisance-Hyperparameter</span><span style={{fontSize:10,background:"#fffbeb",color:"#7a5a00",padding:"3px 12px",borderRadius:12,border:"1px solid #e8d49c",fontWeight:600,letterSpacing:0.2}}>Aktiv – Tuning ist deaktiviert</span></div><Info>Tuning ist deaktiviert. Diese Parameter werden direkt für alle Nuisance-Modelle (Outcome, Propensity) verwendet.</Info><FixedParamsEditor params={cfg.blFixed||{}} defaults={(cfg.baseLearner||"catboost")==="catboost"?CB_DEFAULTS:LGBM_DEFAULTS} onChange={v=>set({...cfg,blFixed:v})}/></>}</Sec><Sec title="Base-Learner-Tuning" accent="#C4343F"><Toggle label="Aktivieren" checked={cfg.tuningEnabled} onChange={v=>set({...cfg,tuningEnabled:v})}/>{cfg.tuningEnabled&&<><Divider/><Row><Col><Inp label="Trials" type="number" value={cfg.tuningTrials||100} onChange={v=>set({...cfg,tuningTrials:Number(v)})} help="Anzahl Kandidaten pro Study"/></Col><Col><Sel label="AutoML-Backend" options={["optuna","flaml"]} value={cfg.tuningAutoml||"optuna"} onChange={v=>set({...cfg,tuningAutoml:v})} help="Optuna: Bayesian TPE (Standard, volle Kontrolle über Suchraum). FLAML: Microsoft AutoML (automatischer Suchraum, Early Stopping). Bei gruppenspezifischen Tasks (TLearner, XLearner) wird FLAML automatisch auf Optuna zurückgefallen."/></Col></Row><Row><Col><Sel label="Metrik (Klassifikation)" options={["log_loss","roc_auc","accuracy"]} value={cfg.tuningMetric||"log_loss"} onChange={v=>set({...cfg,tuningMetric:v})} help="Für Propensity-Modelle (T) und Outcome-Klassifikation (Y binär)"/></Col><Col><Sel label="Metrik (Regression)" options={["neg_mse","neg_rmse","neg_mae","r2"]} value={cfg.tuningMetricReg||"neg_mse"} onChange={v=>set({...cfg,tuningMetricReg:v})} help="Für Outcome-Regression (Y kontinuierlich, z.B. SLearner/TLearner)"/></Col></Row><div style={{marginTop:10}}><Toggle label="Single-Fold-Tuning" checked={cfg.tuningSingleFold||false} onChange={v=>set({...cfg,tuningSingleFold:v})} help="Nur 1 Fold pro Trial evaluieren statt aller K. Deutlich schneller, etwas verrauschter."/></div>{cfg.tuningSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: Jeder Trial wird auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} Folds evaluiert.</div>}<Divider/><div style={{fontSize:13,fontWeight:600,color:"#6B0D15",marginBottom:8}}>Modelle für BL-Tuning</div><Info>Standardmäßig werden alle ausgewählten Modelle getuned. Hier kann das Tuning auf bestimmte Modelle eingeschränkt werden — nicht ausgewählte Modelle nutzen die festen Hyperparameter (fixed_params).</Info><div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:14}}>{(cfg.models||[]).map(m=>{const active=(cfg.tuningModels||[]).length===0||(cfg.tuningModels||[]).includes(m);return(<label key={m} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:active?"1.5px solid #C4343F":"1.5px solid "+C.border,background:active?"#FDF2F3":"#fff",cursor:"pointer",fontSize:12.5,fontWeight:active?600:400,transition:"all 0.15s"}}><input type="checkbox" checked={active} style={{accentColor:"#C4343F"}} onChange={e=>{const cur=cfg.tuningModels||[];if(cur.length===0){const s=new Set((cfg.models||[]).filter(x=>x!==m));if(s.size>0)set({...cfg,tuningModels:[...s]})}else{const s=new Set(cur);e.target.checked?s.add(m):s.delete(m);if(s.size===0)return;set({...cfg,tuningModels:s.size===(cfg.models||[]).length?[]:[...s]})}}}/>{m}</label>)})}</div>{(cfg.tuningModels||[]).length>0 && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginBottom:10,lineHeight:1.4}}>Eingeschränkt: Nur <strong style={{color:C.ruby}}>{(cfg.tuningModels||[]).join(", ")}</strong> werden getuned. Alle anderen nutzen fixed_params.</div>}<Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Task-Sharing</div><Info>Default: Nuisance-Modelle mit gleicher Signatur teilen sich ein Tuning. Per Role und Per Learner erzeugen spezialisierte Hyperparameter – genauer, aber rechenintensiver.</Info><Row><Col><Toggle label="Per Role" checked={cfg.tuningPerRole||false} onChange={v=>set({...cfg,tuningPerRole:v})} help="Separate Parameter je Rolle (model_y, model_t)"/></Col><Col><Toggle label="Per Learner" checked={cfg.tuningPerLearner||false} onChange={v=>set({...cfg,tuningPerLearner:v})} help="Separate Parameter je kausalem Modell"/></Col></Row><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Plan</div><TuningPlanPreview models={(cfg.tuningModels||[]).length>0?cfg.tuningModels:cfg.models} perRole={cfg.tuningPerRole||false} perLearner={cfg.tuningPerLearner||false} trials={cfg.tuningTrials||100} cv={cfg.tuningSingleFold?1:(cfg.cvSplits||5)}/><Divider/><SSEditor bl={cfg.baseLearner||"catboost"} sp={sp} setSp={setSp}/><Expander title="Erweiterte Tuning-Einstellungen"><Row><Col><Inp label="Timeout (Sek., 0=unbegrenzt)" type="number" value={cfg.tuningTimeout||0} onChange={v=>set({...cfg,tuningTimeout:Number(v)})} help="Zeitlimit pro Study in Sekunden"/></Col></Row></Expander></>}</Sec><Sec title="Final-Model-Tuning" accent="#D4A853"><Info>Optimiert das CATE-Effektmodell (model_final) via Optuna. NonParamDML: wählbar zwischen RScorer und DR-Score. DRLearner: nutzt immer den eingebauten DR-basierten score()+CV (bereits doubly-robust). FMT verwendet immer Optuna – FLAML ist hier nicht verfügbar, weil die kausale Objective-Funktion keinen Standard-ML-Task darstellt.</Info><Toggle label="Final-Model-Tuning aktivieren" checked={cfg.fmtEnabled} onChange={v=>set({...cfg,fmtEnabled:v})} help="NonParamDML: RScorer oder DR-Score (1 Fit/Trial). DRLearner: score()+CV (K Fits/Trial)."/>{cfg.fmtEnabled&&<><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Modelle für Final-Tuning</div><Info>Wähle, welche Modelle per R-Score/CV optimiert werden. Nicht ausgewählte Modelle verwenden die festen Hyperparameter (unten).</Info><div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:14}}>{(cfg.models||[]).filter(m=>["NonParamDML","DRLearner"].includes(m)).map(m=>{const active=(cfg.fmtModels||[]).includes(m);return(<label key={m} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",fontSize:12.5,fontWeight:active?600:400,transition:"all 0.15s"}}><input type="checkbox" checked={active} style={{accentColor:"#D4A853"}} onChange={e=>{const s=new Set(cfg.fmtModels||[]);e.target.checked?s.add(m):s.delete(m);set({...cfg,fmtModels:[...s]})}}/>{m}</label>)})}{!(cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m))&&<Info type="warn">Keine R-Score-fähigen Modelle (NonParamDML/DRLearner) ausgewählt.</Info>}{(cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m)) && (cfg.fmtModels||[]).length===0 && <Info type="warn">Kein Modell für Final-Tuning ausgewählt. Alle verwenden die festen Hyperparameter.</Info>}</div><Row><Col><Inp label="Trials" type="number" value={cfg.fmtTrials||50} onChange={v=>set({...cfg,fmtTrials:Number(v)})}/></Col><Col><Sel label="Scoring-Methode (NonParamDML)" options={["rscorer","dr_score"]} value={cfg.fmtMethod||"rscorer"} onChange={v=>set({...cfg,fmtMethod:v})} help="RScorer (Schuler 2018): R-Loss auf vorberechneten Residuen. DR-Score (Mahajan 2024): Doubly-Robust-Pseudo-Outcomes."/></Col></Row><div style={{marginTop:10}}><Toggle label="Single-Fold (DRLearner)" checked={cfg.fmtSingleFold||false} onChange={v=>set({...cfg,fmtSingleFold:v})} help="DRLearner: 1 Fold pro Trial statt K. NonParamDML nutzt RScorer (1 Fit/Trial)."/></div>{cfg.fmtSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: DRLearner evaluiert auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} Folds pro Trial.</div>}<Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:6}}>Stability Penalty</div><div style={{fontSize:11,color:C.textSec,lineHeight:1.5,marginBottom:12}}>Bestraft CATE-Modelle, deren Effektschätzungen stark streuen. Verhindert, dass Optuna Konfigurationen bevorzugt, die zwar einen hohen R-Score erreichen, aber instabile, schwer interpretierbare Heterogenität produzieren. Bei 0 wird nur der R-Score optimiert.</div><Row><Col><Sld label="Penalty-Faktor" min={0} max={2} step={0.1} value={cfg.fmtStabilityPenalty||0} onChange={v=>set({...cfg,fmtStabilityPenalty:v})}/></Col></Row><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Suchraum (Final-Modell)</div><SSEditor bl={cfg.baseLearner||"catboost"} sp={spFmt||{lgbm:{},catboost:{}}} setSp={setSpFmt||setSp} fmt/><Expander title="Erweiterte Final-Tuning-Einstellungen"><Row><Col><Inp label="Timeout (Sek., 0=unbegrenzt)" type="number" value={cfg.fmtTimeout||0} onChange={v=>set({...cfg,fmtTimeout:Number(v)})} help="Zeitlimit pro Final-Model-Optuna-Study"/></Col></Row></Expander><Divider/><div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Plan</div><FinalTuningPlanPreview models={cfg.models} fmtEnabled={cfg.fmtEnabled} fmtModels={cfg.fmtModels||[]} fmtSingleFold={cfg.fmtSingleFold||false} fmtTrials={cfg.fmtTrials||50} fmtCv={cfg.cvSplits||5} mcIters={cfg.mcIters||1}/></>}{!cfg.fmtEnabled && (cfg.models||[]).some(m=>["NonParamDML","DRLearner"].includes(m)) && <><Divider/><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}><span style={{fontSize:13,fontWeight:600,color:C.dark}}>Final-Modell-Hyperparameter</span><span style={{fontSize:10,background:"#fffbeb",color:"#7a5a00",padding:"3px 12px",borderRadius:12,border:"1px solid #e8d49c",fontWeight:600,letterSpacing:0.2}}>Direkt verwendet</span></div><Info>R-Score-Tuning ist deaktiviert. Diese Parameter werden direkt für das CATE-Effektmodell (model_final) von NonParamDML und DRLearner verwendet.</Info><FixedParamsEditor params={cfg.fmtFixed||{}} defaults={(cfg.baseLearner||"catboost")==="catboost"?CB_FINAL_DEFAULTS:LGBM_FINAL_DEFAULTS} onChange={v=>set({...cfg,fmtFixed:v})}/></>}</Sec>{((cfg.models||[]).includes("CausalForestDML")||(cfg.models||[]).includes("CausalForest"))&&<Sec title="GRF-Tuning (CausalForest / CausalForestDML)" accent="#2d6a4f"><Info>CausalForest und CausalForestDML nutzen Grid-Search-basiertes Tuning — ein Grid-Search über Wald-Parameter. Dies ist kein Optuna-Tuning und unabhängig vom R-Score Final-Model-Tuning oben.</Info><Toggle label="EconML tune() aktivieren" checked={cfg.cfTune||false} onChange={v=>set({...cfg,cfTune:v})} help="CausalForestDML: EconML Grid-Search (12 Kombis). CausalForest: eigener Grid-Search über min_samples_leaf, max_depth, max_samples (12 Kombis, R-Loss)"/>{cfg.cfTune&&<>{(() => {
               const hasCF = (cfg.models||[]).includes("CausalForestDML");
               const hasGRF = (cfg.models||[]).includes("CausalForest");
               const dc = cfg.cvSplits||5, mc = cfg.mcIters||1;
               const cfNuisance = dc*2*mc;  // Nuisance-Vorab: cv × (model_y + model_t) × mc_iters
               const cfTotal = cfNuisance + 12;  // + 12 Forest-Grid-Kombis
-              const grfTotal = 24;  // Kein Nuisance, reiner Grid-Search
+              const grfTotal = 12;  // Kein Nuisance, reiner Grid-Search
               const totalFits = (hasCF?cfTotal:0)+(hasGRF?grfTotal:0);
               return (<>
                 <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
                   <div style={{padding:"8px 16px",background:"#e8f5ec",borderRadius:8,border:"1px solid #a3d9b1"}}><div style={{fontSize:22,fontWeight:700,color:"#2d6a4f"}}>{totalFits}</div><div style={{fontSize:10,textTransform:"uppercase",letterSpacing:0.5,color:"#888"}}>Gesamt-Fits</div></div>
-                  <div style={{padding:"8px 16px",background:"#faf7f7",borderRadius:8,border:"1px solid #ede6e7"}}><div style={{fontSize:22,fontWeight:700,color:"#333"}}>{hasCF&&hasGRF?"12+24":hasCF?"12":"24"}</div><div style={{fontSize:10,textTransform:"uppercase",letterSpacing:0.5,color:"#888"}}>Grid-Kombis</div></div>
+                  <div style={{padding:"8px 16px",background:"#faf7f7",borderRadius:8,border:"1px solid #ede6e7"}}><div style={{fontSize:22,fontWeight:700,color:"#333"}}>{hasCF&&hasGRF?"12+12":hasCF?"12":"12"}</div><div style={{fontSize:10,textTransform:"uppercase",letterSpacing:0.5,color:"#888"}}>Grid-Kombis</div></div>
                 </div>
                 <div style={{border:"1px solid #ede6e7",borderRadius:8,overflow:"hidden",marginTop:12}}>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 80px",fontSize:11,fontWeight:600,padding:"8px 14px",background:"#2d6a4f",color:"#fff"}}><span>Modell</span><span>Aufschluesselung</span><span>Fits</span></div>
@@ -2061,7 +2076,7 @@ const PModels = ({cfg,set,sp,setSp,spFmt,setSpFmt}) => {
                   {hasGRF && <div style={{background:hasCF?"#fdfbfb":"#fff"}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 80px",padding:"8px 14px",fontSize:12}}>
                       <span style={{fontWeight:600}}>CausalForest</span>
-                      <span style={{fontSize:11,color:"#2d6a4f"}}>24 Forest-Grid (kein Nuisance)</span>
+                      <span style={{fontSize:11,color:"#2d6a4f"}}>12 Forest-Grid (kein Nuisance)</span>
                       <span style={{fontFamily:"monospace",fontWeight:700,color:"#2d6a4f"}}>24</span>
                     </div>
                     <div style={{fontSize:10.5,color:"#999",padding:"0 14px 6px",lineHeight:1.4}}>R-Loss Grid-Search auf erstem CV-Fold (2x3x2x2 = 24). Kein DML — keine Nuisance-Modelle.</div>
@@ -2218,12 +2233,13 @@ const buildYaml = (cfg, sp, spFmt) => {
   a("");
   a("constants:");
   a(`  SEED: ${cfg.seed||18}`);
-  if((cfg.parallelLevel||2) !== 2) a(`  parallel_level: ${cfg.parallelLevel}`);
+  if((cfg.parallelLevel||3) !== 3) a(`  parallel_level: ${cfg.parallelLevel}`);
+  if(cfg.workDir) a(`  work_dir: "${cfg.workDir}"`);
   a("");
   a("data_files:");
-  a(`  x_file: ${cfg.x_file||"data/processed/X.parquet"}`);
-  a(`  t_file: ${cfg.t_file||"data/processed/T.parquet"}`);
-  a(`  y_file: ${cfg.y_file||"data/processed/Y.parquet"}`);
+  a(`  x_file: ${cfg.x_file||"runs/data/X.parquet"}`);
+  a(`  t_file: ${cfg.t_file||"runs/data/T.parquet"}`);
+  a(`  y_file: ${cfg.y_file||"runs/data/Y.parquet"}`);
   a(`  s_file: ${cfg.s_file||"null"}`);
   if(cfg.validateOn==="external") {
     if(cfg.eval_x_file) a(`  eval_x_file: ${cfg.eval_x_file}`);
@@ -2283,13 +2299,13 @@ const buildYaml = (cfg, sp, spFmt) => {
     }
     a(`  use_econml_tune: ${!!cfg.cfTune}`);
     a("  econml_tune_params: auto");
-    if(cfg.cfTuneMaxRows) a(`  tune_max_rows: ${cfg.cfTuneMaxRows}`);
+    if(cfg.cfTuneIntensive) a("  tune_intensive: true");
         a("");
   }
   a("tuning:");
   a(`  enabled: ${!!cfg.tuningEnabled}`);
   if(cfg.tuningEnabled) {
-    a(`  n_trials: ${cfg.tuningTrials||30}`);
+    a(`  n_trials: ${cfg.tuningTrials||100}`);
     a(`  cv_splits: ${cfg.cvSplits||5}`);
     a(`  metric: ${cfg.tuningMetric||"log_loss"}`);if((cfg.tuningMetricReg||"neg_mse")!=="neg_mse")a(`  metric_regression: ${cfg.tuningMetricReg}`);
     if(cfg.tuningSingleFold) a("  single_fold: true");
@@ -2297,17 +2313,19 @@ const buildYaml = (cfg, sp, spFmt) => {
     if(cfg.tuningPerLearner) a("  per_learner: true");
     if(cfg.tuningTimeout) a(`  timeout_seconds: ${cfg.tuningTimeout}`);
     if(cfg.tuningMaxRows) a(`  max_tuning_rows: ${cfg.tuningMaxRows}`);
+    if((cfg.tuningAutoml||"optuna")!=="optuna") a(`  automl: ${cfg.tuningAutoml}`);
+    if((cfg.tuningModels||[]).length>0) a(`  models: [${cfg.tuningModels.join(", ")}]`);
       }
   if(sp) emitSS(sp, 2);
   a("");
   a("final_model_tuning:");
   a(`  enabled: ${!!cfg.fmtEnabled}`);
   if(cfg.fmtEnabled) {
-    a(`  n_trials: ${cfg.fmtTrials||20}`);
+    a(`  n_trials: ${cfg.fmtTrials||50}`);
     if((cfg.fmtModels||[]).length > 0) a(`  models: [${cfg.fmtModels.join(", ")}]`);
     if(cfg.fmtSingleFold) a("  single_fold: true");
+    if((cfg.fmtMethod||"rscorer")!=="rscorer") a(`  method: ${cfg.fmtMethod}`);
     if(cfg.fmtStabilityPenalty > 0) a(`  stability_penalty: ${cfg.fmtStabilityPenalty}`);
-    a(`  cv_splits: ${cfg.cvSplits||5}`);
         if(cfg.fmtTimeout) a(`  timeout_seconds: ${cfg.fmtTimeout}`);
     if(cfg.fmtMaxRows) a(`  max_tuning_rows: ${cfg.fmtMaxRows}`);
   }
@@ -2366,9 +2384,11 @@ const validate = cfg => {
     if(!cfg.eval_t_file)i.push("Eval T-Datei nicht angegeben (externe Validierung).");
     if(!cfg.eval_y_file)i.push("Eval Y-Datei nicht angegeben (externe Validierung).");
   }
-  if(!(cfg.models||[]).length)i.push("Keine Modelle ausgewählt.");
-  if(cfg.treatmentType==="multi"){const b=(cfg.models||[]).filter(m=>btOnly.has(m));if(b.length > 0)i.push(`MT nicht kompatibel mit: ${b.join(", ")}`);}
-  if(cfg.hasNaN&&(cfg.models||[]).some(m=>["CausalForestDML","CausalForest"].includes(m)))i.push("CausalForestDML/GRF bei NaN nicht verfügbar.");
+  // Effektive Modelle: NaN-blockierte und MT-inkompatible herausfiltern
+  const nanBlocked = cfg.hasNaN ? ["CausalForestDML","CausalForest"] : [];
+  const effectiveModels = (cfg.models||[]).filter(m => !nanBlocked.includes(m));
+  if(!effectiveModels.length)i.push("Keine Modelle ausgewählt.");
+  if(cfg.treatmentType==="multi"){const b=effectiveModels.filter(m=>btOnly.has(m));if(b.length > 0)i.push(`MT nicht kompatibel mit: ${b.join(", ")}`);}
   return i;
 };
 
@@ -2376,10 +2396,10 @@ const PPreview = ({cfg,sp,spFmt}) => {const y=buildYaml(cfg,sp,spFmt),issues=val
   <Row gap={12}>
     <MC value={cfg.treatmentType==="multi"?"Multi":"Binary"} label="Treatment"/>
     <MC value={(cfg.models||[]).length} label="Modelle"/>
-    <MC value={cfg.tuningEnabled?(cfg.tuningTrials||30)+"T":"Aus"} label="Tuning"/>
+    <MC value={cfg.tuningEnabled?(cfg.tuningTrials||100)+"T":"Aus"} label="Tuning"/>
     <MC value={cfg.validateOn==="external"?"External":"CV-"+(cfg.cvSplits||5)} label="Validierung"/>
     <MC value={cfg.bundleEnabled?"An":"Aus"} label="Bundle"/>
-    <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||2)-1]} label="Parallel"/>
+    <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||3)-1]} label="Parallel"/>
   </Row>
   <div style={{height:16}}/>
   <Sec title="Config-Vorschau"><div style={{background:"#1e1e2e",border:"none",borderRadius:10,padding:"20px 24px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,whiteSpace:"pre-wrap",maxHeight:520,overflowY:"auto",lineHeight:1.7,color:"#cdd6f4",boxShadow:"inset 0 2px 8px rgba(0,0,0,0.15)"}}>{y}</div><div style={{marginTop:14,display:"flex",gap:10}}><Btn small onClick={()=>navigator.clipboard?.writeText(y)}>Kopieren</Btn><Btn small secondary onClick={()=>{const b=new Blob([y],{type:"text/yaml"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="config.yml";a.click();}}>YAML herunterladen</Btn><Btn small secondary onClick={()=>fetch("./api/save-config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml:y,filename:"config.yml"})}).then(r=>r.json()).then(d=>{if(d.status==="done")alert("Config gespeichert: "+d.path)}).catch(()=>alert("Backend nicht erreichbar"))}>Auf Server speichern</Btn></div></Sec><Sec title="Validierung">{issues.length>0?issues.map((i,x)=><Info key={x} type="warn">{i}</Info>):<Info type="success">Konfiguration ist valide.</Info>}</Sec></>);};
@@ -2621,10 +2641,10 @@ const PRun = ({cfg,setPg,sp,spFmt,onRunningChange,onDoneChange}) => {
             <Row gap={12}>
               <MC value={cfg.treatmentType==="multi"?"Multi":"Binary"} label="Treatment"/>
               <MC value={(cfg.models||[]).length} label="Modelle"/>
-              <MC value={cfg.tuningEnabled?(cfg.tuningTrials||30)+"T":"Aus"} label="Tuning"/>
+              <MC value={cfg.tuningEnabled?(cfg.tuningTrials||100)+"T":"Aus"} label="Tuning"/>
               <MC value={cfg.validateOn==="external"?"External":"CV-"+(cfg.cvSplits||5)} label="Validierung"/>
               <MC value={cfg.bundleEnabled?"An":"Aus"} label="Bundle"/>
-              <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||2)-1]} label="Parallel"/>
+              <MC value={["Min","Mod","Hoch","Max"][(cfg.parallelLevel||3)-1]} label="Parallel"/>
             </Row>
           </>
         )}
@@ -2779,8 +2799,8 @@ function App() {
     const iv = setInterval(check, 15000);
     return () => { mounted = false; clearInterval(iv); };
   }, []);
-  const INIT_DP = {files:[""],evalFiles:[],featurePath:"",targets:["Y"],treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"data/processed",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],nanCols:[],colStats:{},dictResult:null,chunksize:300000,sasEncoding:"utf-8",dpMlflow:true,dpMlflowExp:"",balanceTreat:false,evalFileIdx:null};
-  const INIT_CFG = {expName:"rubin",seed:18,parallelLevel:2,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"catboost",tuningEnabled:true,tuningTrials:30,tuningSingleFold:false,tuningMetric:"log_loss",tuningMetricReg:"neg_mse",tuningPerRole:false,tuningPerLearner:false,fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:20,fmtMaxRows:0,cfTune:false,cfTuneMaxRows:0,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},ensembleEnabled:false,mcIters:null,mcAgg:"mean",fmtStabilityPenalty:0};
+  const INIT_DP = {files:[""],evalFiles:[],featurePath:"",targets:["Y"],treatment:"T",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"runs/data",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],nanCols:[],colStats:{},dictResult:null,chunksize:300000,sasEncoding:"utf-8",dpMlflow:true,dpMlflowExp:"",balanceTreat:false,evalFileIdx:null};
+  const INIT_CFG = {expName:"rubin",seed:42,parallelLevel:3,workDir:null,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["lgbm_importance"],fsTopPct:15,fsCorrThresh:0.9,outputDir:"",savePreds:false,predsFormat:"csv",models:["NonParamDML","DRLearner","SLearner","TLearner"],baseLearner:"catboost",tuningEnabled:true,tuningTrials:100,tuningSingleFold:false,tuningMetric:"log_loss",tuningMetricReg:"neg_mse",tuningPerRole:false,tuningPerLearner:false,tuningAutoml:"optuna",fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,cfTune:false,cfTuneIntensive:false,selMetric:"qini",higherBetter:true,refitChamp:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"runs/bundles",bundleChallengers:true,bundleMlflow:true,explEnabled:true,explMethod:"shap",explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,fsMaxFeatures:0,maxPredRows:0,tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},ensembleEnabled:false,mcIters:null,mcAgg:"mean",fmtStabilityPenalty:0};
 
   const [dp,setDp] = useState(_ss0.dp ? {...INIT_DP, ..._ss0.dp} : {...INIT_DP});
   const [cfg,set] = useState(_ss0.cfg ? {...INIT_CFG, ..._ss0.cfg} : {...INIT_CFG});
@@ -2841,10 +2861,11 @@ function App() {
     }
 
     // Modelle & Tuning
-    if(!hasModels) s.models = {st:"required",detail:"Keine Modelle"};
-    else if(cfg.hasNaN && (cfg.models||[]).some(m=>["CausalForestDML","CausalForest"].includes(m))) s.models = {st:"required",detail:"CausalForestDML/GRF + NaN"};
+    const nanBlocked = cfg.hasNaN ? new Set(["CausalForestDML","CausalForest"]) : new Set();
+    const effectiveModels = (cfg.models||[]).filter(m => !nanBlocked.has(m));
+    if(!effectiveModels.length) s.models = {st:"required",detail:"Keine Modelle"};
     else {
-      const parts = [(cfg.models||[]).length+"M"];
+      const parts = [effectiveModels.length+"M"];
       parts.push(cfg.tuningEnabled ? cfg.tuningTrials+"T" : "kein Tuning");
       if(cfg.fmtEnabled) parts.push("FMT");
       s.models = {st:"done",detail:parts.join(", ")};
@@ -2908,7 +2929,7 @@ function App() {
 
     // 2. BL-Tuning (1 Base-Learner-Fit pro Trial pro Fold)
     if (cfg.tuningEnabled) {
-      const tr = cfg.tuningTrials||30, tc = cfg.tuningSingleFold ? 1 : cv;
+      const tr = cfg.tuningTrials||100, tc = cfg.tuningSingleFold ? 1 : cv;
       const dml = m.some(x=>["NonParamDML","ParamDML","CausalForestDML"].includes(x));
       const dr = m.includes("DRLearner"), sl = m.includes("SLearner");
       const tl = m.includes("TLearner"), xl = m.includes("XLearner");
@@ -2919,14 +2940,18 @@ function App() {
       if (xl) f += tr * ((tc * K) + (cv * 2 + 2));     // pseudo_effect: nuisance + objective
     }
 
-    // 3. FMT (volle kausale Modell-Fits pro Trial, gleiche cv/mc wie Training)
+    // 3. FMT (Final-Model-Tuning)
     if (cfg.fmtEnabled) {
       const fmtInternal = mc*dc*2+1;
       (cfg.fmtModels||[]).forEach(x => {
-        if (x==="NonParamDML") f += (cfg.fmtTrials||20) * fmtInternal;
+        if (x==="NonParamDML") {
+          // RScorer: 1 Vorab-Fit (Residuen-Berechnung mit CV) + 1 Kandidat pro Trial
+          f += fmtInternal + (cfg.fmtTrials||50);
+        }
         if (x==="DRLearner") {
+          // score() + CV: jeder Fold pro Trial = voller Modell-Fit
           const fmtFolds = cfg.fmtSingleFold ? 1 : cv;
-          f += (cfg.fmtTrials||20) * fmtFolds * fmtInternal;
+          f += (cfg.fmtTrials||50) * fmtFolds * fmtInternal;
         }
       });
     }

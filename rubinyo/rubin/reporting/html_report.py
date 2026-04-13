@@ -87,6 +87,8 @@ class ReportCollector:
     # Best hyperparameters found
     best_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     fmt_best_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Combined Loss Diagnostic (Bach et al., 2024)
+    combined_loss_diagnostic: Dict[str, float] = field(default_factory=dict)
 
     def add_config(self, cfg) -> None:
         """Extrahiert Config-Zusammenfassung."""
@@ -103,10 +105,12 @@ class ReportCollector:
             "tuning_trials": cfg.tuning.n_trials if cfg.tuning.enabled else 0,
             "tuning_metric": getattr(cfg.tuning, "metric", "log_loss"),
             "tuning_single_fold": getattr(cfg.tuning, "single_fold", False),
+            "tuning_automl": getattr(cfg.tuning, "automl", "optuna"),
             "final_tuning_enabled": cfg.final_model_tuning.enabled,
             "final_tuning_trials": cfg.final_model_tuning.n_trials if cfg.final_model_tuning.enabled else 0,
             "final_tuning_models": getattr(cfg.final_model_tuning, "models", None),
             "final_tuning_single_fold": getattr(cfg.final_model_tuning, "single_fold", False),
+            "final_tuning_method": getattr(cfg.final_model_tuning, "method", "rscorer"),
             "feature_selection_enabled": cfg.feature_selection.enabled,
             "feature_selection_methods": list(cfg.feature_selection.methods) if cfg.feature_selection.enabled else [],
             "feature_selection_top_pct": cfg.feature_selection.top_pct,
@@ -695,6 +699,9 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         h += '<div class="cg">'
         h += f'<div class="cd"><div class="cd-l">Metrik</div><div class="cd-v">{escape(str(cs.get("tuning_metric","log_loss")))}</div></div>'
         h += f'<div class="cd"><div class="cd-l">Base Learner</div><div class="cd-v">{escape(str(cs.get("base_learner","lgbm")))}</div></div>'
+        automl_backend = cs.get("tuning_automl", "optuna")
+        if automl_backend != "optuna":
+            h += f'<div class="cd"><div class="cd-l">AutoML</div><div class="cd-v">{escape(str(automl_backend).upper())}</div></div>'
         if sf:
             h += '<div class="cd"><div class="cd-l">Single-Fold</div><div class="cd-v sm">aktiv (1 Fold/Trial)</div></div>'
         h += '</div>'
@@ -733,6 +740,15 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
                 h += '</tbody></table></div>'
             h += '</div></details>'
 
+        # Combined Loss Diagnostic (Bach et al., 2024)
+        if collector.combined_loss_diagnostic:
+            h += '<h3>Combined Loss Diagnostic <span style="font-size:12px;color:var(--text-l);font-weight:400">(Bach et al., 2024)</span></h3>'
+            h += '<p class="expl">Die Combined Loss ist das Produkt der Outcome- und Propensity-Fehler. Ein niedriger Wert korreliert mit besserer kausaler Schätzqualität. Modelle mit identischen Nuisance-Parametern (Task-Sharing) werden gruppiert. Meta-Learner (SLearner, TLearner, XLearner) sind nicht abgedeckt, da sie keine separate Outcome+Propensity-Nuisance-Stufe besitzen.</p>'
+            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell(e)</th><th>Combined Loss</th></tr></thead><tbody>'
+            for mname, cl_val in sorted(collector.combined_loss_diagnostic.items()):
+                h += f'<tr><td>{escape(mname)}</td><td>{cl_val:.6f}</td></tr>'
+            h += '</tbody></table></div>'
+
         _sec("tuning", "Base-Learner-Tuning", h)
 
     # ── 5. Final-Model-Tuning ──
@@ -756,7 +772,9 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += f'<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v pills">{fm_pills}</div></div>'
         else:
             h += '<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v sm">alle FMT-fähigen</div></div>'
-        h += f'<div class="cd"><div class="cd-l">Methode</div><div class="cd-v">R-Score</div></div>'
+        fmt_method = cs.get("final_tuning_method", "rscorer")
+        fmt_method_label = "DR-Score (Mahajan 2024)" if fmt_method == "dr_score" else "R-Score (Schuler 2018)"
+        h += f'<div class="cd"><div class="cd-l">Methode</div><div class="cd-v">{fmt_method_label}</div></div>'
         if fmt_sf:
             h += '<div class="cd"><div class="cd-l">DR Single-Fold</div><div class="cd-v">aktiv</div></div>'
         h += '</div>'

@@ -387,6 +387,12 @@ class AnalysisPipeline:
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
             for task_key, score in tuner.best_scores.items():
                 mlflow.log_metric(f"tuning_best__{task_key}", score)
+            mlflow.log_param("blt__automl", cfg.tuning.automl)
+            mlflow.log_param("blt__n_trials", cfg.tuning.n_trials)
+            mlflow.log_param("blt__metric", cfg.tuning.metric)
+            mlflow.log_param("blt__metric_regression", getattr(cfg.tuning, "metric_regression", "neg_mse"))
+            if cfg.tuning.models is not None:
+                mlflow.log_param("blt__models", ", ".join(cfg.tuning.models))
 
             # Kurzform: gut sichtbare Top-Level-Metriken pro Modell+Rolle
             for model_name, roles_dict in tuned_params_by_model.items():
@@ -461,6 +467,22 @@ class AnalysisPipeline:
                 except Exception:
                     pass
 
+            # ── Combined-Loss-Diagnostic (Bach et al., 2024) ──────────────
+            try:
+                cl_results = tuner.compute_combined_loss_diagnostic(
+                    model_names=cfg.models.models_to_train,
+                    tuned_params=tuned_params_by_model,
+                    X=X, Y=Y, T=T,
+                )
+                for mname, cl_val in cl_results.items():
+                    # MLflow-kompatiblen Metrik-Namen: Kommas und Leerzeichen ersetzen
+                    safe_name = mname.replace(", ", "_").replace(",", "_").replace(" ", "_")
+                    mlflow.log_metric(f"combined_loss__{safe_name}", cl_val)
+                if hasattr(self, '_report') and cl_results:
+                    self._report.combined_loss_diagnostic = cl_results
+            except Exception:
+                pass
+
         if getattr(cfg, "final_model_tuning", None) is not None and cfg.final_model_tuning.enabled:
             final_tuner = FinalModelTuner(cfg)
             # Nur die in final_model_tuning.models konfigurierten Modelle tunen.
@@ -488,9 +510,15 @@ class AnalysisPipeline:
                 mlflow.log_metric(f"tuning_best__{task_key}", score)  # Legacy-Kompatibilität
             mlflow.log_param("fmt__enabled", True)
             mlflow.log_param("fmt__n_trials", cfg.final_model_tuning.n_trials)
+            mlflow.log_param("fmt__method", getattr(cfg.final_model_tuning, "method", "rscorer"))
+            if cfg.final_model_tuning.models is not None:
+                mlflow.log_param("fmt__models", ", ".join(cfg.final_model_tuning.models))
+            if getattr(cfg.final_model_tuning, "stability_penalty", 0) > 0:
+                mlflow.log_param("fmt__stability_penalty", cfg.final_model_tuning.stability_penalty)
 
             # Logger: Zusammenfassung
             n_fmt = len(final_tuner.best_scores)
+            fmt_method = getattr(cfg.final_model_tuning, "method", "rscorer")
             if n_fmt > 0:
                 for tk, sc in final_tuner.best_scores.items():
                     if "__penalized" in tk:
@@ -501,12 +529,19 @@ class AnalysisPipeline:
                     raw_val = sc
                     pen_val = final_tuner.best_scores.get(pen_key)
                     model_short = tk.replace("final__", "")
+                    # Score-Label: je nach Modell und Methode
+                    if "drlearner" in model_short.lower():
+                        score_label = "score()"
+                    elif fmt_method == "dr_score":
+                        score_label = "DR-Score"
+                    else:
+                        score_label = "R-Score"
                     if pen_val is not None and abs(raw_val - pen_val) > 1e-10:
                         self._logger.info(
-                            "FMT R-Score: %s → %.6g (raw) / %.6g (penalized), Δ=%.6g",
-                            model_short, raw_val, pen_val, raw_val - pen_val)
+                            "FMT %s: %s → %.6g (raw) / %.6g (penalized), Δ=%.6g",
+                            score_label, model_short, raw_val, pen_val, raw_val - pen_val)
                     else:
-                        self._logger.info("FMT R-Score: %s → %.6g", model_short, raw_val)
+                        self._logger.info("FMT %s: %s → %.6g", score_label, model_short, raw_val)
             if hasattr(self, '_report'):
                 # FMT-Scores NICHT in tuning_scores mischen (die gehören zum BL-Tuning).
                 # Stattdessen in fmt_info["best_scores"] für die FMT-Report-Sektion.
@@ -519,11 +554,18 @@ class AnalysisPipeline:
                     for mname in cfg.models.models_to_train:
                         name_lower = (mname or "").lower()
                         if name_lower == "nonparamdml":
-                            fmt_plan_list.append({
-                                "model": mname, "method": "RScorer", "trials": fmt_n_trials,
-                                "fits_per_trial": 1, "total_fits": fmt_n_trials,
-                                "note": "RScorer wird einmal vorab gefittet (berechnet Residuen mit CV). Danach 1 Kandidaten-Fit pro Trial.",
-                            })
+                            if fmt_method == "dr_score":
+                                fmt_plan_list.append({
+                                    "model": mname, "method": "DR-Score", "trials": fmt_n_trials,
+                                    "fits_per_trial": 1, "total_fits": fmt_n_trials,
+                                    "note": "DR-Pseudo-Outcomes werden vorab per Cross-Fitting berechnet. Danach 1 NonParamDML-Fit pro Trial (MSE zwischen CATE und Pseudo-Outcomes).",
+                                })
+                            else:
+                                fmt_plan_list.append({
+                                    "model": mname, "method": "RScorer", "trials": fmt_n_trials,
+                                    "fits_per_trial": 1, "total_fits": fmt_n_trials,
+                                    "note": "RScorer wird einmal vorab gefittet (berechnet Residuen mit CV). Danach 1 Kandidaten-Fit pro Trial.",
+                                })
                         elif name_lower == "drlearner":
                             fpt = 1 if fmt_single_fold else fmt_cv
                             fmt_plan_list.append({
@@ -539,6 +581,8 @@ class AnalysisPipeline:
                         "n_trials": fmt_n_trials,
                         "single_fold": fmt_single_fold,
                         "cv": fmt_cv,
+                        "method": fmt_method,
+                        "stability_penalty": getattr(cfg.final_model_tuning, "stability_penalty", 0.0),
                         "models": [m for m in cfg.models.models_to_train if (m or "").lower() in {"nonparamdml", "drlearner"}],
                         "best_scores": {
                             k.replace("final__", ""): v
@@ -710,14 +754,19 @@ class AnalysisPipeline:
                         tr_idx = np.asarray(tr_idx, dtype=int)
                         break
                     X_tune, Y_tune, T_tune = X.iloc[tr_idx], Y[tr_idx], T[tr_idx]
-                    # tune_max_rows: Subsample für schnelleres Tuning auf großen Daten
-                    _cf_max = getattr(cfg.causal_forest, "tune_max_rows", None)
-                    if _cf_max and len(X_tune) > int(_cf_max):
-                        _rng = np.random.RandomState(cfg.constants.random_seed)
-                        _sub = _rng.choice(len(X_tune), size=int(_cf_max), replace=False)
-                        X_tune, Y_tune, T_tune = X_tune.iloc[_sub], Y_tune[_sub], T_tune[_sub]
-                        self._logger.info("CausalForestDML tune(): Subsampled %d → %d Rows (tune_max_rows).", len(tr_idx), len(X_tune))
-                    model.tune(Y_tune, T_tune, X=X_tune, params=getattr(cfg.causal_forest, "econml_tune_params", "auto"))
+                    # Normal: EconML-Default-Grid (12 Kombis: min_weight_fraction_leaf × max_depth × min_var_fraction_leaf)
+                    # Intensiv: Erweitertes Grid (48 Kombis: + criterion + mehr max_depth + min_var_fraction_leaf=None)
+                    _intensive = getattr(cfg.causal_forest, "tune_intensive", False)
+                    if _intensive:
+                        _cfdml_params = {
+                            "min_weight_fraction_leaf": [0.0001, 0.01],
+                            "max_depth": [3, 5, 8, None],
+                            "min_var_fraction_leaf": [None, 0.001, 0.01],
+                            "criterion": ["mse", "het"],
+                        }  # 2 × 4 × 3 × 2 = 48 Kombinationen
+                    else:
+                        _cfdml_params = "auto"  # EconML-Default: 12 Kombinationen
+                    model.tune(Y_tune, T_tune, X=X_tune, params=_cfdml_params)
                     mlflow.log_param("causal_forest__econml_tune", True)
                     self._logger.info(
                         "CausalForestDML EconML tune(): train=%d Beobachtungen. Wald-Parameter optimiert.",
@@ -749,20 +798,8 @@ class AnalysisPipeline:
                         break  # Nur erster Fold
                     X_tr, Y_tr, T_tr = X.iloc[tr_idx], Y[tr_idx], T[tr_idx]
                     X_va, Y_va, T_va = X.iloc[va_idx], Y[va_idx], T[va_idx]
-                    # tune_max_rows: Subsample für schnelleres Tuning
-                    _cf_max = getattr(cfg.causal_forest, "tune_max_rows", None)
-                    if _cf_max:
-                        _rng = np.random.RandomState(cfg.constants.random_seed)
-                        _cf_max_int = int(_cf_max)
-                        if len(X_tr) > _cf_max_int:
-                            _sub_tr = _rng.choice(len(X_tr), size=_cf_max_int, replace=False)
-                            X_tr, Y_tr, T_tr = X_tr.iloc[_sub_tr], Y_tr[_sub_tr], T_tr[_sub_tr]
-                        _va_max = max(1000, _cf_max_int // 4)
-                        if len(X_va) > _va_max:
-                            _sub_va = _rng.choice(len(X_va), size=_va_max, replace=False)
-                            X_va, Y_va, T_va = X_va.iloc[_sub_va], Y_va[_sub_va], T_va[_sub_va]
-                        self._logger.info("CausalForest tune(): Subsampled train=%d, val=%d (tune_max_rows=%d).", len(X_tr), len(X_va), _cf_max_int)
-                    result = model.tune(X_tr, T_tr, Y_tr, X_va, T_va, Y_va)
+                    _intensive = getattr(cfg.causal_forest, "tune_intensive", False)
+                    result = model.tune(X_tr, T_tr, Y_tr, X_va, T_va, Y_va, intensive=_intensive)
                     best_p = result.get("best_params", {})
                     best_loss = result.get("best_r_loss")
                     mlflow.log_param("causal_forest_pure__tune_enabled", True)
@@ -2567,6 +2604,21 @@ class AnalysisPipeline:
             msg = f"[rubin] Step {step[0]}/{total}: {label}"
             print(msg, flush=True)
 
+        # ── Arbeitsverzeichnis (work_dir) auflösen ──
+        # Alle erzeugten Artefakte (MLflow, Report, Cache) landen hier.
+        # Priorität: RUBIN_WORK_DIR (Env) > constants.work_dir (Config) > ./runs
+        work_dir = cfg.constants.resolved_work_dir
+        os.makedirs(work_dir, exist_ok=True)
+        self._work_dir = work_dir
+        self._logger.info("Arbeitsverzeichnis: %s", work_dir)
+
+        # MLflow Tracking: Alle Artefakte landen konsolidiert unter work_dir.
+        # Falls MLFLOW_TRACKING_URI gesetzt ist, hat diese Vorrang (z.B. Remote-Server).
+        # Sonst: lokales Tracking unter {work_dir}/mlruns.
+        if not os.environ.get("MLFLOW_TRACKING_URI"):
+            mlflow_dir = os.path.join(work_dir, "mlruns")
+            mlflow.set_tracking_uri(f"file://{os.path.abspath(mlflow_dir)}")
+
         mlflow.set_experiment(cfg.mlflow.experiment_name)
 
         # Prüfe ob DataPrep ein Experiment gespeichert hat (im Verzeichnis von x_file).
@@ -2775,10 +2827,12 @@ class AnalysisPipeline:
                     holdout_data = (X_h, T_h, Y_h, S_h)
 
             if removed:
-                self._logger.info(
-                    "Feature-Selektion: %d → %d Features (-%d entfernt)",
-                    X.shape[1] + len(removed), X.shape[1], len(removed),
-                )
+                total_removed = sum(len(v) for v in removed.values() if isinstance(v, list))
+                if total_removed:
+                    self._logger.info(
+                        "Feature-Selektion: %d → %d Features (-%d entfernt)",
+                        X.shape[1] + total_removed, X.shape[1], total_removed,
+                    )
             elif cfg.feature_selection.enabled:
                 self._logger.info("Feature-Selektion: Alle %d Features beibehalten.", X.shape[1])
 
@@ -2925,7 +2979,7 @@ class AnalysisPipeline:
             self._logger.info("RAM-Optimierung: Modelle, Predictions und X_full freigegeben.")
 
             # ── .rubin_cache: Immer schreiben, damit der Server den Report finden kann ──
-            cache_dir = os.path.join(os.getcwd(), ".rubin_cache")
+            cache_dir = os.path.join(self._work_dir, ".rubin_cache")
             os.makedirs(cache_dir, exist_ok=True)
 
             # ── eval_summary.json → .rubin_cache + MLflow + output_dir ──

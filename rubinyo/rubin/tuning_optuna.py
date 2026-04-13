@@ -847,6 +847,10 @@ class BaseLearnerTuner:
         return float(np.mean(scores)) if scores else -1e12
 
     def _tune_task(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray, shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        # ── Dispatch: FLAML oder Optuna ──
+        if getattr(self.cfg.tuning, "automl", "optuna") == "flaml":
+            return self._tune_task_flaml(task, X=X, Y=Y, T=T, shared_params=shared_params)
+
         indices = self._combined_indices_for_task(task, T=T, n_rows=len(X))
         X_task, row_indices, T_task = self._prepare_task_frame(task, X=X, T=T, indices=indices)
 
@@ -932,21 +936,238 @@ class BaseLearnerTuner:
             )
             return dict(fixed_defaults)
 
+    # ── FLAML AutoML Backend (Bach et al., 2024 / CausalTune) ─────────────
+    # Alternative zu Optuna: FLAML übernimmt HP-Tuning + Early Stopping automatisch.
+    # Nutzt denselben Task-Plan und dieselben Daten wie Optuna.
+
+    def _tune_task_flaml(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray,
+                         shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """FLAML-basiertes Tuning einer Nuisance-Task.
+
+        FLAML kann nur einfache Klassifikations-/Regressions-Tasks handhaben.
+        Für gruppenspezifische Tasks (TLearner, XLearner) und Pseudo-Outcome-Tasks
+        wird automatisch auf Optuna zurückgefallen, weil FLAML keine gruppenweise
+        Modellierung (K separate Modelle pro Treatment-Gruppe) unterstützt.
+        """
+        import logging
+        _log = logging.getLogger("rubin.tuning")
+
+        # ── Inkompatible Tasks → Optuna-Fallback ──────────────────────
+        # grouped_outcome*: TLearner/XLearner trainieren K separate Modelle pro
+        #   Treatment-Gruppe. FLAML kann nur ein Modell auf allen Daten trainieren.
+        # pseudo_effect: XLearner benötigt Pseudo-Outcomes aus Nuisance-Modellen
+        #   als Zwischenschritt — FLAML hat dafür keine Pipeline.
+        flaml_incompatible = {"grouped_outcome", "grouped_outcome_regression", "pseudo_effect"}
+        if task.objective_family in flaml_incompatible:
+            _log.info(
+                "FLAML-Tuning '%s': Task-Familie '%s' nicht FLAML-kompatibel "
+                "(gruppenspezifisch oder Pseudo-Outcome). Fallback auf Optuna.",
+                task.key, task.objective_family,
+            )
+            return self._tune_task_optuna_fallback(task, X=X, Y=Y, T=T, shared_params=shared_params)
+
+        try:
+            from flaml import AutoML  # type: ignore
+        except ImportError:
+            _log.warning(
+                "FLAML ist nicht installiert (pip install flaml[automl]). "
+                "Fallback auf Optuna."
+            )
+            return self._tune_task_optuna_fallback(task, X=X, Y=Y, T=T, shared_params=shared_params)
+
+        indices = self._combined_indices_for_task(task, T=T, n_rows=len(X))
+        X_task, row_indices, T_task = self._prepare_task_frame(task, X=X, T=T, indices=indices)
+
+        if task.target_name == "Y":
+            target = np.asarray(Y)[row_indices]
+        elif task.target_name == "T":
+            target = np.asarray(T)[row_indices].astype(int)
+        else:
+            target = np.asarray(Y)[row_indices]
+
+        max_rows = self.cfg.tuning.max_tuning_rows
+        if max_rows is not None and len(X_task) > int(max_rows):
+            rng = np.random.RandomState(self.seed)
+            keep = rng.choice(np.arange(len(X_task)), size=int(max_rows), replace=False)
+            X_task = X_task.iloc[keep]
+            target = target[keep]
+
+        X_mat = X_task.to_numpy() if hasattr(X_task, "to_numpy") else np.asarray(X_task)
+        base_type = (self.cfg.base_learner.type or "lgbm").lower()
+
+        # FLAML Estimator-Liste: nur den konfigurierten Base-Learner
+        estimator_map = {"lgbm": "lgbm", "catboost": "catboost"}
+        estimator_list = [estimator_map.get(base_type, "lgbm")]
+
+        # Task-Typ bestimmen
+        is_classifier = task.objective_family in {"outcome", "propensity", "grouped_outcome"}
+        flaml_task = "classification" if is_classifier else "regression"
+
+        # Metric-Mapping
+        if is_classifier:
+            metric = self.cfg.tuning.metric or "log_loss"
+        else:
+            metric = self.cfg.tuning.metric_regression or "mse"
+            if metric.startswith("neg_"):
+                metric = metric[4:]
+
+        # FLAML stoppt beim zuerst erreichten Limit (time_budget ODER max_iter).
+        # Wenn kein explizites Timeout gesetzt ist, verwenden wir ein großzügiges
+        # Zeitlimit (1h) und lassen max_iter die Kontrolle übernehmen — konsistent
+        # mit Optunas Verhalten (n_trials als primäre Steuerung).
+        # Bei explizitem timeout_seconds wird dieses als hartes Limit verwendet.
+        timeout = self.cfg.tuning.timeout_seconds or 3600
+        n_trials = int(self.cfg.tuning.n_trials)
+
+        _log.info(
+            "FLAML-Tuning '%s': task=%s, metric=%s, estimator=%s, X=%s, timeout=%ds, max_iter=%d",
+            task.key, flaml_task, metric, estimator_list, X_mat.shape, timeout, n_trials,
+        )
+
+        automl = AutoML()
+        # Parallelisierung: FLAML verwaltet Trials intern.
+        # Level 1 = single-core (Determinismus), Level 2+ = alle Kerne.
+        pl = self.cfg.constants.parallel_level
+        flaml_n_jobs = 1 if pl <= 1 else -1
+
+        # MLflow-Isolation: FLAML triggert intern sklearn/catboost/lightgbm-
+        # Autologging, das Parameter in den aktiven MLflow-Run schreibt. Bei
+        # mehreren Tasks crasht das mit "Changing param values is not allowed".
+        #
+        # Dreifache Absicherung:
+        # 1. Alle Autolog-Integrationen deaktivieren
+        # 2. Aktiven MLflow-Run temporär aus dem Thread-Local-Stack entfernen
+        #    (FLAML sieht keinen aktiven Run → kann nichts loggen)
+        # 3. FLAML-eigenes mlflow_logging=False
+        _mlflow_run_stack_backup = None
+        try:
+            import mlflow as _mlflow
+            # 1. Framework-Autologging deaktivieren
+            for _fw in ["sklearn", "catboost", "lightgbm", "xgboost"]:
+                try:
+                    _mod = getattr(_mlflow, _fw, None)
+                    if _mod and hasattr(_mod, "autolog"):
+                        _mod.autolog(disable=True)
+                except Exception:
+                    pass
+            try:
+                _mlflow.autolog(disable=True)
+            except Exception:
+                pass
+            # 2. Aktiven Run aus Thread-Local entfernen (ohne end_run!)
+            _fluent = _mlflow.tracking.fluent
+            if hasattr(_fluent, "_active_run_stack") and _fluent._active_run_stack:
+                _mlflow_run_stack_backup = list(_fluent._active_run_stack)
+                _fluent._active_run_stack.clear()
+        except Exception:
+            pass
+
+        automl_settings = {
+            "task": flaml_task,
+            "metric": metric,
+            "estimator_list": estimator_list,
+            "time_budget": timeout,
+            "max_iter": n_trials,
+            "n_jobs": flaml_n_jobs,
+            "seed": self.seed,
+            "verbose": 0,
+            "eval_method": "cv",
+            "n_splits": int(self.cfg.tuning.cv_splits),
+            "mlflow_logging": False,  # FLAML-eigenes MLflow-Logging deaktivieren
+        }
+
+        try:
+            automl.fit(X_mat, target, **automl_settings)
+            best_config = dict(automl.best_config or {})
+
+            # ── FLAML-Config sanitisieren ──────────────────────────────
+            # FLAML nutzt intern Early Stopping und setzt n_estimators sehr
+            # hoch (z.B. 8192). Ohne Eval-Daten in rubins build_base_learner
+            # würden alle 8192 Iterationen trainiert → langsam + Overfitting.
+            #
+            # 1. early_stopping_rounds entfernen (Training-Param, ohne Eval-Daten nutzlos)
+            # 2. n_estimators auf tatsächliche beste Iteration cappen (wenn verfügbar)
+            #    oder auf 600 (Optuna BLT Default-Maximum)
+            _flaml_only_params = {"early_stopping_rounds", "od_wait", "FLAML_sample_size"}
+            for p in _flaml_only_params:
+                best_config.pop(p, None)
+
+            _n_est_key = "n_estimators" if "n_estimators" in best_config else "iterations"
+            if _n_est_key in best_config and int(best_config[_n_est_key]) > 600:
+                # Versuche die tatsächliche Iterationszahl vom besten Modell zu lesen
+                _actual = None
+                try:
+                    _best_model = automl.model
+                    if hasattr(_best_model, "best_iteration_"):
+                        _actual = int(_best_model.best_iteration_) + 1
+                    elif hasattr(_best_model, "tree_count_"):
+                        _actual = int(_best_model.tree_count_())
+                    elif hasattr(_best_model, "n_estimators"):
+                        _actual = int(_best_model.n_estimators)
+                except Exception:
+                    pass
+
+                _cap = min(_actual or 600, 600)
+                _log.info(
+                    "FLAML '%s': %s=%d → capped auf %d (FLAML nutzt intern Early Stopping, "
+                    "rubin trainiert ohne Eval-Daten).",
+                    task.key, _n_est_key, best_config[_n_est_key], _cap,
+                )
+                best_config[_n_est_key] = _cap
+
+            # Score speichern (FLAML minimiert, wir brauchen negiert für Konsistenz)
+            best_loss = float(automl.best_loss) if hasattr(automl, "best_loss") else 0.0
+            self.best_scores[task.key] = -best_loss if is_classifier else -best_loss
+
+            _log.info(
+                "FLAML-Tuning '%s' abgeschlossen: best_loss=%.6g, best_config=%s",
+                task.key, best_loss, best_config,
+            )
+
+            # Fixed defaults mergen
+            fixed_defaults = dict(self.cfg.base_learner.fixed_params or {})
+            return {**fixed_defaults, **best_config}
+
+        except Exception as e:
+            _log.warning("FLAML-Tuning '%s' fehlgeschlagen: %s. Fallback auf Defaults.", task.key, e)
+            return dict(self.cfg.base_learner.fixed_params or {})
+
+        finally:
+            # MLflow Active-Run-Stack wiederherstellen
+            if _mlflow_run_stack_backup is not None:
+                try:
+                    import mlflow as _mlflow
+                    _fluent = _mlflow.tracking.fluent
+                    _fluent._active_run_stack.clear()
+                    _fluent._active_run_stack.extend(_mlflow_run_stack_backup)
+                except Exception:
+                    pass
+
+    def _tune_task_optuna_fallback(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray,
+                                    T: np.ndarray, shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """Optuna-Pfad ohne Dispatch-Check (für FLAML-Fallback)."""
+        # Temporär automl auf optuna setzen, _tune_task aufrufen, zurücksetzen
+        orig = self.cfg.tuning.automl
+        object.__setattr__(self.cfg.tuning, "automl", "optuna")
+        try:
+            return self._tune_task(task, X=X, Y=Y, T=T, shared_params=shared_params)
+        finally:
+            object.__setattr__(self.cfg.tuning, "automl", orig)
+
     def _tuning_n_jobs(self) -> int:
         """Anzahl paralleler Optuna-Trials basierend auf parallel_level und base_learner.
 
         Level 1-2: 1 (sequentiell, alle Kerne an den einzelnen Fit)
-        Level 3:   moderate Parallelisierung (max 4)
-        Level 4:   max. parallele Trials (max 8)
-
-        Obergrenze 8: TPE braucht sequentielle Wellen zum Lernen.
-        Bei 50 Trials und 8 parallelen Jobs gibt es ~6 Wellen — genug für
-        effektive Bayesian Optimization. Mehr parallele Trials reduzieren die
-        Lernfähigkeit ohne proportionalen Speedup.
+        Level 3:   moderate Parallelisierung (empfohlen — bester Kompromiss
+                   zwischen Exploration und Geschwindigkeit)
+        Level 4:   max. parallele Trials
 
         CatBoost vs LightGBM: CatBoost's Symmetric-Tree-Algorithmus skaliert
         schlechter mit wenigen Threads pro Fit. Deshalb werden bei CatBoost
         WENIGER parallele Trials gestartet, dafür mit MEHR Threads pro Fit.
+        Beispiel 64 Kerne Level 4: LightGBM 32 Trials × 2 Kerne,
+        CatBoost 16 Trials × 4 Kerne (gleiche CPU-Auslastung, aber
+        CatBoost nutzt 4 Threads pro Fit effizienter als 2).
         """
         pl = self.cfg.constants.parallel_level
         if pl <= 2:
@@ -955,37 +1176,50 @@ class BaseLearnerTuner:
         n_cpus = os.cpu_count() or 1
         is_catboost = (self.cfg.base_learner.type or "").lower() == "catboost"
         if pl >= 4:
+            # Level 4: CatBoost braucht min. 4 Kerne/Fit, LightGBM reicht 2
             min_cores_per_fit = 4 if is_catboost else 2
-            raw = max(1, n_cpus // min_cores_per_fit)
-            return min(raw, 6 if is_catboost else 8)  # Cap für TPE-Learning
+            return max(1, n_cpus // min_cores_per_fit)
         # Level 3: moderate Parallelisierung
-        return min(max(1, n_cpus // 4), 4)
+        return max(1, n_cpus // 4)
 
     def tune_all(self, model_names: List[str], X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> Dict[str, Dict[str, Dict[str, Any]]]:
         if not self.cfg.tuning.enabled:
             return {}
+
+        # Modellfilter: Nur für ausgewählte Modelle Tuning-Tasks generieren.
+        # Nicht-ausgewählte Modelle nutzen base_learner.fixed_params.
+        tuning_models = self.cfg.tuning.models
+        if tuning_models is not None:
+            active_models = [m for m in model_names if m in tuning_models]
+            skipped = [m for m in model_names if m not in tuning_models]
+        else:
+            active_models = list(model_names)
+            skipped = []
 
         import logging
         _tlog = logging.getLogger("rubin.tuning")
         _tlog.info(
             "tune_all gestartet: models=%s, X=%s, Y=%s (unique=%s), T=%s (unique=%s), "
             "cv_splits=%d, n_trials=%d, parallel_trials=%d",
-            model_names, X.shape, np.asarray(Y).shape, np.unique(Y).tolist(),
+            active_models, X.shape, np.asarray(Y).shape, np.unique(Y).tolist(),
             np.asarray(T).shape, np.unique(T).tolist(),
             self.cfg.tuning.cv_splits, self.cfg.tuning.n_trials,
             self._tuning_n_jobs(),
         )
+        if skipped:
+            _tlog.info(
+                "BLT-Modellfilter: %s übersprungen (nutzen fixed_params). Aktiv: %s",
+                skipped, active_models,
+            )
 
-        if any((m or "").lower() == "causalforestdml" for m in model_names):
-            # Hinweis: CausalForestDML-Waldparameter werden über EconML tune() bestimmt,
-            # nicht über Optuna. Optuna optimiert nur die Nuisance-Modelle (model_y, model_t).
+        if any((m or "").lower() == "causalforestdml" for m in active_models):
             import logging
             logging.getLogger("rubin.tuning").debug(
                 "CausalForestDML erkannt: Wald-Parameter werden über EconML tune() bestimmt, "
                 "nicht über Optuna. Optuna optimiert nur die Nuisance-Modelle."
             )
 
-        plan = self._build_plan(model_names)
+        plan = self._build_plan(active_models)
         tuned_by_task: Dict[str, Dict[str, Any]] = {}
 
         for task in sorted(plan.values(), key=self._task_priority):
@@ -1014,6 +1248,126 @@ class BaseLearnerTuner:
     def tune(self, model_name: str, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> TunedSet:
         tuned = self.tune_all([model_name], X=X, Y=Y, T=T)
         return TunedSet(role_params=dict(tuned.get(model_name, {}) or {}))
+
+    # ── Combined-Loss-Diagnostic (Bach et al., 2024) ──────────────────────
+    # Die Combined Loss misst das Produkt der Nuisance-Fehler (Outcome × Propensity).
+    # Ein niedriger Wert korreliert mit besserer kausaler Schätzqualität.
+    # Wird NACH dem Tuning als Post-hoc-Diagnostic berechnet, nicht als Tuning-Metrik.
+
+    def compute_combined_loss_diagnostic(
+        self,
+        model_names: List[str],
+        tuned_params: Dict[str, Dict[str, Dict[str, Any]]],
+        X: pd.DataFrame,
+        Y: np.ndarray,
+        T: np.ndarray,
+    ) -> Dict[str, float]:
+        """Berechnet die Combined Loss (Bach et al., 2024) als Post-hoc-Diagnostic.
+
+        Die Combined Loss ist das Produkt der CV-evaluierten Outcome- und
+        Propensity-Fehler. Sie korreliert mit der Qualität der kausalen Schätzung
+        und dient als aggregierte Güte-Kennzahl nach dem Base-Learner-Tuning.
+
+        Bei aktivem Task-Sharing (Default) teilen sich DML-Modelle dieselben
+        Nuisance-Parameter. In diesem Fall wird eine Combined Loss pro
+        eindeutiger Parameterkombination berechnet, nicht pro Modell.
+
+        Meta-Learner (SLearner, TLearner, XLearner) und CausalForest werden
+        nicht unterstützt, da sie kein separates Outcome+Propensity-Nuisance-
+        Setup haben (Bach et al. definiert Combined Loss für DML/DR-Modelle).
+
+        Returns:
+            Dict mit combined_loss, z.B. {"NonParamDML, CausalForestDML": 0.023, "DRLearner": 0.019}
+        """
+        import logging
+        _log = logging.getLogger("rubin.tuning")
+
+        if not self.cfg.tuning.enabled or not getattr(self.cfg.tuning, "combined_loss_diagnostic", True):
+            return {}
+
+        base_type = (self.cfg.base_learner.type or "lgbm").lower()
+        fixed = dict(self.cfg.base_learner.fixed_params or {})
+        seed = int(self.cfg.constants.random_seed)
+        n_splits = int(self.cfg.tuning.cv_splits)
+        results: Dict[str, float] = {}
+
+        # Parallelisierung: Diagnostic läuft sequentiell (kein paralleles Trial),
+        # daher alle Kerne an jeden einzelnen Fit. Level 1 = single-core (Determinismus).
+        pl = self.cfg.constants.parallel_level
+        pj = 1 if pl <= 1 else -1
+
+        # Nur DML/DR-Modelle haben sowohl Outcome als auch Propensity
+        dml_models = {"NonParamDML", "ParamDML", "CausalForestDML", "DRLearner"}
+        eligible = [m for m in model_names if m in dml_models]
+        if not eligible:
+            return {}
+
+        # Gruppiere Modelle nach ihren tatsächlichen Nuisance-Parametern,
+        # um bei Task-Sharing Duplikate zu vermeiden.
+        # Key = (out_params_frozen, prop_params_frozen, out_task), Value = [model_names]
+        param_groups: Dict[tuple, List[str]] = {}
+
+        for mname in eligible:
+            roles = tuned_params.get(mname, {})
+            out_role = "model_y" if mname != "DRLearner" else "model_regression"
+            prop_role = "model_t" if mname != "DRLearner" else "model_propensity"
+            out_params = roles.get(out_role, roles.get("default", {}))
+            prop_params = roles.get(prop_role, roles.get("default", {}))
+            out_task = "classifier" if mname != "DRLearner" else "regressor"
+
+            # Frozen key für Gruppierung
+            key = (
+                tuple(sorted(out_params.items())),
+                tuple(sorted(prop_params.items())),
+                out_task,
+            )
+            param_groups.setdefault(key, []).append(mname)
+
+        for (out_frozen, prop_frozen, out_task), group_models in param_groups.items():
+            out_params = dict(out_frozen)
+            prop_params = dict(prop_frozen)
+            label = ", ".join(group_models)
+
+            try:
+                from sklearn.metrics import mean_squared_error, log_loss as _log_loss
+
+                X_np = X.values if hasattr(X, "values") else np.asarray(X)
+
+                outcome_losses = []
+                propensity_losses = []
+
+                for tr, va in _iter_stratified_or_kfold(T.astype(int), n_splits, seed):
+                    # Outcome model
+                    out_model = build_base_learner(base_type, {**fixed, **out_params}, seed=seed,
+                                                   task=out_task, parallel_jobs=pj)
+                    out_model.fit(X_np[tr], Y[tr])
+                    if out_task == "classifier" and hasattr(out_model, "predict_proba"):
+                        out_pred = out_model.predict_proba(X_np[va])
+                        outcome_losses.append(float(_log_loss(Y[va], out_pred)))
+                    else:
+                        out_pred = out_model.predict(X_np[va])
+                        outcome_losses.append(float(mean_squared_error(Y[va], out_pred)))
+
+                    # Propensity model
+                    prop_model = build_base_learner(base_type, {**fixed, **prop_params}, seed=seed,
+                                                    task="classifier", parallel_jobs=pj)
+                    prop_model.fit(X_np[tr], T[tr])
+                    prop_pred = prop_model.predict_proba(X_np[va])
+                    propensity_losses.append(float(_log_loss(T[va], prop_pred)))
+
+                avg_out = float(np.mean(outcome_losses))
+                avg_prop = float(np.mean(propensity_losses))
+                combined = avg_out * avg_prop
+
+                results[label] = combined
+                _log.info(
+                    "Combined Loss Diagnostic [%s]: outcome=%.6g, propensity=%.6g, combined=%.6g",
+                    label, avg_out, avg_prop, combined,
+                )
+            except Exception as e:
+                _log.warning("Combined Loss Diagnostic [%s]: Fehler – %s", label, e)
+
+        return results
 
 
 class FinalModelTuner:
@@ -1154,55 +1508,132 @@ persistiert und in weiteren Folds wiederverwendet."""
 
         if name == "nonparamdml":
             from econml.dml import NonParamDML
-            from econml.score import RScorer
 
-            # RScorer nutzt eine R^2-ähnliche Kennzahl für das R-Loss.
-            scorer = RScorer(
-                model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
-                model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
-                discrete_treatment=True,
-                discrete_outcome=True,
-                cv=int(self.cfg.data_processing.cross_validation_splits),
-                random_state=self.seed,
-            )
-            scorer.fit(Y_tune, T_tune, X=X_tune)
-
+            fmt_method = getattr(self.cfg.final_model_tuning, "method", "rscorer")
             study = self._create_study(f"final__{model_name}__{base_type}")
             stability_penalty = float(getattr(self.cfg.final_model_tuning, "stability_penalty", 0.0))
 
-            def objective(trial):
-                cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
-                # LGBM: subsample_freq=1 erzwingt Bagging in jedem Boosting-Schritt (analog causaluka)
-                if base_type == "lgbm":
-                    cand_params.setdefault("subsample_freq", 1)
-                est = NonParamDML(
+            if fmt_method == "dr_score":
+                # ── DR-Score (Mahajan et al., 2024) ───────────────────────
+                # Berechnet DR-Pseudo-Outcomes einmal vorab, dann MSE(τ_DR, CATE).
+                # DR-Pseudo-Outcome: Γ = μ̂(1,X) - μ̂(0,X) + T(Y-μ̂(1,X))/ê(X) - (1-T)(Y-μ̂(0,X))/(1-ê(X))
+                import logging
+                _flog = logging.getLogger("rubin.tuning")
+                _flog.info("FMT NonParamDML: DR-Score-Methode (Mahajan et al., 2024)")
+
+                # Nuisance-Modelle fitten und DR-Pseudo-Outcomes berechnen (Cross-Fitted)
+                cv_splits = int(self.cfg.data_processing.cross_validation_splits)
+                dr_pseudo = np.zeros(len(Y_tune), dtype=float)
+
+                for tr, va in _iter_stratified_or_kfold(T_tune.astype(int), cv_splits, self.seed):
+                    # Outcome-Modell: E[Y|T,X] — je Treatment-Gruppe
+                    X_tr_np = X_tune.iloc[tr].values
+                    X_va_np = X_tune.iloc[va].values
+                    mu_1 = np.zeros(len(va), dtype=float)
+                    mu_0 = np.zeros(len(va), dtype=float)
+                    for t_val in [0, 1]:
+                        mask = T_tune[tr] == t_val
+                        if mask.sum() < 2:
+                            continue
+                        out_model = self._build_regressor(base_type, base_fixed_params, tuned_roles.get("model_y", {}))
+                        out_model.fit(X_tr_np[mask], Y_tune[tr][mask])
+                        pred = out_model.predict(X_va_np)
+                        if t_val == 1:
+                            mu_1 = pred
+                        else:
+                            mu_0 = pred
+
+                    # Propensity: P(T=1|X)
+                    prop_model = self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {}))
+                    prop_model.fit(X_tr_np, T_tune[tr])
+                    e_x = prop_model.predict_proba(X_va_np)
+                    if e_x.ndim == 2:
+                        e_x = e_x[:, 1]
+                    e_x = np.clip(e_x, 0.01, 0.99)
+
+                    # DR Pseudo-Outcome
+                    T_va = T_tune[va]
+                    Y_va = Y_tune[va]
+                    dr_pseudo[va] = (mu_1 - mu_0
+                                     + T_va * (Y_va - mu_1) / e_x
+                                     - (1 - T_va) * (Y_va - mu_0) / (1 - e_x))
+
+                def objective(trial):
+                    cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
+                    if base_type == "lgbm":
+                        cand_params.setdefault("subsample_freq", 1)
+                    est = NonParamDML(
+                        model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
+                        model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
+                        model_final=self._build_regressor(base_type, fmt_fixed_params, cand_params),
+                        discrete_treatment=True, discrete_outcome=True,
+                        cv=int(self.cfg.data_processing.cross_validation_splits),
+                        mc_iters=self.cfg.data_processing.mc_iters,
+                        mc_agg=self.cfg.data_processing.mc_agg,
+                        random_state=self.seed,
+                    )
+                    est.fit(Y_tune, T_tune, X=X_tune)
+                    cate = est.effect(X_tune).ravel()
+
+                    # DR-Score: negierter MSE zwischen DR-Pseudo-Outcomes und CATE (höher = besser)
+                    from sklearn.metrics import mean_squared_error
+                    dr_mse = float(mean_squared_error(dr_pseudo, cate))
+                    dr_score = -dr_mse
+                    trial.set_user_attr("r_score_raw", dr_score)
+
+                    if stability_penalty > 0:
+                        cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
+                        penalty = stability_penalty * float(np.log1p(cv))
+                        trial.set_user_attr("stability_cv", cv)
+                        trial.set_user_attr("stability_penalty_value", penalty)
+                        return dr_score - penalty
+                    return dr_score
+
+            else:
+                # ── RScorer (Schuler et al., 2018 / Nie & Wager, 2017) ────
+                from econml.score import RScorer
+
+                scorer = RScorer(
                     model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
                     model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
-                    model_final=self._build_regressor(base_type, fmt_fixed_params, cand_params),
                     discrete_treatment=True,
                     discrete_outcome=True,
                     cv=int(self.cfg.data_processing.cross_validation_splits),
-                    mc_iters=self.cfg.data_processing.mc_iters,
-                    mc_agg=self.cfg.data_processing.mc_agg,
                     random_state=self.seed,
                 )
-                est.fit(Y_tune, T_tune, X=X_tune)
-                r_score = float(scorer.score(est))
-                trial.set_user_attr("r_score_raw", r_score)
+                scorer.fit(Y_tune, T_tune, X=X_tune)
 
-                if stability_penalty > 0:
-                    cate = est.effect(X_tune).ravel()
-                    cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
-                    penalty = float(np.log1p(cv))
-                    total_pen = stability_penalty * penalty
-                    trial.set_user_attr("stability_cv", cv)
-                    trial.set_user_attr("stability_penalty_value", total_pen)
-                    import logging
-                    logging.getLogger("rubin.tuning").debug(
-                        "FMT penalty: r_score=%.6g, cv=%.4f, log1p(cv)=%.4f, penalty=%.6g, penalized=%.6g",
-                        r_score, cv, penalty, total_pen, r_score - total_pen)
-                    return r_score - total_pen
-                return r_score
+                def objective(trial):
+                    cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
+                    if base_type == "lgbm":
+                        cand_params.setdefault("subsample_freq", 1)
+                    est = NonParamDML(
+                        model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
+                        model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
+                        model_final=self._build_regressor(base_type, fmt_fixed_params, cand_params),
+                        discrete_treatment=True, discrete_outcome=True,
+                        cv=int(self.cfg.data_processing.cross_validation_splits),
+                        mc_iters=self.cfg.data_processing.mc_iters,
+                        mc_agg=self.cfg.data_processing.mc_agg,
+                        random_state=self.seed,
+                    )
+                    est.fit(Y_tune, T_tune, X=X_tune)
+                    r_score = float(scorer.score(est))
+                    trial.set_user_attr("r_score_raw", r_score)
+
+                    if stability_penalty > 0:
+                        cate = est.effect(X_tune).ravel()
+                        cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
+                        penalty = float(np.log1p(cv))
+                        total_pen = stability_penalty * penalty
+                        trial.set_user_attr("stability_cv", cv)
+                        trial.set_user_attr("stability_penalty_value", total_pen)
+                        import logging
+                        logging.getLogger("rubin.tuning").debug(
+                            "FMT penalty: r_score=%.6g, cv=%.4f, log1p(cv)=%.4f, penalty=%.6g, penalized=%.6g",
+                            r_score, cv, penalty, total_pen, r_score - total_pen)
+                        return r_score - total_pen
+                    return r_score
 
             study.optimize(objective, n_trials=int(self.cfg.final_model_tuning.n_trials),
                            timeout=self.cfg.final_model_tuning.timeout_seconds,

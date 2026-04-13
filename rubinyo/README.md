@@ -27,8 +27,10 @@ und erzeugt ein reproduzierbares Lockfile. Installation: `curl -fsSL https://pix
 
 ```bash
 cd rubin_repo
-pixi install                # Environment aufbauen (einmalig)
-pixi run analyze-quick      # Smoke-Test (postinstall läuft automatisch)
+export PIXI_TLS_ROOT_CERTS="all"  # Firmennetz: Conda-Channels
+export UV_NATIVE_TLS=true           # Firmennetz: PyPI-Pakete (uv)
+pixi install                # Environment aufbauen (einmalig, inkl. PyPI-Pakete)
+pixi run analyze-quick      # Smoke-Test
 pixi run app                # Web-UI starten
 pixi run test               # Tests ausführen
 ```
@@ -69,8 +71,8 @@ pixi run analyze -- --config config.yml --export-bundle --bundle-dir bundles
 
 ### Production Scoring
 ```bash
-pixi run score -- --bundle bundles/<bundle_id> --x new_X.parquet --out scores.csv
-# oder: python run_production.py --bundle bundles/<bundle_id> --x new_X.parquet --out scores.csv
+pixi run score -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --out scores.csv
+# oder: python run_production.py --bundle runs/bundles/<bundle_id> --x new_X.parquet --out scores.csv
 # Standard: Champion aus model_registry.json
 # Optional: --model-name NonParamDML oder --use-all-models
 # Surrogate: --use-surrogate (interpretierbarer Einzelbaum)
@@ -128,7 +130,10 @@ Siehe `docs/README_DE.md` für Einstieg und Details. Wichtige Themen sind:
 Abgedeckt sind unter anderem:
 - Schema-Validierung in Production (inkl. `schema_report.json`)
 - persistente Optuna-Studies (SQLite)
+- Alternatives AutoML-Backend: FLAML (Microsoft AutoML) für Base-Learner-Tuning neben Optuna
 - Uplift-Metriken (Qini, AUUC, Uplift@k, Policy Value)
+- Combined Loss Diagnostic (Bach et al., 2024): Post-hoc-Qualitätskennzahl nach dem Base-Learner-Tuning
+- Final-Model-Tuning: RScorer (Standard) oder DR-Score (Mahajan et al., 2024) für NonParamDML
 - Explainability (SHAP/Permutation) integriert in die Analyse-Pipeline + separater CLI-Runner für Ad-hoc-Analysen
 - NaN-Toleranz: Alle Modelle außer CausalForestDML und CausalForest können mit fehlenden Werten umgehen (via LightGBM/CatBoost). CausalForestDML, CausalForest und die Feature-Selektionsmethode `causal_forest` (GRF) werden bei NaN automatisch übersprungen.
 - Validierungsmodi: Cross-Validation (K-Fold), External (separater Eval-Datensatz, leakage-frei) und Train Many Evaluate One (Eval-Maske auf Teilmenge)
@@ -143,8 +148,8 @@ Explainability ist in die Analyse-Pipeline integriert: Bei `shap_values.calculat
 Zusätzlich steht ein separater CLI-Runner für nachträgliche Ad-hoc-Analysen auf Bundle-Basis zur Verfügung:
 
 ```bash
-pixi run explain -- --bundle bundles/<bundle_id> --x new_X.parquet --out-dir explain
-# oder: python run_explain.py --bundle bundles/<bundle_id> --x new_X.parquet --out-dir explain
+pixi run explain -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --out-dir explain
+# oder: python run_explain.py --bundle runs/bundles/<bundle_id> --x new_X.parquet --out-dir explain
 ```
 
 Hinweis zu Abhängigkeiten:
@@ -224,6 +229,6 @@ Modelle als **Challenger** dokumentiert.
 Champion umschalten:
 
 ```bash
-pixi run promote -- --bundle bundles/<bundle_id> --model <ModelName>
-# oder: python run_promote.py --bundle bundles/<bundle_id> --model <ModelName>
+pixi run promote -- --bundle runs/bundles/<bundle_id> --model <ModelName>
+# oder: python run_promote.py --bundle runs/bundles/<bundle_id> --model <ModelName>
 ```

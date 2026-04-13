@@ -84,7 +84,6 @@ tuning:
 final_model_tuning:
   enabled: true
   n_trials: 30
-  cv_splits: 5
   search_space:
     lgbm:
       n_estimators:

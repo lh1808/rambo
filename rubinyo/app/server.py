@@ -63,8 +63,15 @@ log = logging.getLogger("rubin")
 APP_DIR = Path(__file__).resolve().parent
 ROOT = APP_DIR.parent
 FRONTEND = APP_DIR / "frontend"
-UPLOAD_DIR = ROOT / "data" / "uploads"
-PROGRESS_FILE = ROOT / ".rubin_progress.json"
+
+# Arbeitsverzeichnis: RUBIN_WORK_DIR (Env) > ROOT/runs (Default)
+# Hält das Repository-Verzeichnis sauber — alle erzeugten Artefakte landen hier.
+_work_dir_env = os.environ.get("RUBIN_WORK_DIR")
+WORK_DIR = Path(_work_dir_env).resolve() if _work_dir_env else ROOT / "runs"
+WORK_DIR.mkdir(parents=True, exist_ok=True)
+
+UPLOAD_DIR = WORK_DIR / "uploads"
+PROGRESS_FILE = WORK_DIR / ".rubin_progress.json"
 
 app = Flask(__name__, static_folder=str(FRONTEND), static_url_path="")
 
@@ -108,6 +115,19 @@ def _get_state():
 # ══════════════════════════════════════════════════════
 # HEALTH CHECK
 # ══════════════════════════════════════════════════════
+
+@app.route("/api/work-dir")
+def get_work_dir():
+    """Gibt das aktuelle Arbeitsverzeichnis zurück (für UI-Anzeige)."""
+    env = os.environ.get("RUBIN_WORK_DIR")
+    return jsonify({
+        "work_dir": str(WORK_DIR),
+        "source": "RUBIN_WORK_DIR" if env else "default (runs/)",
+        "upload_dir": str(UPLOAD_DIR),
+        "cache_dir": str(WORK_DIR / ".rubin_cache"),
+        "mlruns_dir": str(WORK_DIR / "mlruns"),
+    })
+
 
 @app.route("/api/health")
 def health():
@@ -290,19 +310,21 @@ def upload_file():
     if not safe_name:
         return jsonify({"status": "error", "message": "Ungueltiger Dateiname."}), 400
 
-    target_dir = request.form.get("target_dir", "data/uploads")
-    target = (ROOT / target_dir).resolve()
-
-    # Path-Traversal-Schutz fuer target_dir
-    if not str(target).startswith(str(ROOT.resolve())):
-        log.warning("Path-Traversal-Versuch blockiert (upload target_dir): %s", target_dir)
-        abort(403)
+    target_dir = request.form.get("target_dir", "")
+    if target_dir:
+        target = (ROOT / target_dir).resolve()
+        # Path-Traversal-Schutz: Nur ROOT und WORK_DIR erlaubt
+        if not (str(target).startswith(str(ROOT.resolve())) or str(target).startswith(str(WORK_DIR.resolve()))):
+            log.warning("Path-Traversal-Versuch blockiert (upload target_dir): %s", target_dir)
+            abort(403)
+    else:
+        target = UPLOAD_DIR
 
     target.mkdir(parents=True, exist_ok=True)
 
     filepath = target / safe_name
     f.save(str(filepath))
-    log.info("Datei hochgeladen: %s (%d bytes)", filepath.relative_to(ROOT), filepath.stat().st_size)
+    log.info("Datei hochgeladen: %s (%d bytes)", filepath, filepath.stat().st_size)
 
     return jsonify({
         "status": "done",
@@ -1006,7 +1028,7 @@ def run_analysis():
     yaml_text = data.get("yaml", "")
     if not yaml_text or not yaml_text.strip():
         return jsonify({"status": "error", "message": "Keine Konfiguration gesendet."}), 400
-    config_dir = ROOT / ".rubin_cache"
+    config_dir = WORK_DIR / ".rubin_cache"
     config_dir.mkdir(parents=True, exist_ok=True)
 
     # Alte Ergebnisse löschen, damit kein veralteter Report angezeigt wird
@@ -1036,7 +1058,7 @@ def run_dataprep():
     yaml_text = data.get("yaml", "")
     if not yaml_text or not yaml_text.strip():
         return jsonify({"status": "error", "message": "Keine Konfiguration gesendet."}), 400
-    config_dir = ROOT / ".rubin_cache"
+    config_dir = WORK_DIR / ".rubin_cache"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "config_dataprep_ui.yml"
     config_path.write_text(yaml_text, encoding="utf-8")
@@ -1103,7 +1125,7 @@ def reset_state():
         except (OSError, ProcessLookupError):
             pass
     # Cache des letzten Laufs löschen (damit kein alter Report angezeigt wird)
-    cache_dir = ROOT / ".rubin_cache"
+    cache_dir = WORK_DIR / ".rubin_cache"
     if cache_dir.exists():
         import shutil
         shutil.rmtree(cache_dir, ignore_errors=True)
@@ -1138,7 +1160,7 @@ def _scan_result_files() -> list[dict]:
                 pass
 
     # Bekannte Ergebnis-Dateien (Cache zuerst, dann output/, dann ROOT)
-    search_dirs = [ROOT / ".rubin_cache", ROOT / "output", ROOT]
+    search_dirs = [WORK_DIR / ".rubin_cache", ROOT / "output", ROOT]
     known = [
         ("analysis_report.html", "HTML-Report"),
         ("uplift_eval_summary.json", "Evaluationsmetriken"),
@@ -1156,7 +1178,7 @@ def _scan_result_files() -> list[dict]:
                 break
 
     # Config (now in .rubin_cache)
-    cfg_file = ROOT / ".rubin_cache" / "config_ui.yml"
+    cfg_file = WORK_DIR / ".rubin_cache" / "config_ui.yml"
     if cfg_file.exists():
         _add(cfg_file, "Verwendete Konfiguration")
 
@@ -1228,7 +1250,7 @@ def get_report():
     metrics = None
 
     # 1. Priorität: .rubin_cache (vom letzten Analyselauf, immer aktuell)
-    cache_dir = ROOT / ".rubin_cache"
+    cache_dir = WORK_DIR / ".rubin_cache"
     cache_report = cache_dir / "analysis_report.html"
     cache_metrics = cache_dir / "uplift_eval_summary.json"
     if cache_report.is_file():

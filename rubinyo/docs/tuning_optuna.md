@@ -35,7 +35,7 @@ Dies gilt sowohl für das Base-Learner-Tuning als auch für das Final-Model-Tuni
 
 TPE (Tree-structured Parzen Estimator) lernt aus den Ergebnissen vorheriger Trials, welche Hyperparameter-Regionen vielversprechend sind. Bei parallelen Trials fehlen diese Ergebnisse teilweise, weil mehrere Trials gleichzeitig laufen, ohne voneinander zu wissen. Optuna kompensiert mit der „Constant Liar"-Strategie: Laufende Trials bekommen Dummy-Werte, damit TPE trotzdem informiert vorschlagen kann.
 
-Beispiel mit 30 Trials auf 16 Kernen:
+Beispiel mit 100 Trials auf 16 Kernen:
 
 | Level | Parallele Trials | Runden | Random-Starts | Informierte Trials | Speedup |
 |-------|-----------------|--------|---------------|-------------------|---------|
@@ -77,9 +77,29 @@ Je nach Konfiguration werden getrennte Parameter gesucht:
 
 Das Ergebnis wird in einem JSON-Artefakt gespeichert und beim Modellbau angewendet.
 
+## Modellauswahl für BL-Tuning (`models`)
+
+Standardmäßig (`models: null`) werden die Nuisance-Tasks aller konfigurierten Modelle getuned. Mit einer expliziten Liste kann das Tuning auf bestimmte Modelle eingeschränkt werden:
+
+```yml
+tuning:
+  enabled: true
+  models: [NonParamDML, DRLearner]  # null = alle
+```
+
+Die Task-Sharing-Logik berücksichtigt nur die ausgewählten Modelle. Tasks, die **exklusiv** für nicht-ausgewählte Modelle benötigt würden, werden übersprungen. Geteilte Tasks bleiben, solange mindestens ein ausgewähltes Modell sie braucht. Beispiel:
+
+- `models: [NonParamDML, DRLearner]` bei `models_to_train: [NonParamDML, DRLearner, SLearner, TLearner]`
+- `model_y` (Outcome-Classifier) wird getuned — NonParamDML braucht es
+- `model_t` / `model_propensity` wird getuned — beide DML-Modelle brauchen es
+- `overall_model` (SLearner) wird übersprungen — SLearner ist nicht in der BLT-Auswahl
+- `grouped_outcome_regression` (TLearner) wird übersprungen
+
+SLearner und TLearner werden trotzdem normal trainiert — sie nutzen dann `base_learner.fixed_params` statt getunter Hyperparameter.
+
 ---
 
-## Final-Model-Tuning (R-Loss / R-Score)
+## Final-Model-Tuning (RScorer / DR-Score)
 
 Einige Verfahren besitzen zusätzlich ein **Final-Modell**, das die heterogenen Effekte lernt
 (z. B. `NonParamDML`, `DRLearner`). Dieses Final-Modell ist typischerweise ein Regressor
@@ -93,8 +113,7 @@ Konfigsektion:
 ```yml
 final_model_tuning:
   enabled: true
-  n_trials: 30
-  cv_splits: 5
+  n_trials: 100
   models: [NonParamDML]
   single_fold: false
   max_tuning_rows: 200000
@@ -105,7 +124,9 @@ final_model_tuning:
 Wesentliche Punkte:
 
 - Es wird ausschließlich das Final-Modell getunt (Rolle `model_final`).
-- Bewertet wird über eine Residuen-basierte Zielfunktion (R-Loss/R-Score).
+- NonParamDML: Bewertet über RScorer (Residuen-basiert) oder DR-Score (Doubly-Robust-Pseudo-Outcomes), je nach `method`.
+- DRLearner: Nutzt immer den eingebauten `score() + CV` (bereits DR-basiert).
+- FMT verwendet immer Optuna — FLAML ist hier nicht verfügbar, da die kausale Objective keinen Standard-ML-Task darstellt.
 - Das Tuning läuft **nur einmal pro Run**;
   die Parameter werden anschließend für alle weiteren Folds wiederverwendet ("Locking").
 
@@ -119,7 +140,7 @@ Statt alle FMT-fähigen Modelle zu tunen, kann mit `models` gezielt festgelegt w
 
 Das ist nützlich, weil die Kosten pro Trial zwischen den Modellen stark unterschiedlich sind:
 
-- **NonParamDML** verwendet RScorer: 1 Fit pro Trial (Residuen werden vorab berechnet)
+- **NonParamDML** verwendet RScorer oder DR-Score: 1 Fit pro Trial (Residuen bzw. Pseudo-Outcomes werden vorab berechnet)
 - **DRLearner** verwendet score() + CV: K Fits pro Trial (kein RScorer verfügbar)
 
 Man kann z.B. nur NonParamDML tunen und DRLearner mit bewährten festen Parametern laufen lassen.
@@ -138,11 +159,50 @@ Mit `stability_penalty > 0` wird der Objective um einen Stabilitätsterm ergänz
 score = R_score − λ · log(1 + CV)
 ```
 
-CV = Variationskoeffizient der CATEs (std / |median|). Die logarithmische Dämpfung bestraft Modelle mit extremer Streuung relativ zum mittleren Effekt, ohne stabile Modelle nennenswert einzuschränken. Empfohlene Werte: 0.0 (aus), **0.3 (Default)**, 0.5 (stärker), 1.0+ (stark, CATEs werden konservativ ähnlich CausalForestDML).
+CV = Variationskoeffizient der CATEs (std / |median|). Die logarithmische Dämpfung bestraft Modelle mit extremer Streuung relativ zum mittleren Effekt, ohne stabile Modelle nennenswert einzuschränken. Empfohlene Werte: **0.0 (Default, aus)**, 0.3 (moderat), 0.5 (stärker), 1.0+ (stark, CATEs werden konservativ ähnlich CausalForestDML).
 
 ### Feste Parameter (`fixed_params`)
 
 Wenn FMT deaktiviert ist oder ein Modell nicht in `models` steht, werden die `fixed_params` direkt als Hyperparameter für `model_final` verwendet. Das ermöglicht eine bewusste Kombination: Tuning für ein Modell, feste Parameter für ein anderes.
+
+### Scoring-Methode (`method`)
+
+Für NonParamDML kann zwischen zwei Scoring-Methoden gewählt werden:
+
+- **`rscorer`** (Default): EconML RScorer, basierend auf dem R-Learner-Loss (Schuler et al., 2018; Nie & Wager, 2017). Berechnet Residuen einmal vorab mit CV und bewertet dann Kandidaten effizient über vorberechnete Residuen. Empfohlen als Standard.
+
+- **`dr_score`**: DR-Score — Doubly-Robust Pseudo-Outcome-Score (Mahajan et al., 2024). Berechnet DR-Pseudo-Outcomes (τ̂_DR) vorab per Cross-Fitting und bewertet jede model_final-Kandidatur via MSE(τ_DR, CATE). DR-basierte Metriken dominieren in umfangreichen Benchmark-Studien.
+
+DRLearner nutzt unabhängig davon immer `score() + CV` — die DR-Scoring-Logik ist dort bereits eingebaut.
+
+## AutoML-Backend (`automl`)
+
+Für das Base-Learner-Tuning kann alternativ zu Optuna auch FLAML (Microsoft AutoML) verwendet werden:
+
+```yml
+tuning:
+  enabled: true
+  automl: flaml     # "optuna" (Default) oder "flaml"
+```
+
+**FLAML** übernimmt HP-Suche + Early Stopping automatisch und wurde von Bach et al. (2024) und CausalTune als starke AutoML-Option für DML-Nuisance-Modelle validiert. FLAML wird automatisch über den pixi-Postinstall installiert. Falls die Installation fehlschlägt, wird automatisch auf Optuna zurückgefallen.
+
+**Einschränkungen:**
+
+- FLAML ist nur für das **Base-Learner-Tuning** verfügbar, nicht für das Final-Model-Tuning. FMT nutzt eine kausale Objective-Funktion (R-Score, DR-Score), die kein Standard-ML-Task ist — FLAML's AutoML-API kann nur Klassifikation und Regression.
+- Bei **gruppenspezifischen Tasks** (TLearner, XLearner: K separate Modelle pro Treatment-Gruppe) und **Pseudo-Outcome-Tasks** (XLearner cate_models) wird automatisch auf Optuna zurückgefallen, da FLAML keine gruppenweise Modellierung unterstützt.
+- Einfache Tasks (Outcome-Klassifikation, Propensity, Outcome-Regression) laufen regulär über FLAML.
+
+## Combined Loss Diagnostic (Bach et al., 2024)
+
+Nach dem BLT wird automatisch die **Combined Loss** als Post-hoc-Diagnostic berechnet — das Produkt der CV-evaluierten Outcome- und Propensity-Fehler. Laut Bach et al. (2024, CLeaR — mit Chernozhukov als Co-Autor) korreliert ein niedriger Combined-Loss-Wert direkt mit besserer kausaler Schätzqualität.
+
+Die Combined Loss wird in MLflow geloggt (`combined_loss__<Modelle>`) und im HTML-Report angezeigt. Bei aktivem Task-Sharing (Default) werden Modelle mit identischen Nuisance-Parametern gruppiert (z.B. `combined_loss__NonParamDML, CausalForestDML`). Meta-Learner (SLearner, TLearner, XLearner) werden nicht abgedeckt, da sie keine separate Outcome+Propensity-Nuisance-Stufe besitzen. Deaktivierbar via:
+
+```yml
+tuning:
+  combined_loss_diagnostic: false   # Default: true
+```
 
 ## Search Space in der Config
 
@@ -185,7 +245,7 @@ tuning:
 
 final_model_tuning:
   enabled: true
-  n_trials: 20
+  n_trials: 50
   stability_penalty: 0.0
   search_space:
     lgbm:
@@ -309,7 +369,7 @@ Der TPE-Sampler ist mit drei Optimierungen konfiguriert:
 
 - **`multivariate=True`:** Modelliert Abhängigkeiten zwischen Parametern (z. B. learning_rate ↔ n_estimators). Ohne dies sampelt TPE jeden Parameter unabhängig, was gute Kombinationen langsamer findet.
 - **`constant_liar=True`:** Bei parallelen Trials (n_jobs > 1) weist TPE laufenden Trials einen Schätzwert zu, damit nicht dieselben Regionen doppelt gesampelt werden.
-- **Adaptive `n_startup_trials`:** BL: `min(10, n_trials // 5)`, FMT: `min(7, n_trials // 4)`. Bei wenigen Trials (z. B. 20) wird die Random-Phase verkürzt, damit TPE mehr informierte Trials durchführt.
+- **Adaptive `n_startup_trials`:** BL: `min(10, n_trials // 5)`, FMT: `min(7, n_trials // 4)`. Bei wenigen Trials (z. B. 50) wird die Random-Phase verkürzt, damit TPE mehr informierte Trials durchführt.
 
 ### Fold-basiertes Pruning (MedianPruner)
 

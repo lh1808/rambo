@@ -16,7 +16,8 @@ constants:
   #   2 = Moderat:  alle Kerne pro Fit, Folds/Trials sequentiell (Default)
   #   3 = Hoch:     Kerne aufgeteilt, 2–4 Folds + Trials parallel
   #   4 = Maximum:  Kerne aufgeteilt, max. Folds + Trials parallel (höchster RAM)
-  parallel_level: 2         # 1=Minimal, 2=Moderat (Default), 3=Hoch, 4=Maximum
+  parallel_level: 3         # 1=Minimal, 2=Moderat, 3=Empfohlen (Default), 4=Maximum
+  work_dir: null             # Arbeitsverzeichnis für alle Artefakte. null = RUBIN_WORK_DIR (Env) oder ./runs
   # Level steuert: Tuning-Trials, CV-Folds, Feature-Selektion, Evaluation
   # Level 1-2: DRTester-Plots für alle Modelle
   # Level 3: DRTester nur für Champion + Challenger, sklift für alle
@@ -27,7 +28,7 @@ data_prep:
   data_path: [data/raw/input.csv]
   feature_path: data/raw/feature_dictionary.xlsx
   info_path: null
-  output_path: data/processed
+  output_path: runs/data
   delimiter: ","
   chunksize: 300000
   sas_encoding: utf-8
@@ -136,7 +137,7 @@ causal_forest:
 # Diese sind Klassifikatoren (Binary Outcome / Binary Treatment).
 tuning:
   enabled: true
-  n_trials: 30
+  n_trials: 100
   timeout_seconds: null
   cv_splits: 3                            # Empfehlung: gleicher Wert wie data_processing.cross_validation_splits
   single_fold: false                       # true = nur 1 Fold pro Trial evaluieren (schneller, verrauschter)
@@ -148,6 +149,10 @@ tuning:
   study_name_prefix: baselearner
   reuse_study_if_exists: true
   optuna_seed: 42
+  automl: optuna                             # "optuna" (Bayesian TPE) oder "flaml" (Microsoft AutoML, wird automatisch installiert)
+  combined_loss_diagnostic: true             # Post-hoc Combined Loss (Bach et al., 2024) nach BLT berechnen und loggen
+  models: null                               # null = alle Modelle tunen. Oder explizit: [NonParamDML, DRLearner]. Nicht-ausgewählte nutzen fixed_params
+  max_tuning_rows: null                      # Datenmenge für Nuisance-Tuning begrenzen (z.B. 200000). null = alle Daten
   search_space:
     # --- LightGBM Nuisance (Classifier) ---
     # Ziel: Gut kalibrierte P(Y|X) und P(T|X). Sauberes Signal (Y/T ∈ {0,1}),
@@ -178,21 +183,21 @@ tuning:
       model_size_reg:              {type: float,       low: 0.0,    high: 10.0}
       leaf_estimation_iterations:  {type: int,         low: 1,      high: 10}
 
-# --- Final-Model-Tuning (R-Score) ----------------------------
+# --- Final-Model-Tuning ----------------------------
 # Optimiert das CATE-Effektmodell (Regressor) auf verrauschten Residuen/Pseudo-Outcomes.
 # BEWUSST konservativere Ranges als Nuisance: weniger Bäume, flacher, hoher min_leaf,
 # starke Regularisierung. Verhindert Overfitting auf Rausch-Muster im Pseudo-Target.
 final_model_tuning:
   enabled: false
-  n_trials: 20
+  n_trials: 50
   timeout_seconds: null
-  cv_splits: 3                            # Empfehlung: gleicher Wert wie data_processing.cross_validation_splits
-  method: rscorer
+  method: rscorer                             # "rscorer" (Schuler et al., 2018) oder "dr_score" (Mahajan et al., 2024, Doubly-Robust-Pseudo-Outcomes)
   models: null                              # null = alle FMT-fähigen Modelle. Oder explizit: [NonParamDML, DRLearner]
-  single_fold: false                       # true = DRLearner nur 1 Fold/Trial (schneller). Oder explizit: [NonParamDML, DRLearner]
+  single_fold: false                       # true = DRLearner nur 1 Fold/Trial (schneller). NonParamDML nutzt RScorer (1 Fit/Trial)
   stability_penalty: 0.0                   # Bestraft instabile CATE-Schätzungen (hohe Streuung relativ zum Median).
-                                           # 0 = reiner R-Score. 0.3–0.5 = moderate Regularisierung.
+                                           # 0 = reiner Score. 0.3–0.5 = moderate Regularisierung.
                                            # 1.0+ = starke Stabilität (CATEs werden konservativer, ähnlich CausalForestDML).
+  max_tuning_rows: null                    # Datenmenge für FMT begrenzen (z.B. 200000). null = alle Daten des Tuning-Splits
   fixed_params: {}                         # Feste Hyperparameter für model_final (wenn Tuning deaktiviert)
   search_space:
     # --- LightGBM Final (Regressor) ---

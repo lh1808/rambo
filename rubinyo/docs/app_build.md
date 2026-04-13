@@ -243,8 +243,27 @@ Wenn das Backend nicht erreichbar ist, zeigt die App klare Fehlermeldungen:
 
 ### Dokumentations-Vorschau (rubin_overview.html)
 
-Die Confluence-Dokumentation (`rubin_overview.html`) enthält eine **separate**,
-vereinfachte JSX-Version mit eingebetteten Screenshots. Diese nutzt bewusst
-Client-seitige Simulation und Demo-Daten — damit die Dokumentation auch
-offline in Confluence korrekt angezeigt wird. Diese Doku-Version ist vollständig
-getrennt vom Produktions-Code in `app/`.
+> **Abgrenzung:** Die oben beschriebenen Produktions-Prinzipien (keine Demo-Daten,
+> keine Simulationen) gelten für die **laufende App** mit Backend. Die
+> Dokumentations-Vorschau unten nutzt denselben App-Code, aber mit einem
+> Fetch-Interceptor statt echtem Backend — das ist kein Demo-Modus im App-Code,
+> sondern eine externe API-Stubbing-Schicht.
+
+Die Dokumentation (`rubin_overview.html`) enthält die **echte App** als
+interaktives iframe-Embedding — nicht eine vereinfachte Nachbildung:
+
+- **Identischer Code:** Der exakte JSX-Quellcode aus `app/frontend/index.html`
+  wird unverändert eingebettet. Kein separater Doku-Code.
+- **Babel Runtime im Browser:** Das JSX wird vom Browser via inline Babel
+  standalone kompiliert (≈2–3 Sek. Ladezeit). React 18, ReactDOM 18 und
+  Babel (2.8 MB) sind Base64-kodiert im HTML enthalten.
+- **Mock-API:** Ein `window.fetch`-Interceptor fängt alle `/api/`-Calls ab
+  und gibt Stub-Responses zurück. Die App startet im Idle-Zustand —
+  Navigation und Konfiguration funktionieren, Server-abhängige Aktionen
+  (Analyse, Upload) sind deaktiviert.
+- **CSS-Isolation:** Das `<iframe>` verhindert CSS-Konflikte zwischen der
+  App (globale Resets) und dem Dokumenten-Layout.
+- **UTF-8:** Base64 → `Uint8Array` → `TextDecoder("utf-8")` für korrekte
+  Darstellung deutscher Sonderzeichen.
+- **Kein Internet nötig:** Alle Bibliotheken sind inline. Die Datei
+  funktioniert komplett offline.

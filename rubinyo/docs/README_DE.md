@@ -4,7 +4,7 @@ Diese Dokumente beschreiben Nutzung, Konfiguration und Erweiterung des Framework
 
 - Architekturüberblick: `docs/architektur.md`
 - Globale Konfigurationsreferenz: `docs/konfiguration.md`
-- Tuning (Optuna, R-Score/R-Loss, Locking): `docs/tuning_optuna.md`
+- Tuning (Optuna/FLAML, R-Score/DR-Score, Locking): `docs/tuning_optuna.md`
 - Evaluation (DRTester, scikit-uplift Plots): `docs/evaluation.md`
 - Bundles/Production: `docs/bundles.md`
 - Explainability: `docs/explainability.md`
@@ -43,7 +43,7 @@ pixi run analyze -- --config configs/config_lgbm_standard.yml --export-bundle
 Diese Codebasis trennt **Analyse** und **Production** sauber voneinander:
 
 - **Datenaufbereitung**: Mehrdatei-Merge, Treatment-Balance-Prüfung, kategorische Features, NaN-Behandlung, „Train Many, Evaluate One" (Eval-Maske)
-- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), Tuning (BL + FMT mit Stability Penalty), Evaluieren, Surrogate-Einzelbaum (Champion), Explainability (SHAP/Permutation), HTML-Report mit klickbaren Plots (Lightbox).
+- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), Tuning (BL via Optuna oder FLAML + FMT mit RScorer/DR-Score + Stability Penalty + Combined Loss Diagnostic), Evaluieren, Surrogate-Einzelbaum (Champion), Explainability (SHAP/Permutation), HTML-Report mit klickbaren Plots (Lightbox).
 - **Production-Pipeline**: Stabiles Scoring auf neuen Daten (inkl. Champion- und Surrogate-Option).
 
 Die wichtigsten Einstiege:
@@ -64,8 +64,10 @@ und erzeugt ein reproduzierbares Lockfile. Installation: `curl -fsSL https://pix
 
 ```bash
 cd rubin_repo
-pixi install                # Environment aufbauen (einmalig)
-pixi run analyze-quick      # Smoke-Test (postinstall läuft automatisch)
+export PIXI_TLS_ROOT_CERTS="all"  # Firmennetz: Conda-Channels
+export UV_NATIVE_TLS=true           # Firmennetz: PyPI-Pakete (uv)
+pixi install                # Environment aufbauen (einmalig, inkl. PyPI-Pakete)
+pixi run analyze-quick      # Smoke-Test
 pixi run app                # Web-UI starten
 pixi run test               # Tests ausführen
 ```
@@ -94,8 +96,8 @@ pixi run analyze -- --config config.yml --export-bundle --bundle-dir bundles
 
 ### Production Scoring mit Bundle
 ```bash
-pixi run score -- --bundle bundles/<bundle_id> --x new_X.parquet --out scores.csv
-# oder: python run_production.py --bundle bundles/<bundle_id> --x new_X.parquet --out scores.csv
+pixi run score -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --out scores.csv
+# oder: python run_production.py --bundle runs/bundles/<bundle_id> --x new_X.parquet --out scores.csv
 # Standard: Champion aus model_registry.json
 # Optional: --model-name NonParamDML oder --use-all-models
 # Surrogate: --use-surrogate (interpretierbarer Einzelbaum)
@@ -154,10 +156,11 @@ Eine vollständige Referenz aller Felder (inkl. Begründungen und Empfehlungen) 
 
 ### Hinweise zu Tuning und "Locking"
 
-- Base-Learner-Tuning (Optuna) wird vor dem Training ausgeführt und die gefundenen Parameter werden für den gesamten Lauf verwendet.
-- Final-Model-Tuning über R-Score/R-Loss (optional) wird **nur einmal** durchgeführt und für alle Modelle wiederverwendet.
+- Base-Learner-Tuning (Optuna oder FLAML) wird vor dem Training ausgeführt und die gefundenen Parameter werden für den gesamten Lauf verwendet. FLAML wird automatisch über den pixi-Postinstall installiert und fällt bei gruppenspezifischen Tasks (TLearner, XLearner) automatisch auf Optuna zurück.
+- Final-Model-Tuning (optional) wird **nur einmal** durchgeführt. Für NonParamDML kann zwischen RScorer (Standard) und DR-Score gewählt werden. DRLearner nutzt immer den eingebauten DR-basierten score()+CV. FMT verwendet immer Optuna.
   Danach sind die Parameter fest und werden in allen weiteren Folds wiederverwendet.
 - Für `CausalForestDML` gilt das Gleiche für das interne EconML-`tune(...)`: Tuning nur in der ersten Iteration, danach fest.
+- Nach dem BLT wird optional die Combined Loss Diagnostic (Bach et al., 2024) berechnet — ein Qualitätsmaß für die Nuisance-Modelle.
 
 Details stehen in `tuning_optuna.md`.
 

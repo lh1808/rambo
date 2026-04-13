@@ -83,7 +83,6 @@ causal_forest:
 final_model_tuning:
   enabled: false
   n_trials: 20
-  cv_splits: 5
 
 # --- Champion-Auswahl ----------------------------------------
   models: [NonParamDML, DRLearner]

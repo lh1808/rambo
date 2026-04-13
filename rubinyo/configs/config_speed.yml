@@ -42,7 +42,6 @@ tuning:
 final_model_tuning:
   enabled: true
   n_trials: 25
-  cv_splits: 5
   models: [NonParamDML]                # DRLearner nutzt fixed_params (günstiger)
   # single_fold nur relevant wenn DRLearner in models (NonParamDML nutzt RScorer = immer 1 Fit)
   fixed_params: {}

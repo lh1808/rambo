@@ -10,7 +10,7 @@ In der Analyse-Pipeline werden drei Evaluationsphasen unterschieden:
 
 ### Phase 2: DRTester-Diagnostik (Level-abhängig)
 
-**Diagnose-Plots** (EconML DRTester) werden Level-abhängig erstellt: Level 1–2 alle Modelle, Level 3 Champion + Challenger, Level 4 nur Champion. Die DRTester-Nuisance-Modelle nutzen leichtere Varianten (n_estimators≤100, cv=3) für ~6-7× schnelleres Fitting bei minimaler Qualitätseinbuße. Bei Multi-Treatment werden die Nuisance-Fits pro Arm bei Level 3–4 parallel ausgeführt.
+**Diagnose-Plots** (EconML DRTester) werden Level-abhängig erstellt: Level 1–2 alle Modelle, Level 3 Champion + Challenger, Level 4 nur Champion. Die DRTester-Nuisance-Modelle nutzen leichtere Varianten (n_estimators≤100, cv=5) für ~6-7× schnelleres Fitting bei minimaler Qualitätseinbuße. Bei Multi-Treatment werden die Nuisance-Fits pro Arm bei Level 3–4 parallel ausgeführt.
 
 ### Phase 3: scikit-uplift-Plots (alle Modelle)
 
@@ -79,7 +79,7 @@ Jeder Plot, der erfolgreich erzeugt wird, durchläuft diesen Lebenszyklus:
 
 Wenn `plot_qini_curve` fehlschlägt, wird die vorab erstellte Figure explizit geschlossen (`plt.close(fig_qini)` im `except`-Block), um Memory-Leaks zu vermeiden. Bei `plot_uplift_by_percentile` und `plot_treatment_balance_curve` wird keine vorab-Figure erstellt, daher entsteht bei Fehlern kein Leak.
 
-Ohne diese explizite Freigabe entsteht bei >20 Figures eine Matplotlib-Warnung: `More than 20 figures have been opened. Consider using matplotlib.pyplot.close()`. Bei 7 Modellen × 3 Plots × 2 Phasen (Eval + Surrogate) können leicht >40 offene Figures entstehen.
+Ohne diese explizite Freigabe entsteht bei >20 Figures eine Matplotlib-Warnung: `More than 20 figures have been opened. Consider using matplotlib.pyplot.close()`. Bei 8+ Modellen × 3 Plots × 2 Phasen (Eval + Surrogate) können leicht >40 offene Figures entstehen.
 
 ### Native Fallbacks
 
@@ -210,7 +210,7 @@ Der DRTester benötigt Nuisance-Modelle (Outcome + Propensity), um Doubly-Robust
 2. Der gefittete Tester wird in `fitted_tester_bt` / `fitted_tester_mt[arm]` gespeichert
 3. `evaluate_cate_with_plots(fitted_tester=...)` kopiert DR-Outcomes (`dr_val_`, `dr_train_`, `ate_val`, `Dval`) und tauscht nur die CATE-Predictions aus
 
-Speedup: Bei 7 Modellen spart das 6× das teure Nuisance-CV-Fitting (~30-120s je nach Datengröße). Die Nuisance-Modelle nutzen leichtere Varianten: `n_estimators≤100` (statt potentiell 400+) und `cv=3` (statt 5), was nochmals ~6-7× schneller ist bei minimaler AUC-Einbuße (~0.5-1%).
+Speedup: Bei 8 Modellen spart das 7× das teure Nuisance-CV-Fitting (~30-120s je nach Datengröße). Die Nuisance-Modelle nutzen leichtere Varianten: `n_estimators≤100` (statt potentiell 400+) und `cv=5`, was nochmals schneller ist bei minimaler AUC-Einbuße (~0.5-1%).
 
 ### Datenfluss: Gespeicherte Predictions → Evaluation
 
@@ -278,7 +278,7 @@ has_train = any(
 ```
 
 Wenn `has_train=True`: `X_train=X, T_train=T, Y_train=Y` → `fit_on_train=True` → alle DRTester-Tests laufen.
-Wenn `has_train=False`: `X_train=None` → `fit_on_train=False` → nur BLP läuft, cal/qini/toc werden übersprungen.
+Wenn `has_train=False`: `X_train=None` → Nuisance wird nur auf Val gefittet. Für die Calibration-Quantil-Cuts werden die Val-Predictions als Fallback verwendet (weniger rigoros, aber die Calibration-Plots bleiben informativ).
 
 Im Standardfall (Cross-Validation) erzeugt `train_and_crosspredict` sowohl Out-of-Fold-Predictions (`Predictions_*`) als auch In-Sample-Predictions (`Train_*`). Damit ist `has_train=True` und alle Plots werden erzeugt.
 
