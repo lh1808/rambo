@@ -2323,3 +2323,104 @@ wrap-summaries = 88
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib --cov=da_pluto_timeseries --cov-report term-missing"
 
+
+
+
+README.md:
+
+# da_pluto_timeseries
+
+![Buildstatus](https://tfs.lan.huk-coburg.de/web/DefaultCollection/GIT_Projects/_apis/build/status/da-pluto-timeseries?branchName=master)
+
+Time Series Prediction for Pluto Project.
+
+## Installation
+
+You can install the package in development mode using:
+
+```bash
+git clone ssh://tfs.lan.huk-coburg.de/web/DefaultCollection/GIT_Projects/_git/da-pluto-timeseries
+cd da-pluto-timeseries
+
+# create and activate a fresh environment named da-pluto-timeseries
+# see environment.yml for details
+mamba env create
+conda activate da-pluto-timeseries
+
+pre-commit install
+pip install --no-build-isolation -e .
+```
+
+# PLUTO – Multivariate Terminprognose (13 & 52 Wochen)
+
+Dieses Projekt implementiert eine multivariate Forecasting-Pipeline für den Termineingang
+in PLUTO. Es werden wöchentliche Prognosen für 52 Wochen erzeugt, basierend auf zwei
+Modellen:
+
+- **13-Wochen-Modell** (kurzfristiger Horizont)
+- **52-Wochen-Modell** (mittelfristiger Horizont)
+
+Die kombinierte Prognose wird wie folgt verwendet:
+
+- Wochen **1–13**: Prognose aus dem **13-Wochen-Modell**
+- Wochen **14–52**: Prognose aus dem **52-Wochen-Modell**
+
+Die Prognose wird anschließend zurück in eine DB2-Prognosetabelle geschrieben.
+
+---
+
+## Architekturüberblick
+
+Die Codebasis ist in zwei Bereiche aufgeteilt:
+
+1. **Forecasting-Logik (generisch)**  
+   Ordner: `forecasting/`  
+   Enthält alles, was zur Modellierung gehört:
+   - Vorverarbeitung und Feature-Engineering (inkl. tägliche → wöchentliche Aggregation)
+   - Holiday-/Ferien-Kovariaten aus ICS-Dateien (Updates der sich darin befindlichen ICS-Dateien notwendig https://github.com/paulbrejla/ferien-api-data)
+   - Modell-Definition (TFT aus Darts)
+   - Optionales Hyperparameter Tuning mittels Optuna
+   - Rolling-Block-Evaluation (Backtest)
+   - Training und Inferenz für verschiedene Horizonte (13 und 52 Wochen)
+
+2. **PLUTO-spezifische Anbindung**  
+   - `pluto_multivariate_repository.py`  
+     - DB2-Connector (lesen/schreiben)
+     - Abbildung der Fachdimensionen (Kennzahl, Produkt, Schadenstatus)
+   - `pluto_forecast_job.py`  
+     - Produktiver Run-Job:
+       - lesen aus DB2
+       - Forecasting-Pipeline ausführen
+       - 13-/52-Wochen-Prognosen kombinieren
+       - zurück in DB2 schreiben
+
+---
+
+## Verwendete Kennzahlen / Dimensionen
+
+**Kennzahlen (DIM_KENNZAHL):**
+
+- `TERM_EINGANG_SCHRIFTST`
+- `TERM_EINGANG_SONST`
+
+**Produkte (DIM_PRODUKT):**
+
+- `KFZ_Vollkasko`
+- `KFZ_Teilkasko`
+- `KFZ_Haftpflicht`
+- `KFZ_Rest`
+- `HUS_Haftpflicht`
+- `HUS_Wohngebäude`
+- `HUS_Hausrat`
+- `HUS_Rest`
+
+**Schadenstatus (DIM_SCHADENSTATUS):**
+
+- `Neuschaden`
+- `Folgebearbeitung`
+
+Im Code werden diese Dimensionen in einem Komponenten-Namen kombiniert, z. B.:
+
+```text
+TERM_EINGANG_SCHRIFTST__KFZ_Vollkasko__Neuschaden
+TERM_EINGANG_SONST__HUS_Hausrat__Folgebearbeitung
