@@ -1,0 +1,97 @@
+# Beispiel-Konfiguration für PLUTO Multivariate Forecasting.
+#
+# Alles, was hier steht, überschreibt die Defaults aus forecasting/config.py.
+# Alles, was hier NICHT steht, bleibt beim Default. Du musst also nur angeben,
+# was du wirklich ändern willst.
+#
+# Nutzung:
+#   - Datei liegt als `config.yaml` neben `pluto_forecast_job.py` → wird automatisch gelesen.
+#   - Alternativ per Env-Variable: `PLUTO_CONFIG=/pfad/zu/config.yaml`
+#
+# Einzelne Werte kann man stattdessen oder zusätzlich auch per Env-Var setzen,
+# Präfix `PLUTO__`, Doppel-Unterstrich als Pfadtrenner. Env schlägt YAML.
+# Beispiele:
+#     PLUTO__TFT__N_EPOCHS=50
+#     PLUTO__TUNING__13__ENABLED=true
+#     PLUTO__DATA__FREQ=W-SUN
+
+# --------------------------------------------------------------------------
+# Daten / Eingänge
+# --------------------------------------------------------------------------
+data:
+  freq: "W-SUN"
+  date_column: "date"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+# --------------------------------------------------------------------------
+# Feature-Engineering
+# --------------------------------------------------------------------------
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"           # "log" | "diff" | "pct"
+  min_periods: 4
+  product_aggregation: true
+
+# --------------------------------------------------------------------------
+# TFT-Basis-Hyperparameter (Startpunkt; Tuning überschreibt diese, falls enabled)
+# --------------------------------------------------------------------------
+tft:
+  n_epochs: 200
+  batch_size: 16
+  hidden_size: 64
+  hidden_continuous_size: 16
+  lstm_layers: 2
+  dropout: 0.3
+  learning_rate: 0.001
+  likelihood: null            # null | "poisson" | "nb"
+  random_state: 0
+  optimizer: "adamw"
+  loss: "mse"
+  early_stopping_patience: 15  # 0 = kein EarlyStopping
+
+# --------------------------------------------------------------------------
+# Horizonte: Training- und Prognose-Fenster
+# --------------------------------------------------------------------------
+# Existierende Horizonte (13, 52) werden nur überschrieben, wo Felder
+# angegeben sind. Für einen NEUEN Horizont müssen alle Felder gesetzt sein.
+#
+# train_length_weeks: Größe des Trainingsfensters. Ist der Wert größer als
+# die verfügbare Serie, wird automatisch die gesamte Serie verwendet.
+horizons:
+  13:
+    train_length_weeks: 208
+    validation_weeks: 52
+    stride_weeks: 13
+  52:
+    train_length_weeks: 260
+    validation_weeks: 104
+    stride_weeks: 52
+
+# --------------------------------------------------------------------------
+# Optuna-Tuning pro Horizont
+# --------------------------------------------------------------------------
+tuning:
+  13:
+    enabled: false              # → true für produktives Tuning
+    n_trials: 30
+    metric: "smape"
+    train_length_min: 52
+    train_length_max: 156
+    train_length_step: 13
+    # hidden_size_min, hidden_size_max, … analog
+  52:
+    enabled: false
+    n_trials: 30
+    metric: "smape"
+
+# --------------------------------------------------------------------------
+# Baseline (Jahres-Mittel)
+# --------------------------------------------------------------------------
+baseline:
+  years_back: 3
+  min_years: 1
