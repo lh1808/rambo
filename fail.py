@@ -1,42 +1,38 @@
-INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-/opt/conda/envs/generic/lib/python3.11/site-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
-`Trainer.fit` stopped: `max_epochs=200` reached.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-[Block] train [2022-01-02 .. 2025-04-20] -> pred [2025-04-27 .. 2025-07-20] (len=13)
-INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 122 samples.
-INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-/opt/conda/envs/generic/lib/python3.11/site-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-[Block] train [2022-01-02 .. 2025-07-20] -> pred [2025-07-27 .. 2025-10-19] (len=13)
-INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 135 samples.
-INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-/opt/conda/envs/generic/lib/python3.11/site-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-[Block] train [2022-01-02 .. 2025-10-19] -> pred [2025-10-26 .. 2026-01-18] (len=13)
-INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 144 samples.
-INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
-GPU available: True (cuda), used: True
-TPU available: False, using: 0 TPU cores
-HPU available: False, using: 0 HPUs
-LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+ERROR:main_logger:ValueError: The input `series` are too short to extract even a single sample. Expected min length: `156`, received max length: `121`.
+INFO:pluto_multivariate_repository:DB2 connection successfully closed.
+Traceback (most recent call last):
+  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 201, in <module>
+    run_pluto_multivariate_forecast_job()
+  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 140, in run_pluto_multivariate_forecast_job
+    results = run_full_job(df_daily, cfg=cfg, logger=None)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 513, in run_full_job
+    artifacts, metrics_df, backtest, true_ts = train_and_evaluate_for_horizon(
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 338, in train_and_evaluate_for_horizon
+    res = rolling_block_forecast(
+          ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/utils.py", line 220, in rolling_block_forecast
+    model.fit(
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/torch.py", line 94, in decorator
+    return decorated(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 934, in fit
+    ) = self._setup_for_fit_from_dataset(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 1044, in _setup_for_fit_from_dataset
+    train_dataset = self._build_train_dataset(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/tft_model.py", line 1177, in _build_train_dataset
+    return super()._build_train_dataset(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 562, in _build_train_dataset
+    return SequentialTorchTrainingDataset(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/data/torch_datasets/training_dataset.py", line 419, in __init__
+    super().__init__(
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/data/torch_datasets/training_dataset.py", line 178, in __init__
+    raise_log(
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/logging.py", line 132, in raise_log
+    raise exception
+ValueError: The input `series` are too short to extract even a single sample. Expected min length: `156`, received max length: `121`.
