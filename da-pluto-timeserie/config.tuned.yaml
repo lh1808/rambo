@@ -1,0 +1,98 @@
+# ============================================================================
+# config.tuned.yaml – Produktion mit eingefrorenen Tuning-Parametern
+# ============================================================================
+# Zweck: Verwendet manuell eingetragene Tuning-Ergebnisse als fixe
+# Hyperparameter. Unabhängig vom runs/-Verzeichnis — die Werte stehen
+# direkt in dieser Datei und werden bei jedem Lauf identisch verwendet.
+#
+# Ablauf:
+#   1. Tuning mit config.tuning.yaml laufen lassen.
+#   2. Ergebnisse aus runs/tuned_h13_model.yaml und runs/tuned_h52_model.yaml
+#      in die Felder unten kopieren.
+#   3. Diese Config für den Regelbetrieb verwenden.
+#
+# Vorteil gegenüber config.production.yaml mit tuned_params_dir:
+#   - Keine Abhängigkeit vom runs/-Verzeichnis (portabel, z. B. Deployment
+#     auf anderem Server)
+#   - Änderungen sind in Git nachvollziehbar
+#   - Keine Überraschungen durch versehentlich überschriebene tuned-Dateien
+#
+# Verwendung:
+#   export PLUTO_CONFIG=/mnt/da-pluto-timeseries/config.tuned.yaml
+#   python pluto_forecast_job.py
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+# ──────────────────────────────────────────────────────────────────────
+# Hier die getuneten Werte aus runs/tuned_h13_model.yaml bzw.
+# runs/tuned_h52_model.yaml eintragen.
+#
+# Beispiel (Ergebnis eines Tuning-Laufs vom 2025-04-21):
+#   hidden_size: 48
+#   hidden_continuous_size: 24
+#   lstm_layers: 2
+#   dropout: 0.28
+#   learning_rate: 0.0012
+#   batch_size: 16
+#
+# Die n_epochs und early_stopping_patience sind Produktionswerte —
+# das Tuning lief mit reduzierten Epochen, die Produktion nutzt die
+# vollen 200 mit EarlyStopping.
+# ──────────────────────────────────────────────────────────────────────
+tft:
+  n_epochs: 200
+  early_stopping_patience: 15
+  optimizer: "adamw"
+  loss: "mse"
+  # ↓↓↓ Getunete Werte hier eintragen ↓↓↓
+  hidden_size: 64                 # ← aus Tuning übernehmen
+  hidden_continuous_size: 16      # ← aus Tuning übernehmen
+  lstm_layers: 2                  # ← aus Tuning übernehmen
+  dropout: 0.3                    # ← aus Tuning übernehmen
+  learning_rate: 0.001            # ← aus Tuning übernehmen
+  batch_size: 16                  # ← aus Tuning übernehmen
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 208       # ← aus Tuning übernehmen
+    validation_weeks: 52
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 104
+    output_chunk_length: 52
+    train_length_weeks: 260       # ← aus Tuning übernehmen
+    validation_weeks: 104
+    stride_weeks: 52
+    window_mode: "expanding"      # bei ~224 nutzbaren Wochen ist fixed
+                                  # für h52 nicht möglich
+
+# Tuning deaktiviert — die Werte stehen ja schon oben.
+tuning:
+  13:
+    enabled: false
+  52:
+    enabled: false
+
+# Kein automatisches Laden aus dem runs/-Verzeichnis — diese Config
+# ist autark. Auskommentieren, um doch das runs/-Verzeichnis zu nutzen.
+# tuned_params_dir: "runs"
