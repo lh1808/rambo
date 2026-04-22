@@ -1,0 +1,62 @@
+# ============================================================================
+# config.tuned.yaml – Produktion mit eingefrorenen Tuning-Parametern
+# ============================================================================
+# Verwendung:
+#   PLUTO_PROFILE=tuned ./schaden_forecast_job.sh
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 200
+  early_stopping_patience: 15
+  optimizer: "adamw"
+  loss: "mse"
+  feed_forward: "SwiGLU"
+  weight_decay: 0.0005
+  gradient_clip_val: 1.0
+  use_time_encoders: true
+  hidden_size: 64                 # ← aus Tuning übernehmen
+  hidden_continuous_size: 16      # ← aus Tuning übernehmen
+  lstm_layers: 2                  # ← aus Tuning übernehmen
+  dropout: 0.3                    # ← aus Tuning übernehmen
+  learning_rate: 0.001            # ← aus Tuning übernehmen
+  batch_size: 16                  # ← aus Tuning übernehmen
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 104       # ← aus Tuning übernehmen
+    validation_weeks: 52
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 52
+    output_chunk_length: 52
+    train_length_weeks: 130       # ← aus Tuning übernehmen
+    validation_weeks: 52
+    stride_weeks: 52
+    window_mode: "expanding"
+
+tuning:
+  13:
+    enabled: false
+  52:
+    enabled: false
