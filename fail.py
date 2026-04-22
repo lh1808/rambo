@@ -1,38 +1,35 @@
-ERROR:main_logger:ValueError: The input `series` are too short to extract even a single sample. Expected min length: `156`, received max length: `121`.
-INFO:pluto_multivariate_repository:DB2 connection successfully closed.
-Traceback (most recent call last):
-  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 201, in <module>
-    run_pluto_multivariate_forecast_job()
-  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 140, in run_pluto_multivariate_forecast_job
-    results = run_full_job(df_daily, cfg=cfg, logger=None)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 513, in run_full_job
-    artifacts, metrics_df, backtest, true_ts = train_and_evaluate_for_horizon(
-                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 338, in train_and_evaluate_for_horizon
-    res = rolling_block_forecast(
-          ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/utils.py", line 220, in rolling_block_forecast
-    model.fit(
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/torch.py", line 94, in decorator
-    return decorated(self, *args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 934, in fit
-    ) = self._setup_for_fit_from_dataset(
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 1044, in _setup_for_fit_from_dataset
-    train_dataset = self._build_train_dataset(
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/tft_model.py", line 1177, in _build_train_dataset
-    return super()._build_train_dataset(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/torch_forecasting_model.py", line 562, in _build_train_dataset
-    return SequentialTorchTrainingDataset(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/data/torch_datasets/training_dataset.py", line 419, in __init__
-    super().__init__(
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/data/torch_datasets/training_dataset.py", line 178, in __init__
-    raise_log(
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/logging.py", line 132, in raise_log
-    raise exception
-ValueError: The input `series` are too short to extract even a single sample. Expected min length: `156`, received max length: `121`.
+Der Termineingang für Erstellung der Prognose in PLUTO soll in folgender Granularität übertragen werden:
+
+Die Prognose soll für die beiden Kennzahlen "Termineingang Schriftstücke" (TERM_EINGANG_SCHRIFTST) und "Termineingang Sonstige Termine" (TERM_EINGANG_SONST) ermittelt werden. 
+
+Die beiden Kennzahlen werden nach folgenden Produkten unterschieden:
+
+KFZ_Vollkasko
+KFZ_Teilkasko
+KFZ_Haftpflicht
+KFZ_Rest
+HUS_Haftpflicht
+HUS_Wohngebäude
+HUS_Hausrat
+HUS_Rest
+Für den Termineingang pro Produkt wird zusätzlich die Information zum Schadenstatus "Neuschaden" und "Folgebearbeitung" benötigt. 
+
+ 
+
+SQL --> Connection:
+
+
+
+SQL --> Abfrage:
+
+SELECT DIM_ZEIT, DIM_KENNZAHL,DIM_PRODUKT, DIM_SCHADENSTATUS, KENNZAHLWERT FROM t7.TA_DA_PLUTO_SP_2025
+WHERE DIM_KENNZAHL IN ('TERM_EINGANG_SCHRIFTST', 'TERM_EINGANG_SONST')
+
+Aufbau Schreibtabelle TA_DA_PLUTO_SP_2025_PROGNOSE:
+
+DIM_ZEIT als Integer (Datum)
+DIM_KENNZAHL = 'TERM_EINGANG_SCHRIFTST' und 'TERM_EINGANG_SONST'
+DIM_PRODUKT als VARCHAR(50)
+DIM_SCHADENSTATUS als VARCHAR(50)
+KENNZAHLWERT als DECIMAL(20,9)
+LOAD_DATE als Date (Ladedatum)
