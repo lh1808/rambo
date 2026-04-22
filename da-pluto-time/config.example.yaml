@@ -1,0 +1,116 @@
+# ============================================================================
+# config.example.yaml – Dokumentierte Vorlage
+# ============================================================================
+# Kopieren und anpassen. Nur Felder angeben, die vom Default abweichen.
+# Auflösungsreihenfolge: Env-Vars > YAML > Dataclass-Defaults.
+# Env-Override: PLUTO__TFT__N_EPOCHS=50 (Präfix PLUTO__, __ als Trenner)
+
+data:
+  freq: "W-SUN"
+  date_column: "date"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"           # "log" | "diff" | "pct"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 200
+  batch_size: 16
+  hidden_size: 64
+  hidden_continuous_size: 16
+  lstm_layers: 2
+  dropout: 0.3
+  learning_rate: 0.001
+  likelihood: null            # null | "poisson" | "nb"
+  random_state: 0
+  optimizer: "adamw"
+  loss: "mse"
+  feed_forward: "SwiGLU"         # "SwiGLU" | "GatedResidualNetwork"
+  weight_decay: 5e-4
+  gradient_clip_val: 1.0         # 0 = kein Clipping
+  use_time_encoders: true        # Monat, KW, zyklisch, Position
+  early_stopping_patience: 15  # 0 = kein EarlyStopping
+
+# Formel Trainingssamples: train_length - input_chunk - output_chunk + 1
+# window_mode "fixed": exaktes Fenster, Blöcke vergleichbar.
+# window_mode "expanding": wachsend ab Serienstart, nutzt alle Daten.
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52      # 1 Jahr Kontext
+    output_chunk_length: 13
+    train_length_weeks: 104     # 2 Jahre → 40 Samples/Block
+    validation_weeks: 52        # → 4 Blöcke (fixed)
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 52      # 1 Jahr Kontext
+    output_chunk_length: 52
+    train_length_weeks: 130     # 2,5 Jahre → 27 Samples
+    validation_weeks: 52        # → 1 Block
+    stride_weeks: 52
+    window_mode: "expanding"
+
+tuning:
+  # metric: Zielmetrik für die Optimierung
+  #   "combined" = alpha × WAPE + (1-alpha) × sMAPE (empfohlen)
+  #     → Priorisiert volumenstarke Produkte, ignoriert kleine nicht
+  #   "wape"     = reiner Volumen-Fokus
+  #   "smape"    = alle Komponenten gleichgewichtet
+  #   "mae"/"rmse" = absolute Fehlermetriken
+  # tuning_metric_alpha: Mischung bei "combined" (0.7 = 70% WAPE + 30% sMAPE)
+  13:
+    enabled: false
+    n_trials: 15
+    direction: "minimize"
+    metric: "combined"
+    tuning_metric_alpha: 0.7
+    train_length_min: 78
+    train_length_max: 130
+    train_length_step: 13
+    hidden_size_min: 32
+    hidden_size_max: 96
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 32
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 5e-4
+    learning_rate_max: 3e-3
+    batch_size_choices: [8, 16, 24, 32]
+  52:
+    enabled: false
+    n_trials: 10
+    direction: "minimize"
+    metric: "combined"
+    tuning_metric_alpha: 0.7
+    train_length_min: 104
+    train_length_max: 156
+    train_length_step: 13
+    hidden_size_min: 32
+    hidden_size_max: 128
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 48
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 3e-4
+    learning_rate_max: 2e-3
+    batch_size_choices: [8, 16, 24, 32]
