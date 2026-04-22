@@ -1,0 +1,63 @@
+# ============================================================================
+# config.production.yaml – Standard-Produktionskonfiguration
+# ============================================================================
+# Dauer: ~15–30 Minuten (A100 GPU) / ~1–2 Stunden (CPU).
+#
+# h13: 2 Jahre Training, 1 Jahr Kontext → 4 Blöcke × 40 Samples
+# h52: 2,5 Jahre Training, 1 Jahr Kontext → 1 Block × 27 Samples
+#
+# Verwendung:
+#   ./schaden_forecast_job.sh  (production ist Default)
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 200
+  batch_size: 16
+  hidden_size: 64
+  hidden_continuous_size: 16
+  lstm_layers: 2
+  dropout: 0.3
+  learning_rate: 0.001
+  optimizer: "adamw"
+  loss: "mse"
+  early_stopping_patience: 15
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 104
+    validation_weeks: 52
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 52
+    output_chunk_length: 52
+    train_length_weeks: 130
+    validation_weeks: 52
+    stride_weeks: 52
+    window_mode: "expanding"
+
+tuning:
+  13:
+    enabled: false
+  52:
+    enabled: false

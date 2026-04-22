@@ -1,0 +1,60 @@
+# ============================================================================
+# config.smoke.yaml – Schneller Explorationslauf
+# ============================================================================
+# Dauer: ~2–5 Minuten (GPU) / ~10 Minuten (CPU).
+#
+# Verwendung:
+#   PLUTO_PROFILE=smoke ./schaden_forecast_job.sh
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 13]
+  rolling_windows: [4, 13]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 10
+  batch_size: 16
+  hidden_size: 16
+  hidden_continuous_size: 8
+  lstm_layers: 1
+  dropout: 0.1
+  learning_rate: 0.001
+  optimizer: "adamw"
+  loss: "mse"
+  early_stopping_patience: 0
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 104
+    validation_weeks: 26
+    stride_weeks: 13
+    window_mode: "expanding"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 52
+    output_chunk_length: 52
+    train_length_weeks: 130
+    validation_weeks: 52
+    stride_weeks: 52
+    window_mode: "expanding"
+
+tuning:
+  13:
+    enabled: false
+  52:
+    enabled: false
