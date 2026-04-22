@@ -1,0 +1,70 @@
+# ============================================================================
+# config.smoke.yaml – Schneller Explorationslauf
+# ============================================================================
+# Zweck: Verifiziert, dass die gesamte Pipeline fehlerfrei durchläuft
+# (DB2-Lesen → Preprocessing → Backtest → Forecast → DB2-Schreiben → Reporting).
+# Dauer: ~2–5 Minuten (GPU) / ~10 Minuten (CPU).
+#
+# Verwendung:
+#   export PLUTO_CONFIG=/mnt/da-pluto-timeseries/config.smoke.yaml
+#   python pluto_forecast_job.py
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 13]
+  rolling_windows: [4, 13]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 10
+  batch_size: 16
+  hidden_size: 16
+  hidden_continuous_size: 8
+  lstm_layers: 1
+  dropout: 0.1
+  learning_rate: 0.001
+  optimizer: "adamw"
+  loss: "mse"
+  early_stopping_patience: 0     # kein EarlyStopping, volle 10 Epochen
+
+# Nur h13 — reicht zum Testen der Pipeline.
+# h52 weglassen spart die Hälfte der Zeit, aber pluto_forecast_job.py
+# erwartet beide Horizonte für die Kombination. Zum reinen Smoke daher
+# den Job direkt über run_full_job() aufrufen, oder beide angeben:
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 208
+    validation_weeks: 26          # kürzer → weniger Backtest-Blöcke
+    stride_weeks: 13
+    window_mode: "expanding"      # schneller, da keine Blöcke übersprungen
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 104
+    output_chunk_length: 52
+    train_length_weeks: 260
+    validation_weeks: 52          # nur 1 Backtest-Block
+    stride_weeks: 52
+    window_mode: "expanding"
+
+# Kein Tuning
+tuning:
+  13:
+    enabled: false
+  52:
+    enabled: false
+
+# Pfad zum Runs-Verzeichnis wird über PLUTO_RUNS_DIR gesetzt.

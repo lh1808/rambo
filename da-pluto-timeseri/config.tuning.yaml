@@ -1,0 +1,122 @@
+# ============================================================================
+# config.tuning.yaml – Optuna-Hyperparametersuche
+# ============================================================================
+# Zweck: Findet optimale Modellparameter für beide Horizonte. Die besten
+# Parameter werden unter runs/tuned_h13_model.yaml bzw. tuned_h52_model.yaml
+# gespeichert und können danach von config.production.yaml geladen werden.
+#
+# Laufzeit-Budget:
+#   h13: 15 Trials × 3 Backtest-Blöcke × ~25 Epochen ≈ 1125 Modell-Fits
+#   h52: 10 Trials × 1 Backtest-Block  × ~25 Epochen ≈  250 Modell-Fits
+#   Gesamt: ~2–4 Stunden (A100 GPU) / ~8–12 Stunden (CPU)
+#
+# Empfohlener Ablauf:
+#   1. Smoke-Test mit config.smoke.yaml (verifiziert Pipeline)
+#   2. Tuning mit dieser Config (findet optimale Parameter)
+#   3. Ab dann config.production.yaml (lädt getunete Parameter automatisch)
+#   4. Tuning alle 3–6 Monate wiederholen (oder bei Datendrift)
+#
+# Verwendung:
+#   export PLUTO_CONFIG=/mnt/da-pluto-timeseries/config.tuning.yaml
+#   python pluto_forecast_job.py
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+# Für das Tuning: weniger Epochen + aggressiveres EarlyStopping.
+# Die besten Parameter werden anschließend mit den vollen
+# Produktions-Epochen (200) genutzt.
+tft:
+  n_epochs: 50
+  batch_size: 16
+  hidden_size: 64
+  hidden_continuous_size: 16
+  lstm_layers: 2
+  dropout: 0.3
+  learning_rate: 0.001
+  optimizer: "adamw"
+  loss: "mse"
+  early_stopping_patience: 5     # aggressiv → schnellere Trials
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 208
+    validation_weeks: 39          # 3 Backtest-Blöcke (39/13=3)
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 104
+    output_chunk_length: 52
+    train_length_weeks: 260
+    validation_weeks: 52          # 1 Backtest-Block (minimal, aber schnell)
+    stride_weeks: 52
+    window_mode: "expanding"      # nutzt alle Daten bei knapper Historie
+
+tuning:
+  13:
+    enabled: true
+    n_trials: 15
+    direction: "minimize"
+    metric: "smape"
+    # Trainingslänge: Optuna sucht im Bereich 104–260 Wochen
+    train_length_min: 104
+    train_length_max: 260
+    train_length_step: 26
+    # Architektur
+    hidden_size_min: 32
+    hidden_size_max: 96
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 32
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    # Regularisierung & Optimierung
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 5e-4
+    learning_rate_max: 3e-3
+    batch_size_choices: [8, 16, 24, 32]
+  52:
+    enabled: true
+    n_trials: 10
+    direction: "minimize"
+    metric: "smape"
+    train_length_min: 156
+    train_length_max: 312
+    train_length_step: 26
+    hidden_size_min: 32
+    hidden_size_max: 128
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 48
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 3e-4
+    learning_rate_max: 2e-3
+    batch_size_choices: [8, 16, 24, 32]
+
+# Getunete Parameter: werden ins Runs-Verzeichnis gespeichert.
+# Der Pfad wird über die Env-Variable PLUTO_RUNS_DIR gesetzt
+# (Default: "runs"). Kein manuelles Setzen nötig.
