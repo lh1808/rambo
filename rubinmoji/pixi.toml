@@ -1,0 +1,80 @@
+[workspace]
+name = "rubin"
+description = "Causal ML Framework – Analyse- und Production-Pipelines"
+channels = [
+  "https://nexus3.lan.huk-coburg.de/repository/conda-qc-huk",
+  "https://nexus3.lan.huk-coburg.de/repository/conda-forge",
+]
+platforms = ["linux-64"]
+conda-pypi-map = {"https://nexus3.lan.huk-coburg.de/repository/conda-forge" = "https://nexus.lan.huk-coburg.de/repository/raw-githubusercontent/prefix-dev/parselmouth/refs/heads/main/files/compressed_mapping.json"}
+
+[pypi-options]
+index-url = "https://nexus.lan.huk-coburg.de/repository/pypi/simple"
+
+[activation]
+env = { PIXI_TLS_ROOT_CERTS = "all", UV_NATIVE_TLS = "true" }
+
+[tasks]
+analyze = { cmd = "python run_analysis.py", description = "Analyse-Pipeline starten. Beispiel: pixi run analyze -- --config configs/config_quickstart.yml" }
+analyze-quick = { cmd = "python run_analysis.py --config configs/config_quickstart.yml", description = "Analyse mit Quickstart-Config (Smoke-Test)" }
+dataprep = { cmd = "python run_dataprep.py", description = "Datenaufbereitung. Beispiel: pixi run dataprep -- --config configs/config_full.yml" }
+score = { cmd = "python run_production.py", description = "Production-Scoring. Beispiel: pixi run score -- --bundle runs/bundles/... --x data.csv --out scores.csv" }
+explain = { cmd = "python run_explain.py", description = "Explainability-Artefakte erzeugen. Beispiel: pixi run explain -- --bundle runs/bundles/... --x data/X.parquet" }
+promote = { cmd = "python run_promote.py", description = "Champion im Bundle wechseln. Beispiel: pixi run promote -- --bundle runs/bundles/... --model TLearner" }
+sync-requirements = { cmd = "python scripts/sync_requirements.py", description = "requirements.txt und app/requirements_app.txt aus pyproject.toml generieren" }
+build-app = { cmd = "python scripts/build_app_html.py", description = "React-App bauen: Libraries herunterladen und in rubin_ui.html einbetten (einmalig, braucht Internet)" }
+info = { cmd = "python scripts/info.py", description = "Zeigt Framework-Informationen" }
+
+[dependencies]
+python = ">=3.10,<3.13"
+numpy = ">=1.24"
+pandas = ">=2.0"
+pydantic = ">=2.0"
+scikit-learn = ">=1.3"
+mlflow = ">=2.10"
+optuna = ">=3.5"
+matplotlib-base = ">=3.7"
+scipy = ">=1.11"
+lightgbm = ">=4.0"
+catboost = ">=1.2"
+econml = ">=0.15"
+pyarrow = ">=12"
+openpyxl = ">=3.0"
+pyyaml = ">=6.0"
+
+# ── PyPI-Pakete ──
+# Voraussetzung: export PIXI_TLS_ROOT_CERTS="all" UND export UV_NATIVE_TLS=true VOR pixi install
+# Am besten in .devboxrc oder devbox-setup hinterlegen.
+# Hinzufügen: pixi add --pypi <paket>
+[pypi-dependencies]
+rubin = { path = ".", editable = true }
+scikit-uplift = ">=0.5"
+flaml = { version = ">=2.1", extras = ["automl"] }
+
+# ── Feature: shap (optional) ──
+[feature.shap.dependencies]
+shap = ">=0.43"
+
+# ── Feature: app (React-UI + Flask-Backend) ──
+[feature.app.dependencies]
+flask = ">=3.0"
+
+[feature.app.tasks]
+app = { cmd = "bash app.sh", description = "rubin-UI starten (lokal: Port 8501, Domino: $DOMINO_APP_PORT)" }
+
+# ── Feature: dev (Test- und Lint-Tools) ──
+[feature.dev.dependencies]
+pytest = ">=7.4"
+pytest-cov = ">=4.1"
+ruff = ">=0.3"
+
+[feature.dev.tasks]
+test = { cmd = "python -m pytest tests/ -v --tb=short" }
+test-cov = { cmd = "python -m pytest tests/ -v --cov=rubin --cov-report=term-missing" }
+lint = "ruff check rubin/ app/ tests/ run_*.py"
+lint-fix = "ruff check --fix rubin/ app/ tests/ run_*.py"
+
+[environments]
+default = { features = ["shap"], solve-group = "default" }
+app = { features = ["shap", "app"], solve-group = "default" }
+dev = { features = ["shap", "dev"], solve-group = "default" }
