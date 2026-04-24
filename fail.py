@@ -1,7 +1,25 @@
-17:44:46 INFO [rubin.tuning] Tuning-Task 'catboost__outcome__classifier__all__no_t__y': X_input=389984 rows, indices=389984, X_task=(389984, 88), target=(389984,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome
-18:22:05 INFO [rubin.tuning] BLT 'catboost__outcome__classifier__all__no_t__y': 51/100 Trials abgeschlossen (parallel=10, Wellen≈5).
-18:22:05 WARNING [rubin.tuning] Tuning 'catboost__outcome__classifier__all__no_t__y': 51/100 Trials erfolgreich, 49 fehlgeschlagen.
-18:22:06 INFO [rubin.tuning] Tuning-Task 'catboost__outcome_regression__regressor__all__with_t__y': X_input=389984 rows, indices=389984, X_task=(389984, 89), target=(389984,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome_regression
-18:56:05 INFO [rubin.tuning] BLT 'catboost__outcome_regression__regressor__all__with_t__y': 42/100 Trials abgeschlossen (parallel=10, Wellen≈4).
-18:56:05 WARNING [rubin.tuning] Tuning 'catboost__outcome_regression__regressor__all__with_t__y': 42/100 Trials erfolgreich, 58 fehlgeschlagen.
-18:56:06 INFO [rubin.tuning] Tuning-Task 'catboost__outcome_regression__regressor__all_direct__with_t__y': X_input=389984 rows, indices=389984, X_task=(389984, 89), target=(389984,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome_regression
+Modell
+Aufschlüsselung
+Fits
+CausalForestDML
+10 Nuisance + 48 Forest-Grid
+58
+Nuisance: cv=5 × 2 Modelle = 10. Dann 48 Forest-Kombis (intensiv) auf den Residuals.
+CausalForest
+48 Forest-Grid (kein Nuisance)
+48
+R-Loss Grid-Search auf erstem CV-Fold (48 Kombis inkl. criterion).
+Intensives Grid (48 statt 12 Kombis)
+Normal: 12 Kombis (min_samples_leaf × max_depth × max_samples). Intensiv: 48 Kombis (+ criterion, mehr max_depth-Stufen).
+Search-Grid
+Parameter
+Werte
+min_samples_leaf
+5, 10, 20
+max_depth
+None, 10, 20, 30
+max_samples
+0.3, 0.5
+criterion
+mse, het
+Nicht-getunte Parameter verwenden EconML-Defaults (n_estimators=200, honest=true). CausalForestDML optimiert zusätzlich min_weight_fraction_leaf und min_var_fraction_leaf.
