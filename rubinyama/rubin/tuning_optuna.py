@@ -522,7 +522,7 @@ class BaseLearnerTuner:
         """Signatur für Task-Sharing: (objective_family, estimator_task, uses_T, sample_scope, target).
 
         sample_scope unterscheidet, wie das Modell in Produktion trainiert wird:
-        - "all": Innerhalb von DML/DR-internem Cross-Fitting (cv=dml_crossfit_folds, Default 3) → sieht ~67% des äußeren Folds.
+        - "all": Innerhalb von DML/DR-internem Cross-Fitting (cv=dml_crossfit_folds, Default 5) → sieht ~80% des äußeren Folds.
         - "all_direct": Direkt auf dem äußeren Fold trainiert (Meta-Learner) → sieht ~100% des äußeren Folds.
         - "group_specific_shared_params": Pro Treatment-Gruppe trainiert.
         Diese Trennung verhindert, dass Modelle mit unterschiedlichen effektiven
@@ -547,11 +547,11 @@ class BaseLearnerTuner:
                 return ("pseudo_effect", "regressor", False, "group_specific_shared_params", "D")
             if role == "propensity_model":
                 # XLearner propensity wird direkt auf dem äußeren Fold trainiert (80% N),
-                # während DML/DR-Propensity innerhalb von cv=dml_crossfit_folds trainiert wird (~53% N bei cv=3).
+                # während DML/DR-Propensity innerhalb von cv=dml_crossfit_folds trainiert wird (~64% N bei cv=5).
                 return ("propensity", "classifier", False, "all_direct", "T")
 
         # ── DRLearner ──
-        # Nuisance-Modelle laufen innerhalb DRLearner cv=dml_crossfit_folds → scope="all" (~53% N bei cv=3).
+        # Nuisance-Modelle laufen innerhalb DRLearner cv=dml_crossfit_folds → scope="all" (~64% N bei cv=5).
         if name == "drlearner":
             if role == "model_propensity":
                 return ("propensity", "classifier", False, "all", "T")
@@ -560,7 +560,7 @@ class BaseLearnerTuner:
 
         # ── DML-Familie: Nuisance-Modelle sind Classifier ──
         # EconML wickelt predict_proba via discrete_outcome/discrete_treatment.
-        # Laufen innerhalb DML cv=dml_crossfit_folds → scope="all" (~53% N bei cv=3).
+        # Laufen innerhalb DML cv=dml_crossfit_folds → scope="all" (~64% N bei cv=5).
         if name in {"nonparamdml", "paramdml", "causalforestdml"}:
             if role == "model_y":
                 return ("outcome", "classifier", False, "all", "Y")
@@ -762,14 +762,24 @@ class BaseLearnerTuner:
     def _objective_all_classification(self, params: Dict[str, Any], X_mat: np.ndarray, target: np.ndarray, trial=None) -> float:
         scores: List[float] = []
         is_multiclass = len(np.unique(target)) > 2
+        _op_active = getattr(self.cfg.tuning, "overfit_penalty", 0.0) > 0
         for fold_i, (tr, va) in enumerate(self._cv_splits(target.astype(int), single_fold=self.cfg.tuning.single_fold)):
             model = self._fit_model(params, X_mat[tr], target[tr].astype(int), "classifier")
             if is_multiclass:
-                proba = model.predict_proba(X_mat[va])
-                scores.append(self._score_classifier(target[va], proba, multiclass=True))
+                proba_val = model.predict_proba(X_mat[va])
+                val_score = self._score_classifier(target[va], proba_val, multiclass=True)
+                if _op_active:
+                    proba_tr = model.predict_proba(X_mat[tr])
+                    train_score = self._score_classifier(target[tr], proba_tr, multiclass=True)
+                    val_score = self._apply_overfit_penalty(val_score, train_score)
             else:
-                proba = model.predict_proba(X_mat[va])[:, 1]
-                scores.append(self._score_classifier(target[va], proba))
+                proba_val = model.predict_proba(X_mat[va])[:, 1]
+                val_score = self._score_classifier(target[va], proba_val)
+                if _op_active:
+                    proba_tr = model.predict_proba(X_mat[tr])[:, 1]
+                    train_score = self._score_classifier(target[tr], proba_tr)
+                    val_score = self._apply_overfit_penalty(val_score, train_score)
+            scores.append(val_score)
             # Optuna Pruning: nach jedem Fold Zwischenergebnis melden.
             # Unpromising Trials werden frühzeitig abgebrochen.
             if trial is not None:
@@ -803,13 +813,54 @@ class BaseLearnerTuner:
         # Default: neg_mse
         return -float(np.mean(residuals ** 2))
 
+    def _apply_overfit_penalty(self, val_score: float, train_score: float,
+                               penalty: float = None, tolerance: float = None) -> float:
+        """Bestraft Overfit-Gap zwischen Train- und Val-Score.
+
+        Motivation (aus Chernozhukov et al., 2016 / "Causal Inference for the
+        Brave and True", Appendix):
+        Nuisance-Modelle, die overfitten, absorbieren kausales Signal in den
+        Residuals. Die OOF-Residuals Ỹ = Y - E[Y|X] werden systematisch zu
+        klein, sodass model_final (CATE) weniger Heterogenität findet.
+
+        Bei FMT: Analoges Problem — ein overfittendes model_final produziert
+        gute Train-R-Scores, aber schlechte OOF-R-Scores. Der Gap misst
+        direkt, ob model_final echte Heterogenität findet oder nur
+        Trainingsrauschen gelernt hat.
+
+        Formel:
+            adjusted = val_score - penalty * max(0, gap - tolerance)
+
+        wobei gap = train_score - val_score (positiv = Train besser als Val).
+
+        Parameter:
+            val_score:   Score auf dem Validierungs-Fold (higher = better)
+            train_score: Score auf dem Trainings-Fold (higher = better)
+            penalty:     Penalty-Stärke (None → aus tuning.overfit_penalty)
+            tolerance:   Gap-Schwelle (None → aus tuning.overfit_tolerance)
+        """
+        if penalty is None:
+            penalty = getattr(self.cfg.tuning, "overfit_penalty", 0.0)
+        if tolerance is None:
+            tolerance = getattr(self.cfg.tuning, "overfit_tolerance", 0.05)
+        if penalty <= 0:
+            return val_score
+        gap = train_score - val_score  # positiv = Overfitting
+        return val_score - penalty * max(0.0, gap - tolerance)
+
     def _objective_all_regression(self, params: Dict[str, Any], X_mat: np.ndarray, target: np.ndarray, trial=None) -> float:
         """Tuning-Objective für Regressoren auf dem Gesamt-Datensatz (SLearner, DRLearner model_regression)."""
         scores: List[float] = []
+        _op_active = getattr(self.cfg.tuning, "overfit_penalty", 0.0) > 0
         for fold_i, (tr, va) in enumerate(self._cv_splits(target.astype(float), single_fold=self.cfg.tuning.single_fold)):
             model = self._fit_model(params, X_mat[tr], target[tr].astype(float), "regressor")
-            pred = model.predict(X_mat[va])
-            scores.append(self._score_regressor(target[va], pred))
+            pred_val = model.predict(X_mat[va])
+            val_score = self._score_regressor(target[va], pred_val)
+            if _op_active:
+                pred_tr = model.predict(X_mat[tr])
+                train_score = self._score_regressor(target[tr], pred_tr)
+                val_score = self._apply_overfit_penalty(val_score, train_score)
+            scores.append(val_score)
             if trial is not None:
                 trial.report(float(np.mean(scores)), fold_i)
                 if trial.should_prune():
@@ -819,6 +870,7 @@ class BaseLearnerTuner:
     def _objective_grouped_regression(self, params: Dict[str, Any], X_mat: np.ndarray, Y: np.ndarray, T: np.ndarray, trial=None) -> float:
         """Tuning-Objective für Regressoren pro Treatment-Gruppe (TLearner, XLearner)."""
         scores: List[float] = []
+        _op_active = getattr(self.cfg.tuning, "overfit_penalty", 0.0) > 0
         K = len(np.unique(T))
         strat_labels = np.asarray(T).astype(int) * 10 + np.clip(np.asarray(Y), 0, 1).astype(int)
         for fold_i, (tr, va) in enumerate(self._cv_splits(strat_labels, single_fold=self.cfg.tuning.single_fold)):
@@ -830,8 +882,13 @@ class BaseLearnerTuner:
                     continue
                 y_train = Y[tr][tr_mask].astype(float)
                 model = self._fit_model(params, X_mat[tr][tr_mask], y_train, "regressor")
-                pred = model.predict(X_mat[va][va_mask])
-                fold_scores.append(self._score_regressor(Y[va][va_mask], pred))
+                pred_val = model.predict(X_mat[va][va_mask])
+                val_score = self._score_regressor(Y[va][va_mask], pred_val)
+                if _op_active:
+                    pred_tr = model.predict(X_mat[tr][tr_mask])
+                    train_score = self._score_regressor(y_train, pred_tr)
+                    val_score = self._apply_overfit_penalty(val_score, train_score)
+                fold_scores.append(val_score)
             if fold_scores:
                 scores.append(float(np.mean(fold_scores)))
             if trial is not None and scores:
@@ -901,21 +958,7 @@ class BaseLearnerTuner:
         return float(np.mean(scores)) if scores else -1e12
 
     def _tune_task(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray, shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        # ── Dispatch: FLAML oder Optuna ──
-        # "both"-Modus ist nur mit Optuna möglich (FLAML kennt kein kategorisches
-        # Learner-Sampling). Bei base_learner.type='both' wird automatisch Optuna
-        # verwendet, auch wenn 'flaml' konfiguriert ist.
-        _use_flaml = getattr(self.cfg.tuning, "automl", "optuna") == "flaml"
         _is_both = (self.cfg.base_learner.type or "").lower() == "both"
-        if _use_flaml and _is_both:
-            _tlog = logging.getLogger("rubin.tuning")
-            _tlog.warning(
-                "FLAML-Backend ist inkompatibel mit base_learner.type='both' "
-                "(FLAML unterstützt keine kategorische Learner-Wahl). "
-                "Task '%s' wird stattdessen mit Optuna getunt.", task.key,
-            )
-        if _use_flaml and not _is_both:
-            return self._tune_task_flaml(task, X=X, Y=Y, T=T, shared_params=shared_params)
 
         indices = self._combined_indices_for_task(task, T=T, n_rows=len(X))
         X_task, row_indices, T_task = self._prepare_task_frame(task, X=X, T=T, indices=indices)
@@ -1064,228 +1107,6 @@ class BaseLearnerTuner:
             )
             return dict(fixed_defaults)
 
-    # ── FLAML AutoML Backend (Bach et al., 2024 / CausalTune) ─────────────
-    # Alternative zu Optuna: FLAML übernimmt HP-Tuning + Early Stopping automatisch.
-    # Nutzt denselben Task-Plan und dieselben Daten wie Optuna.
-
-    def _tune_task_flaml(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray,
-                         shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """FLAML-basiertes Tuning einer Nuisance-Task.
-
-        FLAML kann nur einfache Klassifikations-/Regressions-Tasks handhaben.
-        Für gruppenspezifische Tasks (TLearner, XLearner) und Pseudo-Outcome-Tasks
-        wird automatisch auf Optuna zurückgefallen, weil FLAML keine gruppenweise
-        Modellierung (K separate Modelle pro Treatment-Gruppe) unterstützt.
-        """
-        _log = logging.getLogger("rubin.tuning")
-
-        # ── Inkompatible Tasks → Optuna-Fallback ──────────────────────
-        # grouped_outcome_regression: TLearner/XLearner trainieren K separate
-        #   Modelle pro Treatment-Gruppe. FLAML kann nur ein Modell auf allen Daten trainieren.
-        # pseudo_effect: XLearner benötigt Pseudo-Outcomes aus Nuisance-Modellen
-        #   als Zwischenschritt — FLAML hat dafür keine Pipeline.
-        flaml_incompatible = {"grouped_outcome_regression", "pseudo_effect"}
-        if task.objective_family in flaml_incompatible:
-            _log.info(
-                "FLAML-Tuning '%s': Task-Familie '%s' nicht FLAML-kompatibel "
-                "(gruppenspezifisch oder Pseudo-Outcome). Fallback auf Optuna.",
-                task.key, task.objective_family,
-            )
-            return self._tune_task_optuna_fallback(task, X=X, Y=Y, T=T, shared_params=shared_params)
-
-        try:
-            from flaml import AutoML  # type: ignore
-        except ImportError:
-            _log.warning(
-                "FLAML ist nicht installiert (pip install flaml[automl]). "
-                "Fallback auf Optuna."
-            )
-            return self._tune_task_optuna_fallback(task, X=X, Y=Y, T=T, shared_params=shared_params)
-
-        indices = self._combined_indices_for_task(task, T=T, n_rows=len(X))
-        X_task, row_indices, T_task = self._prepare_task_frame(task, X=X, T=T, indices=indices)
-
-        if task.target_name == "Y":
-            target = np.asarray(Y)[row_indices]
-        elif task.target_name == "T":
-            target = np.asarray(T)[row_indices].astype(int)
-        else:
-            target = np.asarray(Y)[row_indices]
-
-        max_rows = self.cfg.tuning.max_tuning_rows
-        if max_rows is not None and len(X_task) > int(max_rows):
-            rng = np.random.RandomState(self.seed)
-            keep = rng.choice(np.arange(len(X_task)), size=int(max_rows), replace=False)
-            X_task = X_task.iloc[keep]
-            target = target[keep]
-
-        X_mat = X_task.to_numpy() if hasattr(X_task, "to_numpy") else np.asarray(X_task)
-        base_type = (self.cfg.base_learner.type or "lgbm").lower()
-
-        # FLAML Estimator-Liste: nur den konfigurierten Base-Learner
-        estimator_map = {"lgbm": "lgbm", "catboost": "catboost"}
-        estimator_list = [estimator_map.get(base_type, "lgbm")]
-
-        # Task-Typ bestimmen
-        is_classifier = task.objective_family in {"outcome", "propensity"}
-        flaml_task = "classification" if is_classifier else "regression"
-
-        # Metric-Mapping
-        if is_classifier:
-            metric = self.cfg.tuning.metric or "log_loss"
-            # FLAML kennt pr_auc unter dem Namen "ap" (average precision).
-            # Andere String-Metriken (log_loss, roc_auc, accuracy) werden direkt
-            # von FLAML unterstützt.
-            if metric == "pr_auc":
-                metric = "ap"
-        else:
-            metric = self.cfg.tuning.metric_regression or "mse"
-            if metric.startswith("neg_"):
-                metric = metric[4:]
-
-        # FLAML stoppt beim zuerst erreichten Limit (time_budget ODER max_iter).
-        # Wenn kein explizites Timeout gesetzt ist, verwenden wir ein großzügiges
-        # Zeitlimit (1h) und lassen max_iter die Kontrolle übernehmen — konsistent
-        # mit Optunas Verhalten (n_trials als primäre Steuerung).
-        # Bei explizitem timeout_seconds wird dieses als hartes Limit verwendet.
-        timeout = self.cfg.tuning.timeout_seconds or 3600
-        n_trials = int(self.cfg.tuning.n_trials)
-
-        _log.info(
-            "FLAML-Tuning '%s': task=%s, metric=%s, estimator=%s, X=%s, timeout=%ds, max_iter=%d",
-            task.key, flaml_task, metric, estimator_list, X_mat.shape, timeout, n_trials,
-        )
-
-        automl = AutoML()
-        # Parallelisierung: FLAML verwaltet Trials intern.
-        # Level 1 = single-core (Determinismus), Level 2+ = alle Kerne.
-        pl = self.cfg.constants.parallel_level
-        flaml_n_jobs = 1 if pl <= 1 else -1
-
-        # MLflow-Isolation: FLAML triggert intern sklearn/catboost/lightgbm-
-        # Autologging, das Parameter in den aktiven MLflow-Run schreibt. Bei
-        # mehreren Tasks crasht das mit "Changing param values is not allowed".
-        #
-        # Dreifache Absicherung:
-        # 1. Alle Autolog-Integrationen deaktivieren
-        # 2. Aktiven MLflow-Run temporär aus dem Thread-Local-Stack entfernen
-        #    (FLAML sieht keinen aktiven Run → kann nichts loggen)
-        # 3. FLAML-eigenes mlflow_logging=False
-        _mlflow_run_stack_backup = None
-        try:
-            import mlflow as _mlflow
-            # 1. Framework-Autologging deaktivieren
-            for _fw in ["sklearn", "catboost", "lightgbm", "xgboost"]:
-                try:
-                    _mod = getattr(_mlflow, _fw, None)
-                    if _mod and hasattr(_mod, "autolog"):
-                        _mod.autolog(disable=True)
-                except Exception:
-                    pass
-            try:
-                _mlflow.autolog(disable=True)
-            except Exception:
-                pass
-            # 2. Aktiven Run aus Thread-Local entfernen (ohne end_run!)
-            _fluent = _mlflow.tracking.fluent
-            if hasattr(_fluent, "_active_run_stack") and _fluent._active_run_stack:
-                _mlflow_run_stack_backup = list(_fluent._active_run_stack)
-                _fluent._active_run_stack.clear()
-        except Exception:
-            pass
-
-        automl_settings = {
-            "task": flaml_task,
-            "metric": metric,
-            "estimator_list": estimator_list,
-            "time_budget": timeout,
-            "max_iter": n_trials,
-            "n_jobs": flaml_n_jobs,
-            "seed": self.seed,
-            "verbose": 0,
-            "eval_method": "cv",
-            "n_splits": int(self.cfg.tuning.cv_splits),
-            "mlflow_logging": False,  # FLAML-eigenes MLflow-Logging deaktivieren
-        }
-
-        try:
-            automl.fit(X_mat, target, **automl_settings)
-            best_config = dict(automl.best_config or {})
-
-            # ── FLAML-Config sanitisieren ──────────────────────────────
-            # FLAML nutzt intern Early Stopping und setzt n_estimators sehr
-            # hoch (z.B. 8192). Ohne Eval-Daten in rubins build_base_learner
-            # würden alle 8192 Iterationen trainiert → langsam + Overfitting.
-            #
-            # 1. early_stopping_rounds entfernen (Training-Param, ohne Eval-Daten nutzlos)
-            # 2. n_estimators auf tatsächliche beste Iteration cappen (wenn verfügbar)
-            #    oder auf 600 (Optuna BLT Default-Maximum)
-            _flaml_only_params = {"early_stopping_rounds", "od_wait", "FLAML_sample_size"}
-            for p in _flaml_only_params:
-                best_config.pop(p, None)
-
-            _n_est_key = "n_estimators" if "n_estimators" in best_config else "iterations"
-            if _n_est_key in best_config and int(best_config[_n_est_key]) > 600:
-                # Versuche die tatsächliche Iterationszahl vom besten Modell zu lesen
-                _actual = None
-                try:
-                    _best_model = automl.model
-                    if hasattr(_best_model, "best_iteration_"):
-                        _actual = int(_best_model.best_iteration_) + 1
-                    elif hasattr(_best_model, "tree_count_"):
-                        _actual = int(_best_model.tree_count_())
-                    elif hasattr(_best_model, "n_estimators"):
-                        _actual = int(_best_model.n_estimators)
-                except Exception:
-                    pass
-
-                _cap = min(_actual or 600, 600)
-                _log.info(
-                    "FLAML '%s': %s=%d → capped auf %d (FLAML nutzt intern Early Stopping, "
-                    "rubin trainiert ohne Eval-Daten).",
-                    task.key, _n_est_key, best_config[_n_est_key], _cap,
-                )
-                best_config[_n_est_key] = _cap
-
-            # Score speichern (FLAML minimiert, wir brauchen negiert für Konsistenz)
-            best_loss = float(automl.best_loss) if hasattr(automl, "best_loss") else 0.0
-            self.best_scores[task.key] = -best_loss if is_classifier else -best_loss
-
-            _log.info(
-                "FLAML-Tuning '%s' abgeschlossen: best_loss=%.6g, best_config=%s",
-                task.key, best_loss, best_config,
-            )
-
-            # Fixed defaults mergen
-            fixed_defaults = dict(self.cfg.base_learner.fixed_params or {})
-            return {**fixed_defaults, **best_config}
-
-        except Exception as e:
-            _log.warning("FLAML-Tuning '%s' fehlgeschlagen: %s. Fallback auf Defaults.", task.key, e)
-            return dict(self.cfg.base_learner.fixed_params or {})
-
-        finally:
-            # MLflow Active-Run-Stack wiederherstellen
-            if _mlflow_run_stack_backup is not None:
-                try:
-                    import mlflow as _mlflow
-                    _fluent = _mlflow.tracking.fluent
-                    _fluent._active_run_stack.clear()
-                    _fluent._active_run_stack.extend(_mlflow_run_stack_backup)
-                except Exception:
-                    pass
-
-    def _tune_task_optuna_fallback(self, task: TuningTask, X: pd.DataFrame, Y: np.ndarray,
-                                    T: np.ndarray, shared_params: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """Optuna-Pfad ohne Dispatch-Check (für FLAML-Fallback)."""
-        # Temporär automl auf optuna setzen, _tune_task aufrufen, zurücksetzen
-        orig = self.cfg.tuning.automl
-        object.__setattr__(self.cfg.tuning, "automl", "optuna")
-        try:
-            return self._tune_task(task, X=X, Y=Y, T=T, shared_params=shared_params)
-        finally:
-            object.__setattr__(self.cfg.tuning, "automl", orig)
-
     def _tuning_n_jobs(self) -> int:
         """Anzahl paralleler Optuna-Trials basierend auf parallel_level.
 
@@ -1386,21 +1207,16 @@ class BaseLearnerTuner:
     # Wird NACH dem Tuning als Post-hoc-Diagnostic berechnet, nicht als Tuning-Metrik.
 
 class FinalModelTuner:
-    """Tuning des Final-Modells über R-Loss/R-Score-Logik.
-Unterstützte Fälle (aktuell):
-- NonParamDML: Final-Modell wird über den EconML-RScorer bewertet.
-- DRLearner: Final-Modell wird über die eingebaute score(...) Funktion bewertet.
-Warum zwei Varianten?
-- RScorer ist explizit als Modellselektions-Scorer für R-Loss konzipiert und
-passt sehr gut zur DML-Familie.
-- Für DRLearner ist die direkte score(...) Methode der natürlichere Weg, weil
-die Nuisance-Struktur (Regression mit T) von RScorer abweicht. In der EconML-
-Dokumentation wird score(...) genau für diese Art Out-of-Sample-Bewertung
-empfohlen.
+    """Tuning des Final-Modells (model_final) über OOF-CV mit est.score().
+
+Beide unterstützten Modelle (NonParamDML, DRLearner) nutzen dieselbe Architektur:
+- Äußere CV-Folds (K = cross_validation_splits): est.fit(train) + est.score(val)
+- model_final wird komplett Out-of-Fold evaluiert → keine optimistischen R-Scores
+- Optionale Overfit-Penalty: bestraft Train-Val-Gap (Overfitting-Erkennung)
+
 Locking-Regel:
-Das Tuning wird auf der Trainingsmenge des ersten Cross-Prediction-Folds
-durchgeführt. Danach werden die gefundenen Parameter als ctx.tuned_params
-persistiert und in weiteren Folds wiederverwendet."""
+Die gefundenen Hyperparameter werden als tuned_params persistiert und
+in allen Cross-Prediction-Folds wiederverwendet."""
 
     def __init__(self, cfg: AnalysisConfig) -> None:
         self.cfg = cfg
@@ -1541,105 +1357,31 @@ persistiert und in weiteren Folds wiederverwendet."""
         if name == "nonparamdml":
             from econml.dml import NonParamDML
 
-            fmt_method = getattr(self.cfg.final_model_tuning, "method", "rscorer")
             study = self._create_study(f"final__{model_name}__{base_type}")
-            stability_penalty = float(getattr(self.cfg.final_model_tuning, "stability_penalty", 0.0))
+            _op = float(getattr(self.cfg.final_model_tuning, "overfit_penalty", 0.0))
+            _ot = float(getattr(self.cfg.final_model_tuning, "overfit_tolerance", 0.05))
+            _sf = bool(getattr(self.cfg.final_model_tuning, "single_fold", False))
 
-            if fmt_method == "dr_score":
-                # ── DR-Score (Mahajan et al., 2024) ───────────────────────
-                # Berechnet DR-Pseudo-Outcomes einmal vorab, dann MSE(τ_DR, CATE).
-                # DR-Pseudo-Outcome: Γ = μ̂(1,X) - μ̂(0,X) + T(Y-μ̂(1,X))/ê(X) - (1-T)(Y-μ̂(0,X))/(1-ê(X))
-                _flog = logging.getLogger("rubin.tuning")
-                _flog.info("FMT NonParamDML: DR-Score-Methode (Mahajan et al., 2024)")
+            # Äußere CV-Folds: model_final wird auf Train gefittet und auf
+            # komplett OOF-Val bewertet. Ohne äußere CV wäre die R-Score-
+            # Schätzung optimistisch, weil model_final auf denselben Daten
+            # evaluiert wird, auf denen es trainiert wurde.
+            _outer_splits = int(self.cfg.data_processing.cross_validation_splits)
 
-                # Nuisance-Modelle fitten und DR-Pseudo-Outcomes berechnen (Cross-Fitted)
-                cv_splits = int(self.cfg.final_model_tuning.cv_splits)
-                dr_pseudo = np.zeros(len(Y_tune), dtype=float)
+            def objective(trial):
+                cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
+                if base_type == "lgbm" or (base_type == "both" and cand_params.get("_learner_type") == "lgbm"):
+                    cand_params.setdefault("subsample_freq", 1)
 
-                for tr, va in _iter_stratified_or_kfold(T_tune.astype(int), cv_splits, self.seed):
-                    # Outcome-Modell: E[Y|T,X] — je Treatment-Gruppe
-                    X_tr_np = X_tune.iloc[tr].values
-                    X_va_np = X_tune.iloc[va].values
-                    mu_1 = np.zeros(len(va), dtype=float)
-                    mu_0 = np.zeros(len(va), dtype=float)
-                    for t_val in [0, 1]:
-                        mask = T_tune[tr] == t_val
-                        if mask.sum() < 2:
-                            continue
-                        out_model = self._build_regressor(base_type, base_fixed_params, tuned_roles.get("model_y", {}))
-                        out_model.fit(X_tr_np[mask], Y_tune[tr][mask])
-                        pred = out_model.predict(X_va_np)
-                        if t_val == 1:
-                            mu_1 = pred
-                        else:
-                            mu_0 = pred
+                fold_scores_raw = []
+                fold_scores_adj = []
 
-                    # Propensity: P(T=1|X)
-                    prop_model = self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {}))
-                    prop_model.fit(X_tr_np, T_tune[tr])
-                    e_x = prop_model.predict_proba(X_va_np)
-                    if e_x.ndim == 2:
-                        e_x = e_x[:, 1]
-                    e_x = np.clip(e_x, 0.01, 0.99)
-
-                    # DR Pseudo-Outcome
-                    T_va = T_tune[va]
-                    Y_va = Y_tune[va]
-                    dr_pseudo[va] = (mu_1 - mu_0
-                                     + T_va * (Y_va - mu_1) / e_x
-                                     - (1 - T_va) * (Y_va - mu_0) / (1 - e_x))
-
-                def objective(trial):
-                    cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
-                    if base_type == "lgbm" or (base_type == "both" and cand_params.get("_learner_type") == "lgbm"):
-                        cand_params.setdefault("subsample_freq", 1)
-                    est = NonParamDML(
-                        model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
-                        model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
-                        model_final=self._build_regressor(base_type, fmt_fixed_params, cand_params),
-                        discrete_treatment=True, discrete_outcome=True,
-                        cv=int(self.cfg.final_model_tuning.cv_splits),
-                        mc_iters=self.cfg.data_processing.mc_iters,
-                        mc_agg=self.cfg.data_processing.mc_agg,
-                        random_state=self.seed,
-                    )
-                    est.fit(Y_tune, T_tune, X=X_tune)
-                    cate = est.effect(X_tune).ravel()
-
-                    # DR-Score: negierter MSE zwischen DR-Pseudo-Outcomes und CATE (höher = besser)
-                    from sklearn.metrics import mean_squared_error
-                    dr_mse = float(mean_squared_error(dr_pseudo, cate))
-                    dr_score = -dr_mse
-                    trial.set_user_attr("r_score_raw", dr_score)
-
-                    if stability_penalty > 0:
-                        cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
-                        penalty = stability_penalty * float(np.log1p(cv))
-                        trial.set_user_attr("stability_cv", cv)
-                        trial.set_user_attr("stability_penalty_value", penalty)
-                        return dr_score - penalty
-                    return dr_score
-
-            else:
-                # ── RScorer (Schuler et al., 2018 / Nie & Wager, 2017) ────
-                from econml.score import RScorer
-
-                scorer = RScorer(
-                    model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
-                    model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
-                    discrete_treatment=True,
-                    discrete_outcome=True,
-                    cv=int(self.cfg.final_model_tuning.cv_splits),
-                        mc_iters=self.cfg.data_processing.mc_iters,
-                        mc_agg=self.cfg.data_processing.mc_agg,
-                    random_state=self.seed,
+                split_iter = _iter_stratified_or_kfold(
+                    labels=T_tune.astype(int),
+                    n_splits=_outer_splits,
+                    seed=self.seed,
                 )
-                scorer.fit(Y_tune, T_tune, X=X_tune)
-
-                def objective(trial):
-                    cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
-                    if base_type == "lgbm" or (base_type == "both" and cand_params.get("_learner_type") == "lgbm"):
-                        cand_params.setdefault("subsample_freq", 1)
+                for fold_i, (tr, va) in enumerate(split_iter):
                     est = NonParamDML(
                         model_y=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_y", {})),
                         model_t=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_t", {})),
@@ -1650,22 +1392,25 @@ persistiert und in weiteren Folds wiederverwendet."""
                         mc_agg=self.cfg.data_processing.mc_agg,
                         random_state=self.seed,
                     )
-                    est.fit(Y_tune, T_tune, X=X_tune)
-                    r_score = float(scorer.score(est))
-                    trial.set_user_attr("r_score_raw", r_score)
+                    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+                    val_score = float(est.score(Y_tune[va], T_tune[va], X=X_tune.iloc[va]))
+                    fold_scores_raw.append(val_score)
 
-                    if stability_penalty > 0:
-                        cate = est.effect(X_tune).ravel()
-                        cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
-                        penalty = float(np.log1p(cv))
-                        total_pen = stability_penalty * penalty
-                        trial.set_user_attr("stability_cv", cv)
-                        trial.set_user_attr("stability_penalty_value", total_pen)
-                        logging.getLogger("rubin.tuning").debug(
-                            "FMT penalty: r_score=%.6g, cv=%.4f, log1p(cv)=%.4f, penalty=%.6g, penalized=%.6g",
-                            r_score, cv, penalty, total_pen, r_score - total_pen)
-                        return r_score - total_pen
-                    return r_score
+                    adjusted = val_score
+                    if _op > 0:
+                        train_score = float(est.score(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr]))
+                        adjusted = self._apply_overfit_penalty(val_score, train_score, penalty=_op, tolerance=_ot)
+                    fold_scores_adj.append(adjusted)
+
+                    trial.report(float(np.mean(fold_scores_adj)), fold_i)
+                    if trial.should_prune():
+                        raise self.optuna.TrialPruned()
+
+                    if _sf:
+                        break
+
+                trial.set_user_attr("r_score_raw", float(np.mean(fold_scores_raw)))
+                return float(np.mean(fold_scores_adj))
 
             _fmt_pj = self._tuning_n_jobs()
             _fmt_nt = int(self.cfg.final_model_tuning.n_trials)
@@ -1694,8 +1439,8 @@ persistiert und in weiteren Folds wiederverwendet."""
             try:
                 raw = study.best_trial.user_attrs.get("r_score_raw", study.best_value)
                 self.best_scores[f"final__{model_name}"] = raw
-                if stability_penalty > 0:
-                    self.best_scores[f"final__{model_name}__penalized"] = float(study.best_value)
+                if _op > 0:
+                    self.best_scores[f"final__{model_name}__adjusted"] = float(study.best_value)
             except Exception:
                 pass
             try:
@@ -1708,21 +1453,22 @@ persistiert und in weiteren Folds wiederverwendet."""
             from econml.dr import DRLearner
 
             study = self._create_study(f"final__{model_name}__{base_type}")
-            stability_penalty = float(getattr(self.cfg.final_model_tuning, "stability_penalty", 0.0))
+            _op = float(getattr(self.cfg.final_model_tuning, "overfit_penalty", 0.0))
+            _ot = float(getattr(self.cfg.final_model_tuning, "overfit_tolerance", 0.05))
+            _sf = bool(getattr(self.cfg.final_model_tuning, "single_fold", False))
+            _outer_splits = int(self.cfg.data_processing.cross_validation_splits)
 
             def objective(trial):
                 cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
-                # LGBM: subsample_freq=1 erzwingt Bagging in jedem Boosting-Schritt (analog causaluka).
-                # "both"-Modus: nur setzen, wenn aktueller Trial LGBM gewählt hat.
                 if base_type == "lgbm" or (base_type == "both" and cand_params.get("_learner_type") == "lgbm"):
                     cand_params.setdefault("subsample_freq", 1)
+
                 fold_scores_raw = []
-                fold_scores_penalized = []
-                # Äußere Score-Folds: Evaluations-CV für model_final-Kandidaten.
-                # Nutzt cross_validation_splits (=5), analog zu den äußeren Cross-Predictions.
+                fold_scores_adj = []
+
                 split_iter = _iter_stratified_or_kfold(
                     labels=T_tune.astype(int),
-                    n_splits=int(self.cfg.data_processing.cross_validation_splits),
+                    n_splits=_outer_splits,
                     seed=self.seed,
                 )
                 for fold_i, (tr, va) in enumerate(split_iter):
@@ -1730,32 +1476,30 @@ persistiert und in weiteren Folds wiederverwendet."""
                         model_propensity=self._build_classifier(base_type, base_fixed_params, tuned_roles.get("model_propensity", {})),
                         model_regression=self._build_regressor(base_type, base_fixed_params, tuned_roles.get("model_regression", {})),
                         model_final=self._build_regressor(base_type, fmt_fixed_params, cand_params),
-                        # Internes Nuisance-Cross-Fitting: EconML-Default (2)
                         cv=int(self.cfg.final_model_tuning.cv_splits),
                         mc_iters=self.cfg.data_processing.mc_iters,
                         mc_agg=self.cfg.data_processing.mc_agg,
                         random_state=self.seed,
                     )
                     est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
-                    r2 = float(est.score(Y_tune[va], T_tune[va], X=X_tune.iloc[va]))
-                    fold_scores_raw.append(r2)
+                    val_score = float(est.score(Y_tune[va], T_tune[va], X=X_tune.iloc[va]))
+                    fold_scores_raw.append(val_score)
 
-                    penalized = r2
-                    if stability_penalty > 0:
-                        cate = est.effect(X_tune.iloc[va]).ravel()
-                        cv = float(np.std(cate)) / (abs(float(np.median(cate))) + 1e-8)
-                        penalized = r2 - stability_penalty * float(np.log1p(cv))
-                    fold_scores_penalized.append(penalized)
+                    adjusted = val_score
+                    if _op > 0:
+                        train_score = float(est.score(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr]))
+                        adjusted = self._apply_overfit_penalty(val_score, train_score, penalty=_op, tolerance=_ot)
+                    fold_scores_adj.append(adjusted)
 
-                    # Pruning: nach jedem Fold Zwischenergebnis melden
-                    trial.report(float(np.mean(fold_scores_penalized)), fold_i)
+                    trial.report(float(np.mean(fold_scores_adj)), fold_i)
                     if trial.should_prune():
                         raise self.optuna.TrialPruned()
 
-                    if self.cfg.final_model_tuning.single_fold:
+                    if _sf:
                         break
+
                 trial.set_user_attr("r_score_raw", float(np.mean(fold_scores_raw)))
-                return float(np.mean(fold_scores_penalized))
+                return float(np.mean(fold_scores_adj))
 
             _fmt_pj = self._tuning_n_jobs()
             _fmt_nt = int(self.cfg.final_model_tuning.n_trials)
@@ -1784,8 +1528,8 @@ persistiert und in weiteren Folds wiederverwendet."""
             try:
                 raw = study.best_trial.user_attrs.get("r_score_raw", study.best_value)
                 self.best_scores[f"final__{model_name}"] = raw
-                if stability_penalty > 0:
-                    self.best_scores[f"final__{model_name}__penalized"] = float(study.best_value)
+                if _op > 0:
+                    self.best_scores[f"final__{model_name}__adjusted"] = float(study.best_value)
             except Exception:
                 pass
             try:

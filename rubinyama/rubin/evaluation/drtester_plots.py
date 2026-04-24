@@ -32,6 +32,8 @@ _logger = logging.getLogger(__name__)
 import matplotlib
 matplotlib.use("Agg")  # Headless-Backend für Batch-/Server-Umgebungen
 import matplotlib.pyplot as plt
+import logging as _logging
+_logging.getLogger("matplotlib.category").setLevel(_logging.WARNING + 1)
 from pandas.plotting import table
 
 from rubin.utils.plot_theme import (

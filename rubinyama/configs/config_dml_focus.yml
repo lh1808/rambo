@@ -24,7 +24,7 @@ causal_forest:
 tuning:
   enabled: true
   n_trials: 100
-  cv_splits: 3
+  cv_splits: 5
   optuna_seed: 42
   search_space:
     lgbm:

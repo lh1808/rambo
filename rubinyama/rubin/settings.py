@@ -142,9 +142,6 @@ class DataPrepConfig(BaseModel):
     fill_na_method: Optional[Literal["zero", "median", "mean", "mode", "max"]] = None
     # Steuerung der Typ-Behandlung für Features:
     #   "auto"            → automatische Erkennung (object/category → kategorisch, Rest numerisch)
-    #   "all_categorical" → alle Features als kategorisch behandeln (Label-Encoding)
-    #   "all_numerical"   → alle Features als numerisch behandeln (kein Encoding)
-    categorical_mode: Literal["auto", "all_categorical", "all_numerical"] = "auto"
 
     # Explizite Feature-Auswahl (aus UI oder manuell). Wenn gesetzt, werden nur diese
     # Spalten als Features in X aufgenommen. Überschreibt feature_path falls beides gesetzt.
@@ -191,7 +188,7 @@ class DataProcessingConfig(BaseModel):
     # Getrennt von cross_validation_splits (äußere Evaluation).
     # EconML-Default=2 (50% Daten pro Nuisance-Fit). Höhere Werte (3–5) liefern
     # stabilere Residuals, kosten aber linear mehr Rechenzeit.
-    dml_crossfit_folds: int = 3
+    dml_crossfit_folds: int = 5
 
     # Monte-Carlo-Iterationen: Wiederholt das interne Cross-Fitting N-mal mit
     # unterschiedlichen Splits und mittelt die Residuals. Reduziert Varianz der
@@ -297,10 +294,12 @@ class OptunaTuningConfig(BaseModel):
     enabled: bool = False
     n_trials: int = 100
     timeout_seconds: Optional[int] = None
-    cv_splits: int = 3
+    cv_splits: int = 5
     single_fold: bool = False
     metric: str = "log_loss"
     metric_regression: str = "neg_mse"
+    overfit_penalty: float = 0.0
+    overfit_tolerance: float = 0.05
     per_learner: bool = False
     per_role: bool = False
     max_tuning_rows: Optional[int] = None
@@ -309,7 +308,6 @@ class OptunaTuningConfig(BaseModel):
     reuse_study_if_exists: bool = True
     optuna_seed: int = 42
     search_space: SearchSpaceConfig = Field(default_factory=SearchSpaceConfig)
-    automl: Literal["optuna", "flaml"] = "optuna"
     # Welche Modelle per BLT optimiert werden. null = alle in models_to_train.
     # Bei expliziter Liste werden nur die Nuisance-Tasks dieser Modelle getuned.
     # Nicht-ausgewählte Modelle nutzen base_learner.fixed_params.
@@ -322,12 +320,12 @@ class FinalModelTuningConfig(BaseModel):
     enabled: bool = False
     n_trials: int = 50
     timeout_seconds: Optional[int] = None
-    cv_splits: int = 3
+    cv_splits: int = 5
     max_tuning_rows: Optional[int] = None
-    method: Literal["rscorer", "dr_score"] = "rscorer"
     models: Optional[List[str]] = None
     single_fold: bool = False
-    stability_penalty: float = Field(0.0, ge=0.0, le=2.0)
+    overfit_penalty: float = 0.0
+    overfit_tolerance: float = 0.05
     fixed_params: Dict[str, Any] = Field(default_factory=dict)
     search_space: SearchSpaceConfig = Field(default_factory=SearchSpaceConfig)
 
@@ -335,7 +333,7 @@ class FinalModelTuningConfig(BaseModel):
 class ShapConfig(BaseModel):
     model_config = _STRICT
 
-    # Steuert, ob SHAP-Werte und Permutation-Importance während der Analyse
+    # Steuert, ob SHAP-Werte während der Analyse
     # berechnet werden. Wird vom Explainability-Schritt in der Pipeline ausgewertet.
     calculate_shap_values: bool = False
     shap_calculation_models: List[str] = Field(default_factory=list)
@@ -346,11 +344,7 @@ class ShapConfig(BaseModel):
     num_bins: int = 10
 
     # Methode für Explainability. "shap" versucht SHAP zuerst (mit automatischem
-    # Fallback auf Permutation-Importance, falls SHAP nicht läuft — z.B. bei
-    # inkompatiblen Modelltypen). "permutation" überspringt SHAP und nutzt
-    # direkt Permutation-Importance (langsamer, aber modell-agnostisch und
-    # deterministisch reproduzierbar).
-    method: Literal["shap", "permutation"] = "shap"
+    # Falls SHAP nicht läuft (z.B. bei
 
 
 class OptionalOutputConfig(BaseModel):

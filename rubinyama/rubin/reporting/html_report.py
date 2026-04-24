@@ -108,23 +108,25 @@ class ReportCollector:
             "base_learner": cfg.base_learner.type,
             "validate_on": cfg.data_processing.validate_on,
             "cv_splits": cfg.data_processing.cross_validation_splits,
-            "dml_crossfit_folds": getattr(cfg.data_processing, "dml_crossfit_folds", 3),
-            "tuning_cv_splits": getattr(cfg.tuning, "cv_splits", 3),
+            "dml_crossfit_folds": getattr(cfg.data_processing, "dml_crossfit_folds", 5),
+            "tuning_cv_splits": getattr(cfg.tuning, "cv_splits", 5),
             "eval_mask_file": getattr(cfg.data_files, "eval_mask_file", None) or None,
             "treatment_type": cfg.treatment.type,
             "models": list(cfg.models.models_to_train or []),
             "tuning_enabled": cfg.tuning.enabled,
             "tuning_trials": cfg.tuning.n_trials if cfg.tuning.enabled else 0,
             "tuning_metric": getattr(cfg.tuning, "metric", "log_loss"),
+            "tuning_metric_regression": getattr(cfg.tuning, "metric_regression", "neg_mse"),
             "tuning_single_fold": getattr(cfg.tuning, "single_fold", False),
-            "tuning_automl": getattr(cfg.tuning, "automl", "optuna"),
+            "tuning_overfit_penalty": getattr(cfg.tuning, "overfit_penalty", 0.0),
+            "tuning_overfit_tolerance": getattr(cfg.tuning, "overfit_tolerance", 0.05),
             "final_tuning_enabled": cfg.final_model_tuning.enabled,
             "final_tuning_trials": cfg.final_model_tuning.n_trials if cfg.final_model_tuning.enabled else 0,
             "final_tuning_models": getattr(cfg.final_model_tuning, "models", None),
             "final_tuning_single_fold": getattr(cfg.final_model_tuning, "single_fold", False),
-            "final_tuning_method": getattr(cfg.final_model_tuning, "method", "rscorer"),
-            "final_tuning_cv_splits": getattr(cfg.final_model_tuning, "cv_splits", 3),
-            "final_tuning_stability_penalty": getattr(cfg.final_model_tuning, "stability_penalty", 0.0),
+            "final_tuning_cv_splits": getattr(cfg.final_model_tuning, "cv_splits", 5),
+            "final_tuning_overfit_penalty": getattr(cfg.final_model_tuning, "overfit_penalty", 0.0),
+            "final_tuning_overfit_tolerance": getattr(cfg.final_model_tuning, "overfit_tolerance", 0.05),
             "feature_selection_enabled": cfg.feature_selection.enabled,
             "feature_selection_methods": list(cfg.feature_selection.methods) if cfg.feature_selection.enabled else [],
             "feature_selection_top_pct": cfg.feature_selection.top_pct,
@@ -393,12 +395,14 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         ("Learner", {"both": "CatBoost & LGBM", "catboost": "CatBoost", "lgbm": "LightGBM"}.get(cs.get("base_learner", ""), cs.get("base_learner", "–"))),
         ("Validierung", (
             'TMEO (Mask-Holdout)' if _is_tmeo
-            else ('external (separater Datensatz)' if cs.get("validate_on") == "external"
-                  else f'{cs.get("validate_on","cross")} ({cs.get("cv_splits",5)} Folds)')
+            else ('External' if cs.get("validate_on") == "external"
+                  else 'Cross-Validation')
         )),
         ("Treatment", cs.get("treatment_type", "binary")),
         ("Features", f'{ds.get("n_features","–")} ({ds.get("n_numeric","?")}N / {ds.get("n_categorical","?")}K)'),
         ("Selektionsmetrik", cs.get("selection_metric", "–")),
+        ("Äußere CV", f'{cs.get("cv_splits", 5)} Folds'),
+        ("Innere CV", f'{cs.get("dml_crossfit_folds", 5)} Folds'),
         ("Seed", cs.get("seed", "–")),
         ("Parallel", f'Level {cs.get("parallel_level", 2)}'),
     ] + ([("MC-Iterationen", cs.get("mc_iters"))] if cs.get("mc_iters") else []):
@@ -699,10 +703,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         n_studies = len(collector.tuning_scores)
         n_trials = cs.get("tuning_trials", 30)
         sf = cs.get("tuning_single_fold", False)
-        cv = 1 if sf else cs.get("tuning_cv_splits", 3)
+        cv = 1 if sf else cs.get("tuning_cv_splits", 5)
         total_fits = n_studies * n_trials * cv
 
         h = '<p class="expl">Optuna optimiert die Nuisance-Modelle (Outcome, Propensity). Die Best-Scores messen die Hilfsmodell-Güte auf dem internen Validierungsset – sie messen nicht den kausalen Effekt selbst, sondern wie gut das Outcome bzw. die Treatment-Zuordnung vorhergesagt wird.</p>'
+        h += '<div style="margin:8px 28px 14px;padding:10px 14px;background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;font-size:12.5px;line-height:1.55;color:#3730a3"><strong>Hinweis:</strong> Bessere Nuisance-Scores (log_loss, neg_mse) bedeuten nicht automatisch bessere CATE-Schätzungen. Ein zu stark getuntes Nuisance-Modell kann kausales Signal absorbieren und den Treatment-Effekt nach Null verzerren (Regularization Bias). Die eigentliche kausale Modellqualität wird durch die Uplift-Metriken (Qini, AUUC) und ggf. den FMT R-Score gemessen.</div>'
 
         # Summary cards (like App TuningPlanPreview)
         h += '<div class="cg">'
@@ -718,13 +723,15 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
 
         # Config info
         h += '<div class="cg">'
-        h += f'<div class="cd"><div class="cd-l">Metrik</div><div class="cd-v">{escape(str(cs.get("tuning_metric","log_loss")))}</div></div>'
+        h += f'<div class="cd"><div class="cd-l">Metrik (Clf)</div><div class="cd-v">{escape(str(cs.get("tuning_metric","log_loss")))}</div></div>'
+        h += f'<div class="cd"><div class="cd-l">Metrik (Reg)</div><div class="cd-v">{escape(str(cs.get("tuning_metric_regression","neg_mse")))}</div></div>'
         h += f'<div class="cd"><div class="cd-l">Learner</div><div class="cd-v">{escape({"both": "CatBoost & LGBM", "catboost": "CatBoost", "lgbm": "LightGBM"}.get(cs.get("base_learner", ""), str(cs.get("base_learner","lgbm"))))}</div></div>'
-        automl_backend = cs.get("tuning_automl", "optuna")
-        if automl_backend != "optuna":
-            h += f'<div class="cd"><div class="cd-l">AutoML</div><div class="cd-v">{escape(str(automl_backend).upper())}</div></div>'
         if sf:
             h += '<div class="cd"><div class="cd-l">Single-Fold</div><div class="cd-v sm">aktiv (1 Fold/Trial)</div></div>'
+        _op = cs.get("tuning_overfit_penalty", 0.0)
+        if _op and _op > 0:
+            _ot = cs.get("tuning_overfit_tolerance", 0.05)
+            h += f'<div class="cd"><div class="cd-l">Overfit-Penalty</div><div class="cd-v">{_op} (Tol. {_ot})</div></div>'
         h += '</div>'
 
         # Task-sharing plan (if provided)
@@ -790,9 +797,9 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         fmt_trials = cs.get("final_tuning_trials", 20)
         fmt_models = cs.get("final_tuning_models")
         fmt_sf = cs.get("final_tuning_single_fold", False)
-        fmt_internal_cv = cs.get("final_tuning_cv_splits", 3)
+        fmt_internal_cv = cs.get("final_tuning_cv_splits", 5)
         fmt_outer_cv = cs.get("cv_splits", 5)
-        fmt_sp = cs.get("final_tuning_stability_penalty", 0.0)
+        _fmt_op = cs.get("final_tuning_overfit_penalty", 0.0)
 
         h = '<p class="expl">Optimiert das CATE-Effektmodell (model_final) über eine Residual-basierte Zielfunktion (R-Score / R-Loss). Pro Trial wird ein vollständiges kausales Modell gefittet — mit denselben internen cv/mc_iters wie im Training, damit die Hyperparameter optimal zu den Trainings-Residuals passen.</p>'
 
@@ -804,11 +811,9 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += f'<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v pills">{fm_pills}</div></div>'
         else:
             h += '<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v sm">alle FMT-fähigen</div></div>'
-        fmt_method = cs.get("final_tuning_method", "rscorer")
-        fmt_method_label = "DR-Score (Mahajan 2024)" if fmt_method == "dr_score" else "R-Score (Schuler 2018)"
-        h += f'<div class="cd"><div class="cd-l">Methode</div><div class="cd-v">{fmt_method_label}</div></div>'
-        if fmt_sp > 0:
-            h += f'<div class="cd"><div class="cd-l">Stability Penalty</div><div class="cd-v">{fmt_sp}</div></div>'
+        h += '<div class="cd"><div class="cd-l">Methode</div><div class="cd-v">OOF-CV (est.score)</div></div>'
+        if _fmt_op and _fmt_op > 0:
+            h += f'<div class="cd"><div class="cd-l">Overfit-Penalty</div><div class="cd-v">{_fmt_op} (Tol. {cs.get("final_tuning_overfit_tolerance", 0.05)})</div></div>'
         h += f'<div class="cd"><div class="cd-l">Internes CV</div><div class="cd-v">{fmt_internal_cv}</div></div>'
         if fmt_sf:
             h += '<div class="cd"><div class="cd-l">DR Single-Fold</div><div class="cd-v">aktiv</div></div>'
@@ -820,12 +825,9 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += '<h3>Tuning-Plan pro Modell</h3>'
             h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>Methode</th><th>Trials</th><th>Fits/Trial</th><th>Total Fits</th></tr></thead><tbody>'
             for r in collector.fmt_plan:
-                method_badge = ""
                 method = r.get("method", "")
-                if "RScorer" in method:
-                    method_badge = '<span style="background:var(--green);color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">effizient</span>'
                 h += f'<tr><td><strong>{escape(r.get("model",""))}</strong></td>'
-                h += f'<td>{escape(method)}{method_badge}</td>'
+                h += f'<td>{escape(method)}</td>'
                 h += f'<td>{r.get("trials",0)}</td>'
                 h += f'<td>{r.get("fits_per_trial",0)}</td>'
                 h += f'<td><strong>{r.get("total_fits",0):,}</strong></td></tr>'
@@ -839,13 +841,13 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             # Fallback: show basic info without plan
             fits_per_dml = fmt_internal_cv * 2 + 1
             dr_folds = 1 if fmt_sf else fmt_outer_cv
-            h += f'<p class="expl"><strong>NonParamDML</strong> nutzt RScorer ({fits_per_dml} Fits/Trial: cv={fmt_internal_cv} × 2 Nuisance + 1 model_final). <strong>DRLearner</strong> nutzt score() + {dr_folds}-Fold CV ({dr_folds * fits_per_dml} Fits/Trial).</p>'
+            h += f'<p class="expl">Beide Modelle nutzen OOF-CV: {dr_folds} äußere Fold(s) × {fits_per_dml} Fits/Fold (est.fit + est.score, cv={fmt_internal_cv}).</p>'
 
         # Best R-Scores
         if fmt.get("best_scores"):
-            # Separate raw R-Scores from penalized scores
-            raw_scores = {k: v for k, v in fmt["best_scores"].items() if "__penalized" not in k}
-            pen_scores = {k.replace("__penalized", ""): v for k, v in fmt["best_scores"].items() if "__penalized" in k}
+            # Separate raw R-Scores from adjusted scores
+            raw_scores = {k: v for k, v in fmt["best_scores"].items() if "__adjusted" not in k}
+            pen_scores = {k.replace("__adjusted", ""): v for k, v in fmt["best_scores"].items() if "__adjusted" in k}
             h += '<h3>Best R-Scores</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>R-Score</th>'
             if pen_scores:
                 h += '<th>Penalisiert (λ·log(1+CV))</th>'

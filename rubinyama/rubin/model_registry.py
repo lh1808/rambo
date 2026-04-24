@@ -167,7 +167,7 @@ class ModelContext:
     parallel_jobs: int = -1
 
     # DML-interne Cross-Fitting-Parameter
-    dml_crossfit_folds: int = 3
+    dml_crossfit_folds: int = 5
     mc_iters: Optional[int] = None
     mc_agg: str = "mean"
 

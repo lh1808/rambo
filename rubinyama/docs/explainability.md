@@ -1,6 +1,6 @@
 # Explainability
 
-Explainability ist in die **Analyse-Pipeline integriert**: Bei `shap_values.calculate_shap_values: true` werden SHAP-Werte und Importance-Plots automatisch für den Champion berechnet und als MLflow-Artefakte im selben Run geloggt. Der dreistufige Fallback lautet: ① EconML SHAP-Plot-Satz → ② generischer SHAP-Plot-Satz (u.a. CausalForestDML) → ③ Permutation-Importance. Die Plots werden außerdem in den HTML-Report eingebettet.
+Explainability ist in die **Analyse-Pipeline integriert**: Bei `shap_values.calculate_shap_values: true` werden SHAP-Werte und Importance-Plots automatisch für den Champion berechnet und als MLflow-Artefakte im selben Run geloggt. Zweistufiger Fallback: ① EconML SHAP-Plot-Satz → ② generischer SHAP-Plot-Satz (u.a. CausalForestDML). Die Plots werden außerdem in den HTML-Report eingebettet.
 
 Zusätzlich kann Explainability **als separater CLI-Runner** auf Bundle-Basis ausgeführt werden – z. B. für nachträgliche Ad-hoc-Analysen auf neuen Daten oder mit einem anderen Modell als dem Champion.
 
@@ -15,7 +15,6 @@ In der `config.yml`:
 ```yaml
 shap_values:
   calculate_shap_values: true
-  method: shap               # "shap" (default, mit 3-stufigem Fallback) oder "permutation" (SHAP überspringen)
   n_shap_values: 10000       # Max. Stichprobe
   top_n_features: 20         # Anzahl Features in Plots
   num_bins: 10               # Binning für PDP-Plots
@@ -23,8 +22,6 @@ shap_values:
 ```
 
 **`method`** (optional, default `"shap"`):
-- `"shap"`: Versucht SHAP zuerst. Dreistufiger Fallback: ① EconML SHAP-Plots → ② generischer SHAP → ③ Permutation-Importance (automatisch, falls SHAP nicht läuft)
-- `"permutation"`: Überspringt SHAP komplett und nutzt direkt Permutation-Importance. Langsamer, aber modell-agnostisch und deterministisch reproduzierbar. Sinnvoll wenn SHAP inkompatibel ist oder du explizit Permutation-Scores willst.
 
 Die Explainability wird nach dem Bundle-Export und vor dem HTML-Report ausgeführt. Artefakte in MLflow:
 - SHAP-Plots (Summary mit Beeswarm/Mean/Max Impact, CATE-Profile, Dependence, Scatter) als PNG
@@ -62,16 +59,6 @@ Wenn das Modell eine EconML-kompatible `shap_values`-Schnittstelle bereitstellt,
 
 Falls das nicht möglich ist, fällt der Runner auf modellagnostische SHAP-Werte zurück und schreibt zusätzlich `shap_values_<MODEL>.csv`.
 
-### Permutation-Importance
-Alternativ:
-
-```bash
-pixi run explain -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --method permutation
-# oder: python run_explain.py --bundle runs/bundles/<bundle_id> --x new_X.parquet --method permutation
-```
-
-Dann werden `permutation_importance_<MODEL>.csv` und `permutation_importance_<MODEL>.png` erzeugt.
-
 
 ## Konfiguration
 Wenn im Bundle eine `config_snapshot.yml` vorhanden ist, übernimmt `run_explain.py` daraus Voreinstellungen:
@@ -86,10 +73,9 @@ CLI-Parameter überschreiben diese Voreinstellungen.
 
 Bei Multi-Treatment-Modellen erzeugt `_predict_effect()` ein 2D-Array mit K-1 Effektschätzungen
 (eine pro Treatment-Arm vs. Control). Für die Explainability wird daraus ein skalarer Wert
-abgeleitet, damit SHAP und Permutation-Importance auf einer einzigen Zielgröße arbeiten:
+abgeleitet, damit SHAP auf einer einzigen Zielgröße arbeitet:
 
 - **SHAP:** Verwendet `max(τ_1(X), …, τ_{K-1}(X))` als skalaren Output. Das zeigt, welche
   Features den maximalen erwarteten Treatment-Effekt beeinflussen – unabhängig davon, welcher
   Arm der beste ist.
-- **Permutation-Importance:** Verwendet die L2-Norm über alle Treatment-Arme
   (`||Δτ(X)||₂`), um den Gesamteinfluss eines Features auf die Effektschätzung zu messen.

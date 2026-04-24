@@ -9,12 +9,10 @@ from .shap_uplift import (
     build_shap_plots,
     build_generic_shap_plots,
 )
-from .permutation_uplift import compute_permutation_importance_for_uplift
 
 __all__ = [
     "compute_shap_for_uplift",
     "shap_available",
     "build_shap_plots",
     "build_generic_shap_plots",
-    "compute_permutation_importance_for_uplift",
 ]

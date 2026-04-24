@@ -499,29 +499,6 @@ class DataPrepPipeline:
             cat_upper = [str(c).upper() for c in dp.categorical_columns]
             categorical_columns = [c for c in cat_upper if c in X.columns]
 
-        # ── Categorical Mode: Steuerung der Typ-Behandlung ──
-        cat_mode = getattr(dp, "categorical_mode", "auto") or "auto"
-
-        if cat_mode == "all_categorical":
-            # Alle Features als kategorisch behandeln (Label-Encoding für alles)
-            categorical_columns = list(X.columns)
-            self._logger.info("Categorical-Mode: ALL_CATEGORICAL – alle %d Features werden kategorisch behandelt.", len(categorical_columns))
-
-        elif cat_mode == "all_numerical":
-            # Keine kategorischen Features – alles numerisch.
-            # Object-Spalten werden per pd.to_numeric() konvertiert (nicht-konvertierbare → NaN).
-            categorical_columns = []
-            _coerced_count = 0
-            for col in X.columns:
-                if X[col].dtype == "object" or X[col].dtype.name == "category":
-                    X[col] = pd.to_numeric(X[col], errors="coerce")
-                    _coerced_count += 1
-            if _coerced_count:
-                self._logger.info(
-                    "Categorical-Mode: ALL_NUMERICAL – %d object/category-Spalten zu numerisch konvertiert (nicht-konvertierbare Werte → NaN).",
-                    _coerced_count,
-                )
-            self._logger.info("Categorical-Mode: ALL_NUMERICAL – keine kategorischen Features.")
 
         else:
             # Auto-Modus: object/category-Spalten als kategorisch, numerische Spalten retten

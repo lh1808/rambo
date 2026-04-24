@@ -4,7 +4,7 @@ Diese Dokumente beschreiben Nutzung, Konfiguration und Erweiterung des Framework
 
 - Architekturüberblick: `docs/architektur.md`
 - Globale Konfigurationsreferenz: `docs/konfiguration.md`
-- Tuning (Optuna/FLAML, R-Score/DR-Score, Locking): `docs/tuning_optuna.md`
+- Tuning (Optuna, R-Score, Overfit-Penalty): `docs/tuning_optuna.md`
 - Evaluation (DRTester, scikit-uplift Plots): `docs/evaluation.md`
 - Bundles/Production: `docs/bundles.md`
 - Explainability: `docs/explainability.md`
@@ -43,7 +43,7 @@ pixi run analyze -- --config configs/config_lgbm_standard.yml --export-bundle
 Diese Codebasis trennt **Analyse** und **Production** sauber voneinander:
 
 - **Datenaufbereitung**: Mehrdatei-Merge, Treatment-Balance-Prüfung, kategorische Features, NaN-Behandlung, „Train Many, Evaluate One" (Eval-Maske)
-- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), Tuning (BL via Optuna oder FLAML + FMT mit RScorer/DR-Score + Stability Penalty + Combined Loss Diagnostic), Evaluieren, Surrogate-Einzelbaum (Champion), Explainability (SHAP/Permutation), HTML-Report mit klickbaren Plots (Lightbox).
+- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), Tuning (BL via Optuna + FMT mit OOF-CV + Overfit-Penalty), Evaluieren, Surrogate-Einzelbaum (Champion), Explainability (SHAP), HTML-Report mit klickbaren Plots (Lightbox).
 - **Production-Pipeline**: Stabiles Scoring auf neuen Daten (inkl. Champion- und Surrogate-Option).
 
 Die wichtigsten Einstiege:
@@ -169,33 +169,4 @@ Priorität der Einstellungen:
 Eine vollständige Referenz aller Felder (inkl. Begründungen und Empfehlungen) steht in `konfiguration.md`.
 
 ### Hinweise zu Tuning und "Locking"
-
-- Base-Learner-Tuning (Optuna oder FLAML) wird vor dem Training ausgeführt und die gefundenen Parameter werden für den gesamten Lauf verwendet. FLAML wird automatisch über den pixi-Postinstall installiert und fällt bei gruppenspezifischen Tasks (TLearner, XLearner) automatisch auf Optuna zurück.
-- Final-Model-Tuning (optional) wird **nur einmal** durchgeführt. Für NonParamDML kann zwischen RScorer (Standard) und DR-Score gewählt werden. DRLearner nutzt immer den eingebauten DR-basierten score()+CV. FMT verwendet immer Optuna.
-  Danach sind die Parameter fest und werden in allen weiteren Folds wiederverwendet.
-- Für `CausalForestDML` gilt das Gleiche für das interne EconML-`tune(...)`: Tuning nur in der ersten Iteration, danach fest.
-- Nach dem BLT wird optional die Combined Loss Diagnostic (Bach et al., 2024) berechnet — ein Qualitätsmaß für die Nuisance-Modelle.
-
-Details stehen in `tuning_optuna.md`.
-
-### Parallelisierung
-
-Über `constants.parallel_level` (1–4) lässt sich steuern, wie aggressiv parallelisiert wird:
-
-- **Level 1 (Minimal):** 1 Kern pro Fit, Folds sequentiell, Trials sequentiell — sicher auf jeder Maschine.
-- **Level 2 (Moderat, Default):** Alle Kerne pro Fit, Folds sequentiell, Trials sequentiell — guter Kompromiss.
-- **Level 3 (Hoch):** Kerne aufgeteilt, 2–4 Folds parallel, 2–4 Trials parallel — schneller, mehr RAM.
-- **Level 4 (Maximum):** Kerne aufgeteilt, alle Folds parallel, max. Trials parallel — schnellste Laufzeit, höchster RAM.
-
-Die CV-Fold-Parallelisierung nutzt joblib mit Thread-Backend. Da LightGBM und CatBoost den GIL während des C++-Trainings freigeben, wird echte Parallelität erzielt. Bei Level 3–4 werden die CPU-Kerne proportional auf die parallelen Folds und Tuning-Trials aufgeteilt (keine Übersubskription). In der Web-UI ist der Level über einen 4-Button-Selektor in der Experiment-Sektion konfigurierbar.
-
-**Trade-offs:** Level 3–4 beschleunigen das Tuning durch parallele Optuna-Trials (3–7× schneller), reduzieren aber die TPE-Explorationsqualität leicht (~90–95% der sequentiellen Performance bei 30+ Trials). Beim Training sind die Ergebnisse mathematisch identisch — nur der RAM-Verbrauch steigt proportional (2–5× Baseline). Level 3 bietet den besten Gesamtkompromiss. Level 4 nur bei ausreichend RAM und wenn Speed kritisch ist. Details in `konfiguration.md` und `tuning_optuna.md`.
-
-### Kategorische Features
-
-EconML konvertiert X intern zu numpy, wodurch pandas `category`-Dtypes verloren gehen. rubin patcht die `.fit()`-Methoden von LightGBM/CatBoost automatisch, sodass kategoriale Spaltenindizes bei jedem internen Aufruf mitgegeben werden. Dadurch nutzen die Base Learner native kategoriale Splits, auch wenn EconML die Daten als numpy übergibt.
-
-### Internes Cross-Fitting
-
-Alle DML-Modelle und DRLearner verwenden intern `cv=2` (EconML-Default) für die Nuisance-Residualisierung. Konfigurierbar über `data_processing.dml_crossfit_folds`.
 

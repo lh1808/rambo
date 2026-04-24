@@ -287,4 +287,4 @@ node -e "require('./app/frontend/lib/babel.min.js').transform(
 # 3. rubin_overview.html: Base64(CSS + React + ReactDOM + Babel + Mock + JSX) neu bauen
 ```
 
-Bei den Session-8-UI-Fixes (Search-Space-Emission, log-Flag, explMethod-Dropdown etc.) wurden beide Artefakte bei jedem Sync erneuert. **Nur JSX anzupassen reicht nicht** — `index.html` und `rubin_overview.html` würden dann outdated bleiben.
+Bei den Session-8-UI-Fixes (Search-Space-Emission, log-Flag etc.) wurden beide Artefakte bei jedem Sync erneuert. **Nur JSX anzupassen reicht nicht** — `index.html` und `rubin_overview.html` würden dann outdated bleiben.

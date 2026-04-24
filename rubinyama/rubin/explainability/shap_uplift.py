@@ -19,6 +19,10 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import logging as _logging
+_logging.getLogger("matplotlib.category").setLevel(_logging.WARNING + 1)
+import warnings
+warnings.filterwarnings("ignore", message=".*NumPy global RNG was seeded.*", category=FutureWarning)
 
 from rubin.utils.plot_theme import apply_rubin_theme, RUBIN_COLORS, COLOR_MODEL
 apply_rubin_theme()
@@ -101,8 +105,7 @@ def compute_shap_for_uplift(
     """Berechnet modellagnostische SHAP-Werte für die Uplift-Funktion."""
     if not shap_available():
         raise ImportError(
-            "SHAP ist nicht installiert. Bitte installiere das Paket 'shap' oder verwende "
-            "Permutation-Importance."
+            "SHAP ist nicht installiert. Bitte installiere das Paket 'shap'."
         )
 
     import shap

@@ -23,7 +23,7 @@ base_learner:
 tuning:
   enabled: true
   n_trials: 160
-  cv_splits: 3
+  cv_splits: 5
   storage_path: runs/optuna_studies/lgbm_intensiv.db
   reuse_study_if_exists: true
   optuna_seed: 42

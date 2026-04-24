@@ -35,7 +35,7 @@ base_learner:
 tuning:
   enabled: true
   n_trials: 50
-  cv_splits: 3
+  cv_splits: 5
   single_fold: true                    # ← Kernfeature: 1 Fold pro Trial
   metric: log_loss
 
@@ -43,7 +43,7 @@ final_model_tuning:
   enabled: true
   n_trials: 25
   models: [NonParamDML]                # DRLearner nutzt fixed_params (günstiger)
-  # single_fold nur relevant wenn DRLearner in models (NonParamDML nutzt RScorer = immer 1 Fit)
+  # single_fold: 1 äußerer OOF-Fold pro Trial statt K (gilt für NonParamDML + DRLearner)
   fixed_params: {}
 
 selection:

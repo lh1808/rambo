@@ -21,7 +21,7 @@ base_learner:
 tuning:
   enabled: true
   n_trials: 10
-  cv_splits: 3
+  cv_splits: 5
   search_space:
     lgbm:
       n_estimators:

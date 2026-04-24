@@ -9,7 +9,7 @@ Das hat zwei Vorteile:
 
 ## Wie wird getunt?
 - Optuna schlägt Hyperparameter vor.
-- Es wird eine CV (Cross Validation) mit `cv_splits` durchgeführt (Default: 3). Dieser Wert steuert die innere Tuning-CV und ist getrennt von `cross_validation_splits` (äußere Evaluation, Default: 5). Alle inneren CVs (`tuning.cv_splits`, `final_model_tuning.cv_splits`, `dml_crossfit_folds`) sind auf denselben Wert synchronisiert und werden in der UI über ein einzelnes Feld gesteuert.
+- Es wird eine CV (Cross Validation) mit `cv_splits` durchgeführt (Default: 5). Dieser Wert steuert die innere Tuning-CV und ist getrennt von `cross_validation_splits` (äußere Evaluation, Default: 5). Alle inneren CVs (`tuning.cv_splits`, `final_model_tuning.cv_splits`, `dml_crossfit_folds`) sind auf denselben Wert synchronisiert und werden in der UI über ein einzelnes Feld gesteuert.
 - Als Metrik wird für **Classifier-Tasks** (Nuisance: `model_y`, `model_t`, Propensity) standardmäßig `log_loss` (negierter Log-Loss) verwendet. Log-Loss misst die Kalibrierung der Wahrscheinlichkeitsvorhersagen — was für die DML-Residualisierung `Y − E[Y|X]` essentiell ist. Alternativ: `pr_auc` (Average Precision, Ranking-basiert), `roc_auc`, `accuracy`. Für **Regressor-Tasks** (Meta-Learner Outcome: `overall_model`, `models`, `model_regression`) wird automatisch **neg. MSE** als Metrik genutzt.
 - Bei **Multi-Treatment** wird für die Propensity-Modelle automatisch `roc_auc_ovr` (One-vs-Rest, gewichtet) statt der binären AUC verwendet, da das Propensity-Modell dann eine Multiclass-Klassifikation durchführt (K Treatment-Gruppen). LightGBM und CatBoost erkennen Multiclass automatisch aus den Trainingsdaten. Für `pr_auc` bei Multiclass wird OvR-Macro-Average verwendet.
 
@@ -141,7 +141,7 @@ Mögliche Ursachen:
 
 ---
 
-## Final-Model-Tuning (RScorer / DR-Score)
+## Final-Model-Tuning (OOF-CV)
 
 Einige Verfahren besitzen zusätzlich ein **Final-Modell**, das die heterogenen Effekte lernt
 (z. B. `NonParamDML`, `DRLearner`). Dieses Final-Modell ist typischerweise ein Regressor
@@ -159,16 +159,14 @@ final_model_tuning:
   models: [NonParamDML]
   single_fold: false
   max_tuning_rows: 200000
-  method: "rscorer"
   fixed_params: {}
 ```
 
 Wesentliche Punkte:
 
 - Es wird ausschließlich das Final-Modell getunt (Rolle `model_final`).
-- NonParamDML: Bewertet über RScorer (Residuen-basiert) oder DR-Score (Doubly-Robust-Pseudo-Outcomes), je nach `method`.
+- Beide Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV: est.fit(train) + est.score(val) pro Trial.
 - DRLearner: Nutzt immer den eingebauten `score() + CV` (bereits DR-basiert).
-- FMT verwendet immer Optuna — FLAML ist hier nicht verfügbar, da die kausale Objective keinen Standard-ML-Task darstellt.
 - Das Tuning läuft **nur einmal pro Run**;
   die Parameter werden anschließend für alle weiteren Folds wiederverwendet ("Locking").
 
@@ -182,59 +180,36 @@ Statt alle FMT-fähigen Modelle zu tunen, kann mit `models` gezielt festgelegt w
 
 Das ist nützlich, weil die Kosten pro Trial zwischen den Modellen stark unterschiedlich sind:
 
-- **NonParamDML** verwendet RScorer oder DR-Score: 1 Fit pro Trial (Residuen bzw. Pseudo-Outcomes werden vorab berechnet)
-- **DRLearner** verwendet score() + CV: K Fits pro Trial (kein RScorer verfügbar)
+- **Beide Modelle** verwenden äußere CV: K × est.fit(train) + est.score(val) pro Trial
 
 Man kann z.B. nur NonParamDML tunen und DRLearner mit bewährten festen Parametern laufen lassen.
 
 ### Single-Fold für DRLearner (`single_fold`)
 
-Analog zum Base-Learner-Tuning kann mit `single_fold: true` der DRLearner auf nur 1 Fold pro Trial evaluiert werden statt K. Das reduziert die Fits von K×Trials auf 1×Trials. NonParamDML profitiert nicht, da RScorer ohnehin nur 1 Fit benötigt.
+Analog zum Base-Learner-Tuning kann mit `single_fold: true` die äußere CV auf 1 Fold reduziert werden. Das reduziert die Fits von K×Trials auf 1×Trials. Gilt für beide Modelle (NonParamDML + DRLearner).
 
-### Stability Penalty (`stability_penalty`)
+### Overfit-Penalty (`overfit_penalty`, `overfit_tolerance`)
 
-Der reine R-Score kann Modelle bevorzugen, die Rauschen in den DR-Pseudo-Outcomes als Heterogenität interpretieren — insbesondere bei kleinen Treatment-Effekten. Das führt zu extremen CATE-Ausreißern (z.B. ±1.0 bei einem wahren ATE von 0.002), die zufällig mit den verrauschten Residuen korrelieren.
+Beide FMT-Modelle (NonParamDML und DRLearner) nutzen **äußere Cross-Validation**: model_final wird auf Train gefittet und auf komplett Out-of-Fold-Val bewertet (`est.score()`). Dies verhindert optimistische R-Score-Schätzungen, die entstehen, wenn model_final auf denselben Daten evaluiert wird, auf denen es trainiert wurde.
 
-Mit `stability_penalty > 0` wird der Objective um einen Stabilitätsterm ergänzt:
+Der reine OOF-R-Score kann dennoch Modelle bevorzugen, die Rauschen statt echte Heterogenität lernen — insbesondere bei kleinen Treatment-Effekten oder wenigen Beobachtungen. Die Overfit-Penalty adressiert das, indem sie den Train-Val-Gap misst:
 
 ```
-score = R_score − λ · log(1 + CV)
+adjusted = val_score - penalty × max(0, gap - tolerance)
 ```
 
-CV = Variationskoeffizient der CATEs (std / |median|). Die logarithmische Dämpfung bestraft Modelle mit extremer Streuung relativ zum mittleren Effekt, ohne stabile Modelle nennenswert einzuschränken. Empfohlene Werte: **0.0 (Default, aus)**, 0.3 (moderat), 0.5 (stärker), 1.0+ (stark, CATEs werden konservativ ähnlich CausalForestDML).
+wobei `gap = train_score - val_score`. Ein großer Gap bedeutet: model_final performt auf Train viel besser als auf Val → Overfitting auf Trainingsrauschen.
+
+**Empfohlene Werte:**
+| Szenario | penalty | tolerance |
+|---|---|---|
+| Standard (Default) | 0.0 | 0.05 |
+| Moderate Regularisierung | 0.2–0.3 | 0.05 |
+| Starke Regularisierung (kleine Effekte, wenige Daten) | 0.5–0.8 | 0.03 |
 
 ### Feste Parameter (`fixed_params`)
 
 Wenn FMT deaktiviert ist oder ein Modell nicht in `models` steht, werden die `fixed_params` direkt als Hyperparameter für `model_final` verwendet. Das ermöglicht eine bewusste Kombination: Tuning für ein Modell, feste Parameter für ein anderes.
-
-### Scoring-Methode (`method`)
-
-Für NonParamDML kann zwischen zwei Scoring-Methoden gewählt werden:
-
-- **`rscorer`** (Default): EconML RScorer, basierend auf dem R-Learner-Loss (Schuler et al., 2018; Nie & Wager, 2017). Berechnet Residuen einmal vorab mit CV und bewertet dann Kandidaten effizient über vorberechnete Residuen. Empfohlen als Standard.
-
-- **`dr_score`**: DR-Score — Doubly-Robust Pseudo-Outcome-Score (Mahajan et al., 2024). Berechnet DR-Pseudo-Outcomes (τ̂_DR) vorab per Cross-Fitting und bewertet jede model_final-Kandidatur via MSE(τ_DR, CATE). DR-basierte Metriken dominieren in umfangreichen Benchmark-Studien.
-
-DRLearner nutzt unabhängig davon immer `score() + CV` — die DR-Scoring-Logik ist dort bereits eingebaut.
-
-## AutoML-Backend (`automl`)
-
-Für das Base-Learner-Tuning kann alternativ zu Optuna auch FLAML (Microsoft AutoML) verwendet werden:
-
-```yml
-tuning:
-  enabled: true
-  automl: flaml     # "optuna" (Default) oder "flaml"
-```
-
-**FLAML** übernimmt HP-Suche + Early Stopping automatisch und wurde von Bach et al. (2024) und CausalTune als starke AutoML-Option für DML-Nuisance-Modelle validiert. FLAML wird automatisch über den pixi-Postinstall installiert. Falls die Installation fehlschlägt, wird automatisch auf Optuna zurückgefallen.
-
-**Einschränkungen:**
-
-- FLAML ist nur für das **Base-Learner-Tuning** verfügbar, nicht für das Final-Model-Tuning. FMT nutzt eine kausale Objective-Funktion (R-Score, DR-Score), die kein Standard-ML-Task ist — FLAML's AutoML-API kann nur Klassifikation und Regression.
-- Bei **gruppenspezifischen Tasks** (TLearner, XLearner: K separate Modelle pro Treatment-Gruppe) und **Pseudo-Outcome-Tasks** (XLearner cate_models) wird automatisch auf Optuna zurückgefallen, da FLAML keine gruppenweise Modellierung unterstützt.
-- Bei **`base_learner.type: "both"`** ist FLAML nicht kompatibel, da FLAML keine kategorische Learner-Wahl zwischen CatBoost und LightGBM pro Trial unterstützt. Die Pipeline fällt in diesem Fall **für alle Tasks** auf Optuna zurück und loggt eine Warnung (`tuning_optuna.py`: "FLAML-Backend ist inkompatibel mit base_learner.type='both' ... wird stattdessen mit Optuna getunt"). Die UI zeigt bereits vor dem Run einen roten Hinweis, wenn diese Kombination konfiguriert wird.
-- Einfache Tasks (Outcome-Klassifikation, Propensity, Outcome-Regression) laufen regulär über FLAML.
 
 ## Search Space in der Config
 
@@ -278,8 +253,9 @@ tuning:
 final_model_tuning:
   enabled: true
   n_trials: 50
-  cv_splits: 3
-  stability_penalty: 0.0
+  cv_splits: 5
+  overfit_penalty: 0.0
+  overfit_tolerance: 0.05
   search_space:
     lgbm:
       n_estimators: {type: "int", low: 100, high: 400}
@@ -352,13 +328,13 @@ Ohne diese Trennung würden Modelle mit sehr unterschiedlichen Trainingsmengen d
 
 ### CV-Architektur
 
-Alle inneren CVs sind synchronisiert (Default: 3, steuerbar über ein UI-Feld):
+Alle inneren CVs sind synchronisiert (Default: 5, steuerbar über ein UI-Feld):
 
 | Stufe | Config-Feld | Default | Beschreibung |
 |---|---|---|---|
-| BLT Tuning | `tuning.cv_splits` | 3 | Innere CV pro Tuning-Trial |
-| FMT Tuning (intern) | `final_model_tuning.cv_splits` | 3 | Nuisance-Cross-Fitting im FMT |
-| DML/DR Produktion | `dml_crossfit_folds` | 3 | Internes Nuisance-Cross-Fitting |
+| BLT Tuning | `tuning.cv_splits` | 5 | Innere CV pro Tuning-Trial |
+| FMT Tuning (intern) | `final_model_tuning.cv_splits` | 5 | Nuisance-Cross-Fitting im FMT |
+| DML/DR Produktion | `dml_crossfit_folds` | 5 | Internes Nuisance-Cross-Fitting |
 | FMT DRLearner (äußer) | `cross_validation_splits` | 5 | Score-Folds für DRLearner-FMT |
 | Cross-Predictions | `cross_validation_splits` | 5 | Äußere OOF-Evaluation |
 
@@ -383,8 +359,35 @@ Für die Wald‑Parameter der letzten Stufe nutzt rubin optional die eingebaute 
 `CausalForestDML.tune(...)`. Diese wählt zentrale Wald‑Parameter anhand eines Out‑of‑Sample‑R‑Scores
 und setzt sie am Estimator. Danach folgt ein reguläres `fit(...)`.
 
-Die Steuerung erfolgt über `causal_forest.use_econml_tune` und die zugehörigen Parameter
-(`forest_fixed_params`, `econml_tune_params`, `tune_max_rows`).
+Die Steuerung erfolgt über `causal_forest.use_econml_tune` und `causal_forest.tune_intensive`.
+
+## Sonderfall: `CausalForest` (Reiner GRF)
+
+`CausalForest` nutzt einen eigenen Grid-Search (kein Optuna): Jede Parameter-Kombination wird auf dem
+ersten CV-Fold trainiert und per R-Loss auf den Val-Daten bewertet. Die besten Parameter werden
+eingefroren und für alle weiteren Folds wiederverwendet.
+
+### Search-Grid
+
+**Normal (12 Kombinationen):**
+
+| Parameter | Werte |
+|---|---|
+| min_samples_leaf | 5, 20 |
+| max_depth | None, 10, 20 |
+| max_samples | 0.3, 0.5 |
+
+**Intensiv (48 Kombinationen):**
+
+| Parameter | Werte |
+|---|---|
+| min_samples_leaf | 5, 10, 20 |
+| max_depth | None, 10, 20, 30 |
+| max_samples | 0.3, 0.5 |
+| criterion | mse, het |
+
+Nicht-getunte Parameter (n_estimators, honest, subforest_size etc.) verwenden EconML-Defaults.
+Die UI zeigt das aktive Search-Grid an, wenn tune() aktiviert ist.
 
 
 ## Persistente Optuna-Studies (SQLite)
@@ -461,3 +464,37 @@ Die getunten Nuisance-Parameter (aus dem Base-Learner-Tuning für `model_y`/`mod
 `model_final` verwendet stattdessen:
 - LightGBM/CatBoost-Standardwerte (wenn FMT deaktiviert)
 - Explizit getunte Parameter via R-Score/R-Loss (wenn FMT aktiviert)
+
+### Overfit-Penalty (Train-Val-Gap-Regularisierung)
+
+**Hintergrund:** Bei Double/Debiased ML (Chernozhukov et al., 2016) dienen die BLT-Nuisance-Modelle dazu, Residuals Ỹ = Y - E[Y|X] und T̃ = T - E[T|X] zu berechnen. Wenn diese Nuisance-Modelle overfitten, absorbieren sie kausales Signal — die Residuals werden systematisch zu klein, und model_final (CATE) findet weniger Heterogenität.
+
+**Mechanismus:** Pro BLT-Trial wird zusätzlich zum Val-Score auch der Train-Score berechnet. Die Differenz (Gap = Train-Score - Val-Score) misst direkt das Overfit-Ausmaß. Große Gaps werden bestraft:
+
+```
+adjusted_score = val_score - penalty × max(0, gap - tolerance)
+```
+
+**Vorteile gegenüber Residual-Varianz-basierter Regularisierung:**
+- Selbst-kalibrierend: unabhängig vom Signal-Rausch-Verhältnis der Daten
+- Funktioniert mit `single_fold: true`
+- Kein datenabhängiger Schwellenwert nötig
+
+**Konfiguration:**
+```yaml
+tuning:
+  overfit_penalty: 0.3    # 0 = deaktiviert (Default)
+  overfit_tolerance: 0.05 # Gap-Schwelle, unter der keine Penalty greift
+```
+
+**Empfohlene Werte:**
+| Szenario | penalty | tolerance |
+|---|---|---|
+| Standard (Default) | 0.0 | 0.05 |
+| Moderate Regularisierung | 0.2–0.3 | 0.05 |
+| Starke Regularisierung (kleine Daten, viele Features) | 0.5–0.8 | 0.03 |
+
+**Interaktion mit anderen Settings:**
+- Bei `single_fold: true` ist die Penalty besonders wertvoll, weil die Trial-Bewertung ohnehin verrauschter ist.
+- Bei `cv_splits: 5` ist der Gap natürlich kleiner (mehr Trainingsdaten pro Fold → weniger Overfitting). Die Tolerance sollte in diesem Fall eher bei 0.03–0.05 liegen.
+- Die Penalty wird auf **alle** BLT-Objectives angewendet: Klassifikation (Outcome, Propensity), Regression (SLearner, DRLearner model_regression) und gruppierte Regression (TLearner, XLearner).

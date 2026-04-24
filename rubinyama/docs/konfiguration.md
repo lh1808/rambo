@@ -198,7 +198,6 @@ data_prep:
 
   binary_target: true
   fill_na_method: "median"  # "median" | "mean" | "zero" | "mode" | "max" | null
-  categorical_mode: "auto"  # "auto" | "all_categorical" | "all_numerical"
 
   deduplicate: true                   # Kunden auf 1 Eintrag pro ID reduzieren
   deduplicate_id_column: "PARTNER_ID" # Spalte mit der Kunden-ID
@@ -314,7 +313,7 @@ data_processing:
   df_frac: null
   validate_on: "cross"   # "cross" | "external"
   cross_validation_splits: 5  # Äußere CV für Out-of-Fold CATE-Predictions
-  dml_crossfit_folds: 3       # Internes Nuisance-Cross-Fitting (EconML-Default=2)
+  dml_crossfit_folds: 5       # Internes Nuisance-Cross-Fitting (EconML-Default=2)
   mc_iters: null          # Monte-Carlo-Iterationen für DML/DR Nuisance (null = EconML-Default)
   mc_agg: "mean"          # Aggregation über mc_iters: "mean" oder "median"
 ```
@@ -325,7 +324,7 @@ data_processing:
   - `"cross"`: Cross‑Predictions (robust, Standard). Kombinierbar mit einer Eval-Maske (`data_files.eval_mask_file`) für TMEO — in diesem Fall wird die Maske vor dem Training angewendet, Mask-Rows werden als Holdout zurückgehalten, und die Pipeline läuft wie External Eval (kein äußeres CV, Training nur auf ~mask-Rows).
   - `"external"`: Training auf `data_files` (x/t/y_file), Evaluation auf separatem Datensatz (`eval_x/t/y_file`). Erfordert, dass die eval-Dateien in `data_files` angegeben sind. Kein Data-Leakage — der Preprocessor wird nur auf den Trainingsdaten gefittet.
 - `cross_validation_splits`: **Äußere Fold-Anzahl** für Out-of-Fold CATE-Predictions. Alle Modelle durchlaufen K-Fold CV für echte OOF-Vorhersagen. Standard: 5.
-- `dml_crossfit_folds`: **Internes Nuisance-Cross-Fitting** für DML/DR-Modelle in Produktion. Steuert wie viele Folds für die Residualisierung `Y − E[Y|X]` verwendet werden. Default: 3 (EconML-Default wäre 2). Synchronisiert mit `tuning.cv_splits` und `final_model_tuning.cv_splits` — alle inneren CVs werden über die UI als ein Wert gesteuert.
+- `dml_crossfit_folds`: **Internes Nuisance-Cross-Fitting** für DML/DR-Modelle in Produktion. Steuert wie viele Folds für die Residualisierung `Y − E[Y|X]` verwendet werden. Default: 5 (EconML-Default wäre 2). Synchronisiert mit `tuning.cv_splits` und `final_model_tuning.cv_splits` — alle inneren CVs werden über die UI als ein Wert gesteuert.
 - `mc_iters` (optional): Monte-Carlo-Iterationen für die Nuisance-Schätzung der DML/DR-Modelle. Bei `mc_iters: 3` wird das gesamte Nuisance-Cross-Fitting 3× wiederholt, was die Varianz der CATE-Schätzungen um ca. Faktor 3 senkt. Kosten: ~linearer Anstieg der Laufzeit. `null` = EconML-Default (1 Iteration).
 - `mc_agg`: Aggregation der Monte-Carlo-Iterationen. `"mean"` (Standard) oder `"median"` (robuster bei Ausreißern in den Nuisance-Prädiktionen).
 
@@ -494,7 +493,7 @@ DML/DR-Modelle nutzen *zusätzlich* internes Cross-Fitting für die Nuisance-Res
 ```yaml
 data_processing:
   cross_validation_splits: 5   # Äußere CV für Out-of-Fold CATE-Predictions
-  dml_crossfit_folds: 3        # Internes Nuisance-Cross-Fitting (EconML-Default)
+  dml_crossfit_folds: 5        # Internes Nuisance-Cross-Fitting (EconML-Default)
   mc_iters: null               # Monte-Carlo-Iterationen: null=1 Durchlauf, 2-3 empfohlen
   mc_agg: "mean"               # Aggregation: "mean" (Standard) oder "median" (robuster)
 ```
@@ -550,13 +549,12 @@ tuning:
   enabled: true
   n_trials: 50
   timeout_seconds: null
-  cv_splits: 3
+  cv_splits: 5
   single_fold: false
   metric: "log_loss"
   metric_regression: "neg_mse"
   per_learner: false
   per_role: false
-  automl: "optuna"
   models: null
   max_tuning_rows: null
   optuna_seed: 42
@@ -580,7 +578,7 @@ Standardmäßig (`null`) werden die Nuisance-Modelle aller in `models.models_to_
 `metric` steuert die Bewertung für Classifier-Tasks (Propensity, Outcome-Klassifikation): Standard `log_loss`, alternativ `roc_auc` oder `accuracy`. `metric_regression` steuert die Bewertung für Regressor-Tasks (Meta-Learner Outcome-Modelle wie SLearner, TLearner): Standard `neg_mse`, alternativ `neg_rmse`, `neg_mae` oder `r2`.
 
 **CV-Folds (`cv_splits`):**  
-Innere Cross-Validation pro Tuning-Trial. Default: 3. Synchronisiert mit `dml_crossfit_folds` und `final_model_tuning.cv_splits` — alle inneren CVs nutzen denselben Wert. Höhere Werte stabilisieren die Trial-Bewertung, kosten aber linear mehr Rechenzeit pro Trial.
+Innere Cross-Validation pro Tuning-Trial. Default: 5. Synchronisiert mit `dml_crossfit_folds` und `final_model_tuning.cv_splits` — alle inneren CVs nutzen denselben Wert. Höhere Werte stabilisieren die Trial-Bewertung, kosten aber linear mehr Rechenzeit pro Trial.
 
 **Single-Fold-Tuning (`single_fold`):**  
 Bei `single_fold: true` wird jeder Optuna-Trial nur auf **einem** zufällig gewählten Fold evaluiert statt auf allen K Folds. Das reduziert die Modell-Fits pro Trial von K auf 1 – bei 5 Folds also 5× schneller. Optuna (TPE) ist robust gegenüber verrauschteren Metriken, daher ist der Tradeoff für explorative Analysen oder große Datensätze sinnvoll.
@@ -591,8 +589,6 @@ Wenn `storage_path` gesetzt ist, wird die Optuna‑Study in SQLite persistiert (
 **Max. Tuning-Rows (`max_tuning_rows`):**  
 Begrenzt die Datenmenge für das Nuisance-Tuning (z.B. `200000`). Bei `null` werden alle Daten verwendet. Nützlich bei sehr großen Datensätzen, um die Tuning-Zeit zu begrenzen.
 
-**AutoML-Backend (`automl`):**  
-Alternativ zu Optuna kann FLAML (Microsoft AutoML) für die HP-Suche verwendet werden (`automl: "flaml"`). FLAML übernimmt HP-Tuning + Early Stopping automatisch. FLAML wird automatisch über den pixi-Postinstall installiert. Falls die Installation fehlschlägt, wird automatisch auf Optuna zurückgefallen.
 
 
 Die Task-Signatur berücksichtigt nicht nur den Learner-Typ, sondern auch die tatsächliche interne Lernaufgabe, u. a.:
@@ -624,8 +620,8 @@ final_model_tuning:
   n_trials: 100
   models: null
   single_fold: false
-  stability_penalty: 0.0
-  method: "rscorer"
+  overfit_penalty: 0.0
+  overfit_tolerance: 0.05
   max_tuning_rows: null
   fixed_params: {}
 ```
@@ -633,9 +629,8 @@ final_model_tuning:
 Wofür ist das?
 
 - Relevant für Modelle, die ein frei wählbares Final‑Modell besitzen (z. B. **NonParamDML**, **DRLearner**).
-- NonParamDML: wählbar zwischen RScorer (R‑Loss/R‑Score) und DR‑Score (Doubly‑Robust-Pseudo-Outcomes).
+- Beide Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit est.score().
 - DRLearner: nutzt immer den eingebauten DR‑basierten `score()+CV`.
-- FMT verwendet immer Optuna — FLAML ist hier nicht verfügbar, da die kausale Objective‑Funktion keinen Standard‑ML‑Task darstellt.
 
 Wichtige Regeln in der Pipeline:
 
@@ -649,9 +644,8 @@ Parameter:
 - `enabled`: Schaltet das Final‑Model‑Tuning an/aus.
 - `n_trials`: Anzahl Optuna‑Trials.
 - `models`: Liste der Modelle, die per FMT optimiert werden sollen (z.B. `[NonParamDML]`). Bei `null` werden alle FMT-fähigen Modelle getuned, bei einer expliziten Liste nur die genannten. Nicht getunte Modelle verwenden die `fixed_params`.
-- `single_fold`: Bei `true` wird DRLearner nur auf 1 Fold pro Trial evaluiert statt K. Reduziert die Fits von K×Trials auf 1×Trials. NonParamDML profitiert nicht, da RScorer ohnehin nur 1 Fit pro Trial benötigt.
-- `stability_penalty`: Bestraft instabile CATE-Schätzungen mit hoher Streuung relativ zum Median-Effekt. **0.0 = Default** (reiner Score). 0.3–0.5 = moderate Regularisierung. 1.0+ = starke Stabilität (CATEs werden konservativ, ähnlich CausalForestDML). Formel: `score = R_score − λ · log(1 + CV)`, wobei CV = std(CATE) / |median(CATE)|.
-- `method`: Scoring-Methode für NonParamDML. `"rscorer"` (Default, Schuler et al. 2018) nutzt den R-Learner-Loss auf vorberechneten Residuen. `"dr_score"` (Mahajan et al. 2024) nutzt Doubly-Robust-Pseudo-Outcomes für die Bewertung. DRLearner nutzt unabhängig davon immer `score() + CV`.
+- `single_fold`: Bei `true` wird nur 1 äußerer OOF-Fold pro Trial evaluiert statt K. Gilt für beide Modelle (NonParamDML + DRLearner). Reduziert die Fits von K×Trials auf 1×Trials.
+- `overfit_penalty`: Train-Val-Gap-Penalty für model_final (0=deaktiviert). Bestraft Konfigurationen, deren R-Score auf Train deutlich besser ist als auf Val (OOF). Formel: `adjusted = val_score - penalty × max(0, gap - tolerance)`.
 - `max_tuning_rows`: Begrenzt die Datenmenge für das FMT (z.B. `200000`). Bei `null` werden alle Daten des Tuning-Splits verwendet.
 - `fixed_params`: Feste Hyperparameter für das Final-Modell (`model_final`). Werden verwendet, wenn FMT deaktiviert ist oder wenn ein Modell nicht in `models` steht.
 
@@ -688,19 +682,17 @@ Das erleichtert den Übergang von „Analyse mit vielen Kandidaten“ zu „stab
 ```yaml
 shap_values:
   calculate_shap_values: true
-  method: shap                    # "shap" (default) oder "permutation"
   shap_calculation_models: [NonParamDML]
   n_shap_values: 5000
   top_n_features: 20
   num_bins: 10
 ```
 
-Diese Einstellungen steuern die Explainability-Berechnung in der Analyse-Pipeline. Bei `calculate_shap_values: true` wird nach dem Bundle-Export automatisch ein Explainability-Schritt ausgeführt (dreistufiger Fallback: EconML SHAP-Plots → generische SHAP → Permutation-Importance). Alle Artefakte werden als MLflow-Artefakte im selben Run geloggt. Zusätzlich weiterhin als CLI-Runner verfügbar: `run_explain.py` für Ad-hoc-Analysen auf Bundle-Basis.
+Diese Einstellungen steuern die SHAP-Analyse in der Analyse-Pipeline. Bei `calculate_shap_values: true` wird nach dem Bundle-Export automatisch ein SHAP-Schritt ausgeführt (zweistufiger Fallback: EconML SHAP-Plots → generische SHAP). Alle Artefakte werden als MLflow-Artefakte im selben Run geloggt.
 
 - `calculate_shap_values`: Schaltet den Explainability-Schritt in der Analyse-Pipeline an/aus.
-- `method`: `"shap"` (Default) versucht SHAP zuerst mit automatischem Fallback auf Permutation; `"permutation"` überspringt SHAP explizit und nutzt direkt Permutation-Importance (deterministisch, modell-agnostisch, aber langsamer).
 - `shap_calculation_models`: Liste der Modelle, für die Importance berechnet wird. Leer = nur Champion.
-- `n_shap_values`: maximale Stichprobe für SHAP/Permutation (Performance)
+- `n_shap_values`: maximale Stichprobe für SHAP (Performance)
 - `top_n_features`: wie viele Features im Report/Plot ausgegeben werden
 - `num_bins`: Standard‑Segmentierung (z. B. 10 = Dezile) für Dependency-Plots
 
@@ -747,7 +739,7 @@ Aktiviert einen Einzelbaum des konfigurierten Base-Learners (LightGBM/CatBoost m
 - `num_leaves`: Maximale Anzahl Blätter (nur LightGBM). Steuert die Baumkomplexität direkt über leaf-wise Growth.
 - `max_depth`: Maximale Baumtiefe. `null` bedeutet keine Begrenzung bei LightGBM (`-1`), bei CatBoost wird `6` als Default verwendet.
 
-**Ablauf in der Analyse-Pipeline:** Der Surrogate wird nach der Evaluation des Champions trainiert, wenn `enabled: true`. Er wird mit denselben Uplift-Metriken evaluiert. Im Bundle-Export wird der Surrogate mit einem eigenen Registry-Eintrag exportiert.
+**Ablauf in der Analyse-Pipeline:** Der Surrogate wird nach der Evaluation des Champions trainiert, wenn `enabled: true`. Er trainiert auf den **Train-Predictions** des Champions (Full-Data-Refit), um die gelernte CATE-Funktion bestmöglich nachzulernen. Cross-Validation (K-Fold, identisch zur äußeren CV) erzeugt OOS-Predictions, sodass die Uplift-Metriken des Surrogates fair mit dem Champion vergleichbar sind. Abschließend wird der Surrogate auf allen Daten nachtrainiert. Im Bundle-Export wird der Surrogate mit einem eigenen Registry-Eintrag exportiert.
 
 **Production-Scoring:** Im Bundle ist der Surrogate als `SurrogateTree` verfügbar. In der Production-Pipeline kann er über `score_surrogate(X)` oder `score(X, model_names=["SurrogateTree"])` angesprochen werden. Über die CLI: `pixi run score -- --bundle ... --x ... --use-surrogate` (oder: `python run_production.py --bundle ... --x ... --use-surrogate`).
 
@@ -775,7 +767,19 @@ shap_values:
   num_bins: 10
 ```
 
-- `calculate_shap_values`: Aktiviert die Feature-Importance-Berechnung (SHAP oder Permutation).
+- `calculate_shap_values`: Aktiviert die SHAP-Analyse.
 - `shap_calculation_models`: Modelle für Importance. Leer = nur Champion, explizit z.B. `[NonParamDML, DRLearner]`.
 - `num_bins` steuert die Binning-Tiefe für CATE-Profil- und SHAP-Dependence-Plots.
 
+
+### Overfit-Penalty (Nuisance-Regularisierung)
+
+Die Overfit-Penalty bestraft BLT-Hyperparameter-Konfigurationen, deren Nuisance-Modelle auf den Trainingsdaten deutlich besser performen als auf der Validierung (Train-Val-Gap). Dies verhindert, dass overfittende Nuisance-Modelle kausales Signal in den Residuals absorbieren — ein bekanntes Problem bei Double/Debiased ML (Chernozhukov et al., 2016).
+
+Konfiguration:
+- `tuning.overfit_penalty`: Stärke der Penalty (0 = deaktiviert, empfohlen: 0.2–0.5). Default: 0.
+- `tuning.overfit_tolerance`: Bis zu diesem Gap wird keine Penalty angewendet. Default: 0.05.
+
+Formel: `adjusted_score = val_score - penalty * max(0, gap - tolerance)` wobei `gap = train_score - val_score`.
+
+**Wann aktivieren:** Bei Verdacht auf Nuisance-Overfitting (z.B. sehr gute BLT-Scores aber schlechte Qini/AUUC-Werte) oder bei kleinen Datensätzen mit vielen Features.

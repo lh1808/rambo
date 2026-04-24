@@ -66,7 +66,7 @@ base_learner:
 tuning:
   enabled: true
   n_trials: 100
-  cv_splits: 3
+  cv_splits: 5
   metric: log_loss
 
 # --- CausalForestDML ----------------------------------------
@@ -77,7 +77,7 @@ causal_forest:
   econml_tune_params: auto
 
 # --- Final-Model-Tuning (R-Score) ---------------------------
-# Optimiert das model_final für NonParamDML (RScorer) und DRLearner (score).
+# Optimiert das model_final für NonParamDML und DRLearner (OOF-CV mit est.score).
 # CausalForestDML nutzt stattdessen EconMLs tune() (siehe oben).
 final_model_tuning:
   enabled: false

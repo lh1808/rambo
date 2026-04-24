@@ -144,11 +144,11 @@ Siehe `docs/README_DE.md` für Einstieg und Details. Wichtige Themen sind:
 Abgedeckt sind unter anderem:
 - Schema-Validierung in Production (inkl. `schema_report.json`)
 - persistente Optuna-Studies (SQLite)
-- Alternatives AutoML-Backend: FLAML (Microsoft AutoML) für Base-Learner-Tuning neben Optuna
+- Base-Learner-Tuning mit Optuna (Bayesian TPE) und Overfit-Penalty
 - Uplift-Metriken (Qini, AUUC, Uplift@k, Policy Value)
 - Combined Loss Diagnostic (Bach et al., 2024): Post-hoc-Qualitätskennzahl nach dem Base-Learner-Tuning
 - Final-Model-Tuning: RScorer (Standard) oder DR-Score (Mahajan et al., 2024) für NonParamDML
-- Explainability (SHAP/Permutation) integriert in die Analyse-Pipeline + separater CLI-Runner für Ad-hoc-Analysen
+- Explainability (SHAP) integriert in die Analyse-Pipeline
 - NaN-Toleranz: Alle Modelle außer CausalForestDML und CausalForest können mit fehlenden Werten umgehen (via LightGBM/CatBoost). CausalForestDML, CausalForest und die Feature-Selektionsmethode `causal_forest` (GRF) werden bei NaN automatisch übersprungen.
 - Validierungsmodi: Cross-Validation (K-Fold), External (separater Eval-Datensatz, leakage-frei) und Train Many Evaluate One (Eval-Maske auf Teilmenge)
 - Parallelisierung: Konfigurierbar über `constants.parallel_level` (1–4). Level 2 (Default) parallelisiert Base Learner, Level 3–4 parallelisieren zusätzlich CV-Folds via joblib. Kerne werden proportional aufgeteilt (keine Übersubskription)
@@ -157,7 +157,7 @@ Abgedeckt sind unter anderem:
 
 ## Explainability
 
-Explainability ist in die Analyse-Pipeline integriert: Bei `shap_values.calculate_shap_values: true` werden SHAP-Plots und Importance-Barplots automatisch für den Champion berechnet, als MLflow-Artefakte geloggt und in den HTML-Report eingebettet. Dreistufiger Fallback: EconML SHAP-Plots → generische SHAP → Permutation-Importance.
+Explainability ist in die Analyse-Pipeline integriert: Bei `shap_values.calculate_shap_values: true` werden SHAP-Plots und Importance-Barplots automatisch für den Champion berechnet, als MLflow-Artefakte geloggt und in den HTML-Report eingebettet. Zweistufiger Fallback: EconML SHAP-Plots → generische SHAP.
 
 Zusätzlich steht ein separater CLI-Runner für nachträgliche Ad-hoc-Analysen auf Bundle-Basis zur Verfügung:
 
@@ -168,7 +168,6 @@ pixi run explain -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --out-di
 
 Hinweis zu Abhängigkeiten:
 * Für die Methode `--method shap` wird das Paket `shap` benötigt.
-* Ohne SHAP kann `--method permutation` genutzt werden.
 
 
 ## Beispiel-Konfigurationen (`configs/`)

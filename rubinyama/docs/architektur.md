@@ -17,7 +17,7 @@ flowchart TD
 
     D --> D1[Feature-Selektion]
     D1 -->|LGBM Gain/Permutation + GRF Union| D2[Base-Learner-Tuning]
-    D2 -->|Optuna / FLAML| D3[Final-Model-Tuning]
+    D2 -->|Optuna| D3[Final-Model-Tuning]
     D3 -->|R-Score / DR-Score| D4[Training]
     D4 --> D5[Evaluation]
     D5 -->|Qini, AUUC, Uplift@k, Policy Value| D6[Champion-Auswahl]
@@ -85,7 +85,6 @@ Vierstufiger Prozess:
 Die LightGBM-Fits nutzen automatisch native kategoriale Splits (via `categorical_feature`-Patch). Die Methoden laufen sequentiell, aber jede nutzt alle CPU-Kerne. CausalForest subsampelt große Datensätze (>100k) automatisch stratifiziert nach Treatment. Bei Multi-Treatment wird T für GRF automatisch binarisiert (Control vs. Any Treatment). Globale Seeds (`np.random.seed`, `random.seed`) werden vor dem GRF-Fit gesetzt für maximale Reproduzierbarkeit.
 
 ### Schritt 3: Base-Learner-Tuning (optional)
-Optuna (oder alternativ FLAML) optimiert die Nuisance-Modelle (Outcome, Propensity). Task-basiertes Sharing: identische Lernaufgaben werden dedupliziert. Jede Optuna-Study erhält einen eigenen, deterministisch aus dem Basis-Seed abgeleiteten Seed (`sha256`), damit verschiedene Tasks unterschiedliche Hyperparameter-Bereiche explorieren. Der TPE-Sampler ist mit `multivariate=True` und `constant_liar=True` konfiguriert, die Startup-Trials skalieren adaptiv mit der Gesamtzahl. Ein `MedianPruner` bricht unpromising Trials nach 1-2 CV-Folds ab (typisch ~30-50% Zeitersparnis). Bei Level 3-4 laufen mehrere Optuna-Trials parallel (`study.optimize(n_jobs=...)`). `catch=(Exception,)` verhindert, dass einzelne fehlgeschlagene Trials die Study stoppen. FLAML (`automl: "flaml"`) übernimmt HP-Suche + Early Stopping automatisch, fällt bei gruppenspezifischen Tasks (TLearner, XLearner) automatisch auf Optuna zurück. Nach dem BLT wird optional die Combined Loss Diagnostic (Bach et al., 2024) berechnet — das Produkt der Outcome- und Propensity-Fehler als Qualitätskennzahl.
 
 Kategorische Features und der `partialmethod`-Patch: EconML konvertiert die Feature-Matrix `X` intern über sklearn's `check_array` zu einem numpy-Array. Dabei gehen pandas category-Dtypes verloren — LightGBM und CatBoost erhalten dann nur float64-Werte und nutzen ordinale statt kategoriale Splits (deutlich schwächere Modellierung bei nominalen Features). Der `patch_categorical_features()`-Context-Manager (`rubin/utils/categorical_patch.py`) löst das, indem er die `.fit()`-Methoden von `LGBMClassifier`, `LGBMRegressor`, `CatBoostClassifier` und `CatBoostRegressor` auf Klassen-Ebene mit `functools.partialmethod` patcht. Damit wird `categorical_feature=<indices>` (LightGBM) bzw. `cat_features=<indices>` (CatBoost) bei jedem `.fit()`-Aufruf automatisch übergeben — auch wenn EconML intern nur `model.fit(X_numpy, y)` aufruft. Die Spaltenindizes werden über `_detect_cat_indices()` aus den aktuellen category-/object-Spalten von X ermittelt. In der Pipeline gibt es zwei Patch-Kontexte: (1) Feature-Selektion — mit den Spaltenindizes vor FS, damit kategorische Features in der LightGBM-Importance nicht unterbewertet werden. (2) Tuning + Training + Evaluation + Surrogate + Refit — mit den Spaltenindizes nach FS. Der Patch wirkt auf Klassen-Ebene, d.h. alle Instanzen innerhalb des `with`-Blocks sind betroffen (inkl. Optuna-Trials, Cross-Prediction-Folds, DRTester-Nuisance, Surrogate-Bäume). Im `finally`-Block werden die Originale immer wiederhergestellt — kein globaler State-Leak.
 
@@ -93,7 +92,7 @@ Kategorische Features und der `partialmethod`-Patch: EconML konvertiert die Feat
 
 Beide Tuning-Schritte laufen auf dem **Training-Split des ersten CV-Folds** (~80% der Daten, via `_first_crossfit_train_indices`). Der verbleibende ~20%-Holdout wird nicht gesehen. Dadurch wird verhindert, dass Hyperparameter auf denselben Daten optimiert werden, auf denen später evaluiert wird.
 
-**Final-Model-Tuning (FMT):** Optimiert die Hyperparameter von model_final (CATE-Effektmodell) per Optuna. Für NonParamDML wählbar zwischen RScorer (Schuler et al., 2018; 1 Fit/Trial) und DR-Score (Mahajan et al., 2024; DR-Pseudo-Outcomes). DRLearner nutzt immer den eingebauten DR-basierten score()+CV (K Fits/Trial). FMT verwendet immer Optuna — FLAML ist hier nicht verfügbar, da die kausale Objective-Funktion keinen Standard-ML-Task darstellt. Ohne FMT verwendet model_final ausschließlich LightGBM/CatBoost-Standardwerte.
+**Final-Model-Tuning (FMT):** Optimiert die Hyperparameter von model_final (CATE-Effektmodell) per Optuna. Beide FMT-Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit est.score(). Ohne FMT verwendet model_final ausschließlich LightGBM/CatBoost-Standardwerte.
 
 CausalForestDML ist bewusst nicht Teil des FMT: Sein „model_final" ist der GRF-Forest selbst — keine LightGBM/CatBoost-Hyperparameter, die per Optuna tuned werden könnten. Die Wald-Parameter (Tiefe, Blattgröße, etc.) werden stattdessen über EconMLs eigenen `tune()` Grid-Search optimiert.
 
@@ -137,7 +136,7 @@ Die Evaluation läuft in drei Phasen:
 Optional: Vergleich gegen historischen Score (Policy-Value-Comparison als letzter Schritt, nachdem alle Modell- und Historical-Policy-Values berechnet sind). Bei MT werden die DRTester-Nuisance-Fits pro Arm bei Level 3–4 parallel ausgeführt. Bei aktiver Eval-Maske (`eval_mask_file`) werden die Metriken und DRTester-Plots nur auf den markierten Zeilen berechnet, während alle Daten für Training und Cross-Prediction genutzt werden (Train Many, Evaluate One). Der pre-fitted DRTester (`fitted_tester_bt`) wird aus `_run_evaluation` an `run()` zurückgegeben und für den Surrogate-Block wiederverwendet.
 
 ### Schritt 7: Surrogate-Einzelbaum
-rubin trainiert einen Surrogate-Einzelbaum auf den **Cross-Predicted CATEs des Champions**, wenn `surrogate_tree.enabled: true`. Das gilt für alle Champion-Modelle, einschließlich CausalForestDML.
+rubin trainiert einen Surrogate-Einzelbaum auf den **Train-Predictions (Full-Data-Refit) des Champions**, wenn `surrogate_tree.enabled: true`. Die Train-Predictions repräsentieren die vom Champion tatsächlich gelernte CATE-Funktion — der Surrogate lernt diese per Knowledge Distillation nach. Cross-Validation (K-Fold, identisch zur äußeren CV) erzeugt OOS-Predictions für faire Vergleichbarkeit mit dem Champion. Abschließend wird der Surrogate auf allen Daten nachtrainiert.
 
 Der Surrogate nutzt LightGBM oder CatBoost mit `n_estimators=1`. Bei Multi-Treatment wird pro Arm ein separater Baum erzeugt.
 
@@ -147,7 +146,7 @@ Der Surrogate nutzt LightGBM oder CatBoost mit `n_estimators=1`. Bei Multi-Treat
 Bestes Modell anhand der konfigurierten Metrik (Standard: Qini). Optional manuell festlegbar. Bei `refit_champion_on_full_data: true` wird der Champion vor dem Export auf allen Daten refittet. Sonderfall Ensemble: Alle Einzelmodelle werden refittet, dann wird ein neues `EnsembleCateEstimator` mit den refitteten Modellen erstellt. Bundle-Export schreibt alle Production-Artefakte synchron.
 
 ### Schritt 9: Explainability
-Bei `shap_values.calculate_shap_values: true`: SHAP-Werte (oder Permutation-Importance als Fallback), Importance-Plots für den Champion. SHAP-Werte werden auf Out-of-Sample-Daten berechnet (CV: letztes Fold-Modell + Out-of-Fold-Samples, External: Eval-Daten). Artefakte werden als MLflow-Artefakte geloggt und in den HTML-Report eingebettet.
+Bei `shap_values.calculate_shap_values: true`: SHAP-Werte und Importance-Plots für den Champion. SHAP-Werte werden auf Out-of-Sample-Daten berechnet (CV: letztes Fold-Modell + Out-of-Fold-Samples, External: Eval-Daten). Artefakte werden als MLflow-Artefakte geloggt und in den HTML-Report eingebettet.
 
 ### Schritt 10: HTML-Report
 Am Ende wird automatisch ein `analysis_report.html` erzeugt — ein selbstständiger Report mit Datengrundlage, Config-Zusammenfassung, Tuning-Güte, Modellvergleich (Champion hervorgehoben), Diagnose-Plots pro Modell mit Erklärungstexten, Surrogate-Vergleich und optionaler Explainability-Sektion. Alle Plots sind klickbar und öffnen eine Lightbox-Vergrößerung. Der Report wird in `.rubin_cache/` (für die App) und als MLflow-Artefakt gespeichert, optional zusätzlich in `output_dir`. Der Report wird nie ins Projektverzeichnis geschrieben.
@@ -203,7 +202,6 @@ Separater Runner, damit Analyse und Production schlank bleiben.
 
 **Methoden:**
 - **SHAP** (Standard): Modellagnostische SHAP-Werte für f(X) = CATE(X)
-- **Permutation Importance**: Robuster Fallback ohne shap-Abhängigkeit
 
 
 **Fehlende Werte:** Alle Modelle außer CausalForestDML und CausalForest können mit fehlenden Werten umgehen,

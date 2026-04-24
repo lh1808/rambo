@@ -33,8 +33,9 @@ class FittedPreprocessor:
         for col in self.categorical_columns:
             if col in X.columns:
                 mp = self.encoding_maps.get(col, {})
-                # .map(dict) ist deutlich schneller als .map(lambda v: dict.get(str(v), -1))
-                mapped = X[col].astype(str).map(mp)
+                # fillna("nan") vor map: object-dtype NaN wird von astype(str) nicht zu "nan".
+                # Ohne fillna würde NaN als -1 kodiert statt als gelernte "nan"-Kategorie.
+                mapped = X[col].astype(str).fillna("nan").map(mp)
                 X[col] = mapped.fillna(-1).astype("int32").astype("category")
 
         # Fehlende numerische Werte auffüllen
@@ -72,7 +73,10 @@ Dieses Artefakt ist zentral für reproduzierbares Scoring in Production."""
         uniques = pd.Series(X[col].astype(str).fillna("nan")).unique().tolist()
         mp = {u: i for i, u in enumerate(uniques)}
         encoding_maps[col] = mp
-        X[col] = X[col].astype(str).map(mp).astype("int32").astype("category")
+        # fillna("nan") vor map(): object-dtype NaN wird von astype(str) NICHT zu "nan"
+        # konvertiert — .map(dict) gibt dann NaN zurück → .astype("int32") crasht.
+        # fillna(-1) nach map(): fängt unbekannte Werte ab (identisch mit transform()).
+        X[col] = X[col].astype(str).fillna("nan").map(mp).fillna(-1).astype("int32").astype("category")
 
     num_cols = X.select_dtypes(exclude=["category", "object"]).columns.tolist()
     if fill_na_method == "median":

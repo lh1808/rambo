@@ -425,7 +425,6 @@ class AnalysisPipeline:
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
             for task_key, score in tuner.best_scores.items():
                 mlflow.log_metric(f"tuning_best__{task_key}", score)
-            mlflow.log_param("blt__automl", cfg.tuning.automl)
             mlflow.log_param("blt__n_trials", cfg.tuning.n_trials)
             mlflow.log_param("blt__cv_splits", cfg.tuning.cv_splits)
             mlflow.log_param("blt__metric", cfg.tuning.metric)
@@ -538,36 +537,30 @@ class AnalysisPipeline:
             # Modellgüte der Final-Model-Tuning-Tasks loggen
             for task_key, score in final_tuner.best_scores.items():
                 mlflow.log_metric(f"fmt_best__{task_key}", score)
-                mlflow.log_metric(f"tuning_best__{task_key}", score)  # Legacy-Kompatibilität
             mlflow.log_param("fmt__enabled", True)
             mlflow.log_param("fmt__n_trials", cfg.final_model_tuning.n_trials)
             mlflow.log_param("fmt__cv_splits", getattr(cfg.final_model_tuning, "cv_splits", 3))
-            mlflow.log_param("fmt__method", getattr(cfg.final_model_tuning, "method", "rscorer"))
-            mlflow.log_param("fmt__stability_penalty", getattr(cfg.final_model_tuning, "stability_penalty", 0.0))
+            mlflow.log_param("fmt__overfit_penalty", getattr(cfg.final_model_tuning, "overfit_penalty", 0.0))
             mlflow.log_param("fmt__single_fold", getattr(cfg.final_model_tuning, "single_fold", False))
             if cfg.final_model_tuning.models is not None:
                 mlflow.log_param("fmt__models", ", ".join(cfg.final_model_tuning.models))
 
             # Logger: Zusammenfassung
             n_fmt = len(final_tuner.best_scores)
-            fmt_method = getattr(cfg.final_model_tuning, "method", "rscorer")
+            
             if n_fmt > 0:
                 for tk, sc in final_tuner.best_scores.items():
-                    if "__penalized" in tk:
+                    if "__adjusted" in tk:
                         # Penalized scores loggen wir zusammen mit dem raw-Score
                         continue
                     raw_key = tk
-                    pen_key = tk + "__penalized"
+                    pen_key = tk + "__adjusted"
                     raw_val = sc
                     pen_val = final_tuner.best_scores.get(pen_key)
                     model_short = tk.replace("final__", "")
                     # Score-Label: je nach Modell und Methode
-                    if "drlearner" in model_short.lower():
-                        score_label = "score()"
-                    elif fmt_method == "dr_score":
-                        score_label = "DR-Score"
-                    else:
-                        score_label = "R-Score"
+                    if True:  # Alle FMT-Modelle nutzen OOF-CV
+                        score_label = "OOF-R-Score"
                     if pen_val is not None and abs(raw_val - pen_val) > 1e-10:
                         self._logger.info(
                             "FMT %s: %s → %.6g (raw) / %.6g (penalized), Δ=%.6g",
@@ -588,28 +581,14 @@ class AnalysisPipeline:
                     fmt_plan_list = []
                     for mname in cfg.models.models_to_train:
                         name_lower = (mname or "").lower()
-                        if name_lower == "nonparamdml":
-                            _setup = fmt_internal_cv * 2  # RScorer/DR-Score Nuisance-Setup
-                            if fmt_method == "dr_score":
-                                fmt_plan_list.append({
-                                    "model": mname, "method": "DR-Score", "trials": fmt_n_trials,
-                                    "fits_per_trial": _fits_per_dml, "total_fits": _setup + fmt_n_trials * _fits_per_dml,
-                                    "note": f"Setup: {_setup} Nuisance-Fits (cv={fmt_internal_cv}×2). Pro Trial: NonParamDML.fit() = {_fits_per_dml} Fits (cv={fmt_internal_cv}×2 Nuisance + 1 model_final).",
-                                })
-                            else:
-                                fmt_plan_list.append({
-                                    "model": mname, "method": "RScorer", "trials": fmt_n_trials,
-                                    "fits_per_trial": _fits_per_dml, "total_fits": _setup + fmt_n_trials * _fits_per_dml,
-                                    "note": f"Setup: {_setup} RScorer-Nuisance-Fits (cv={fmt_internal_cv}×2). Pro Trial: NonParamDML.fit() = {_fits_per_dml} Fits (cv={fmt_internal_cv}×2 Nuisance + 1 model_final).",
-                                })
-                        elif name_lower == "drlearner":
+                        if name_lower in ("nonparamdml", "drlearner"):
                             _outer = 1 if fmt_single_fold else fmt_outer_cv
                             _fpt = _outer * _fits_per_dml
                             fmt_plan_list.append({
-                                "model": mname, "method": f"score() {'Single-Fold' if fmt_single_fold else f'{_outer}-Fold CV'}",
+                                "model": mname, "method": f"OOF {'1' if fmt_single_fold else str(_outer)}-Fold CV",
                                 "trials": fmt_n_trials, "fits_per_trial": _fpt,
                                 "total_fits": fmt_n_trials * _fpt,
-                                "note": f"{_outer} äußere Fold(s) × {_fits_per_dml} Fits/Fold (DRLearner.fit() mit cv={fmt_internal_cv}: {fmt_internal_cv}×propensity + {fmt_internal_cv}×regression + 1×model_final).",
+                                "note": f"{_outer} äußere Fold(s) × {_fits_per_dml} Fits/Fold (est.fit(train) + est.score(val), cv={fmt_internal_cv}).",
                             })
                     if fmt_plan_list:
                         self._report.add_fmt_plan(fmt_plan_list)
@@ -619,8 +598,8 @@ class AnalysisPipeline:
                         "single_fold": fmt_single_fold,
                         "cv_internal": fmt_internal_cv,
                         "cv_outer": fmt_outer_cv,
-                        "method": fmt_method,
-                        "stability_penalty": getattr(cfg.final_model_tuning, "stability_penalty", 0.0),
+                        "method": "oof_cv",
+                        "overfit_penalty": getattr(cfg.final_model_tuning, "overfit_penalty", 0.0),
                         "models": [m for m in cfg.models.models_to_train if (m or "").lower() in {"nonparamdml", "drlearner"}],
                         "best_scores": {
                             k.replace("final__", ""): v
@@ -1847,9 +1826,19 @@ class AnalysisPipeline:
 
         if holdout_data is None:
             # --- Cross-Modus ---
+            # Surrogate trainiert auf den Train-Predictions des Champions (Full-Data-Refit),
+            # um die gelernte CATE-Funktion bestmöglich nachzulernen.
+            # Cross-Validation erzeugt OOS-Predictions für faire Vergleichbarkeit mit dem Champion.
             if is_mt:
-                mt_cols = sorted([c for c in champion_df.columns if c.startswith(f"Predictions_{teacher_name}_T")])
-                target_2d = champion_df[mt_cols].to_numpy()
+                mt_cols_train = sorted([c for c in champion_df.columns if c.startswith(f"Train_{teacher_name}_T")])
+                mt_cols_pred = sorted([c for c in champion_df.columns if c.startswith(f"Predictions_{teacher_name}_T")])
+                # Fallback auf OOF-Predictions wenn Train-Predictions nicht verfügbar
+                if mt_cols_train and not np.all(np.isnan(champion_df[mt_cols_train[0]].to_numpy(dtype=float))):
+                    target_2d = champion_df[mt_cols_train].to_numpy()
+                    self._logger.info("Surrogate trainiert auf Train-Predictions (Full-Data-Refit) des Champions.")
+                else:
+                    target_2d = champion_df[mt_cols_pred].to_numpy()
+                    self._logger.info("Surrogate: Train-Predictions nicht verfügbar, verwende OOF-Predictions.")
                 n_effects = target_2d.shape[1]
 
                 surrogate_preds = np.full_like(target_2d, np.nan, dtype=float)
@@ -1876,7 +1865,15 @@ class AnalysisPipeline:
 
                 final_tree = None  # Nicht genutzt bei MT
             else:
-                target = champion_df[f"Predictions_{teacher_name}"].to_numpy()
+                train_col = f"Train_{teacher_name}"
+                pred_col = f"Predictions_{teacher_name}"
+                # Fallback auf OOF-Predictions wenn Train-Predictions nicht verfügbar
+                if train_col in champion_df.columns and not np.all(np.isnan(champion_df[train_col].to_numpy(dtype=float))):
+                    target = champion_df[train_col].to_numpy()
+                    self._logger.info("Surrogate trainiert auf Train-Predictions (Full-Data-Refit) des Champions.")
+                else:
+                    target = champion_df[pred_col].to_numpy()
+                    self._logger.info("Surrogate: Train-Predictions nicht verfügbar, verwende OOF-Predictions.")
                 surrogate_preds = np.full_like(target, np.nan, dtype=float)
                 cv = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
                 for tr_idx, va_idx in cv.split(X):
@@ -2352,11 +2349,11 @@ class AnalysisPipeline:
                     df_out.to_csv(os.path.join(out_dir, f"predictions_{model_name}.csv"), index=False, float_format="%.10g")
 
     # ------------------------------------------------------------------
-    # Explainability (SHAP / Permutation-Importance)
+    # Explainability (SHAP)
     # ------------------------------------------------------------------
 
     def _run_explainability(self, cfg, X, T, Y, models, eval_summary, mlflow, report, holdout_data=None, fold_models=None):
-        """SHAP/Permutation-Importance für den Champion.
+        """SHAP-Analyse für den Champion.
 
         Out-of-Sample: SHAP-Werte werden immer auf Daten berechnet, die das
         Modell nie gesehen hat:
@@ -2458,7 +2455,7 @@ class AnalysisPipeline:
             idx = rng.choice(len(X_expl), size=shap_cfg.n_shap_values, replace=False)
             X_expl = X_expl.iloc[idx].copy()
 
-        self._logger.info("Explainability: %d Samples für SHAP/Permutation.", len(X_expl))
+        self._logger.info("Explainability: %d Samples für SHAP.", len(X_expl))
         mlflow.log_param("explainability_model", champion_name)
         report.explainability_info["model_name"] = champion_name
 
@@ -2471,13 +2468,9 @@ class AnalysisPipeline:
 
         top_n = shap_cfg.top_n_features
         num_bins = shap_cfg.num_bins
-        _force_permutation = getattr(shap_cfg, "method", "shap") == "permutation"
 
-        # ── SHAP (bevorzugt) oder Permutation-Importance ──
+        # ── SHAP-Analyse ──
         try:
-            if _force_permutation:
-                # method="permutation" explizit gewählt → SHAP überspringen
-                raise ImportError("method='permutation' konfiguriert — SHAP wird übersprungen.")
             from rubin.explainability import (
                 shap_available, build_shap_plots, compute_shap_for_uplift,
             )
@@ -2561,37 +2554,8 @@ class AnalysisPipeline:
                 mlflow.log_param("explainability_method", "shap_generic")
                 self._logger.info("Generische SHAP-Importance für '%s' berechnet.", champion_name)
 
-        except (ImportError, Exception):
-            # Permutation-Importance als Fallback
-            try:
-                from rubin.explainability import compute_permutation_importance_for_uplift
-                from rubin.explainability.reporting import save_importance_barplot
-                res = compute_permutation_importance_for_uplift(model=model, X=X_expl, seed=seed)
-                imp = res.as_series()
-
-                def _save_perm(p, _imp=imp):
-                    _imp.to_csv(p)
-                _log_temp_artifact(mlflow, _save_perm, f"permutation_importance_{champion_name}.csv")
-
-                def _save_perm_bar(p, _imp=imp):
-                    save_importance_barplot(_imp, p, top_n=top_n, title=f"Permutation-Importance – {champion_name}")
-                _log_temp_artifact(mlflow, _save_perm_bar, f"permutation_importance_{champion_name}.png")
-
-                # Barplot für HTML-Report
-                import matplotlib.pyplot as plt
-                _imp_plot = imp.head(top_n)[::-1]
-                _fig_bar, _ax = plt.subplots(figsize=(10, max(4, 0.25 * len(_imp_plot) + 2)))
-                _ax.barh(_imp_plot.index.astype(str), _imp_plot.values)
-                _ax.set_xlabel("Wichtigkeit"); _ax.set_title(f"Permutation-Importance – {champion_name}")
-                _fig_bar.tight_layout()
-                report.add_explainability_plot("Permutation-Importance", _fig_bar)
-                plt.close(_fig_bar)
-
-                mlflow.log_param("explainability_method", "permutation")
-                self._logger.info("Permutation-Importance für '%s' berechnet.", champion_name)
-            except Exception:
-                self._logger.warning("Explainability komplett fehlgeschlagen.", exc_info=True)
-                return
+        except Exception:
+            self._logger.warning("SHAP-Analyse fehlgeschlagen.", exc_info=True)
 
     # ------------------------------------------------------------------
     # Hauptmethode
@@ -3050,6 +3014,17 @@ class AnalysisPipeline:
             with patch_categorical_features(X, base_learner_type=cfg.base_learner.type) as cat_indices:
                 if cat_indices:
                     mlflow.log_param("n_categorical_features", len(cat_indices))
+                    _bt_label = (cfg.base_learner.type or "lgbm").upper()
+                    print(
+                        f"[rubin] Kategorische Features: {len(cat_indices)} von {X.shape[1]} "
+                        f"Spalten → {_bt_label} erhält cat_feature-Indizes.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[rubin] Keine kategorialen Features erkannt → Standard-Encoding (numerisch).",
+                        flush=True,
+                    )
 
                 tuned_params_by_model = self._run_tuning(cfg, X, T, Y, mlflow, _progress_cb=_progress)
                 gc.collect()  # Tuner-Internals freigeben (Optuna Studies, Trial-Daten)
@@ -3185,7 +3160,7 @@ class AnalysisPipeline:
                 self._run_bundle_export(cfg, models, eval_summary, X, T, Y, X_full, T_full, Y_full, selected_feature_columns, holdout_data, export_bundle, bundle_dir, bundle_id, mlflow)
                 self._run_optional_output(cfg, eval_summary, removed, preds)
 
-                # ── Explainability (SHAP / Permutation-Importance) ──
+                # ── Explainability (SHAP) ──
                 if cfg.shap_values.calculate_shap_values:
                     _progress("Explainability")
                     try:
