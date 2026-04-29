@@ -1,4 +1,3 @@
-11:50:30 INFO [rubin.tuning] K-Fold aktiv (cv=5): Parallele Trials reduziert 10 → 5 (Speicherschutz: jeder Trial hält 5 Fold-Fits gleichzeitig).
-11:50:30 INFO [rubin.tuning] Tuning-Task 'catboost__outcome__classifier__all__no_t__y': X_input=389984 rows, indices=389984, X_task=(389984, 88), target=(389984,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome
-12:24:59 INFO [rubin.tuning] BLT 'catboost__outcome__classifier__all__no_t__y': 71/100 Trials abgeschlossen (0 fehlgeschlagen, 29 gepruned, parallel=5).
-12:24:59 INFO [rubin.tuning] Tuning-Task 'catboost__outcome_regression__regressor__all__with_t__y': X_input=389984 rows, indices=389984, X_task=(389984, 89), target=(389984,) (unique=[0, 1]), T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome_regression
+15:37:16 INFO [rubin.tuning] FMT 'NonParamDML': Starte 160 Trials (parallel=5, Wellen≈32).
+22:48:12 INFO [rubin.tuning] FMT 'NonParamDML': 160/160 Trials abgeschlossen (0 fehlgeschlagen, 0 gepruned).
+22:48:13 INFO [rubin.tuning] FMT 'DRLearner': Starte 160 Trials (parallel=5, Wellen≈32).
