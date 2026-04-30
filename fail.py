@@ -1,11 +1,11 @@
-09:30:26 INFO [rubin.analysis] Metriken für 9 Modelle berechnet. Vorläufiger Champion: CausalForest. Diagnostik-Plots: Champion + Challenger
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/numpy/_core/fromnumeric.py:3824: RuntimeWarning: Mean of empty slice
-  return _methods._mean(a, axis=axis, dtype=dtype,
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/numpy/_core/_methods.py:142: RuntimeWarning: invalid value encountered in scalar divide
-  ret = ret.dtype.type(ret / rcount)
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/numpy/_core/_methods.py:219: RuntimeWarning: Degrees of freedom <= 0 for slice
-  ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/numpy/_core/_methods.py:178: RuntimeWarning: invalid value encountered in divide
-  arrmean = um.true_divide(arrmean, div, out=arrmean,
-/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/numpy/_core/_methods.py:211: RuntimeWarning: invalid value encountered in scalar divide
-  ret = ret.dtype.type(ret / rcount)
+PermutationExplainer explainer:   7%|▋         | 704/10000 [04:03<1:01:16,  2.53it/s]
+PermutationExplainer explainer:   7%|▋         | 705/10000 [04:04<57:25,  2.70it/s]
+PermutationExplainer explainer:   7%|▋         | 706/10000 [04:04<56:04,  2.76it/s]
+PermutationExplainer explainer:   7%|▋         | 707/10000 [04:04<53:35,  2.89it/s]
+PermutationExplainer explainer:   7%|▋         | 708/10000 [04:05<52:29,  2.95it/s]
+PermutationExplainer explainer:   7%|▋         | 709/10000 [04:05<52:44,  2.94it/s]
+PermutationExplainer explainer:   7%|▋         | 710/10000 [04:05<51:26,  3.01it/s]
+PermutationExplainer explainer:   7%|▋         | 711/10000 [04:06<52:03,  2.97it/s]
+PermutationExplainer explainer:   7%|▋         | 712/10000 [04:06<51:02,  3.03it/s]
+PermutationExplainer explainer:   7%|▋         | 713/10000 [04:06<51:35,  3.00it/s]
+PermutationExplainer explainer:   7%|▋         | 714/10000 [04:07<52:12,  2.96it/s]
