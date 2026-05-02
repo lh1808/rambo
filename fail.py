@@ -1,25 +1,35 @@
-20:43:40 INFO [rubin.categorical] CatBoost categorical patch (fit): 254 cat_features injiziert (DataFrame).
-20:43:40 WARNING [rubin.feature_selection] Feature-Importance 'catboost_importance' fehlgeschlagen.
-Traceback (most recent call last):
-  File "/mnt/rubin/rubin/feature_selection.py", line 398, in _run_method
-    return method, _catboost_gain_importance(X, Y, seed, n_jobs=method_n_jobs)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/rubin/rubin/feature_selection.py", line 177, in _catboost_gain_importance
-    model.fit(X, Y)
-  File "/mnt/rubin/rubin/utils/categorical_patch.py", line 162, in _wrapped_fit
-    return original_fit(self, X_conv, y, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 6178, in fit
-    return self._fit(X, y, cat_features, text_features, embedding_features, None, graph, sample_weight, None, None, None, None, baseline,
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2701, in _fit
-    train_params = self._prepare_train_params(
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2627, in _prepare_train_params
-    _check_train_params(params)
-  File "_catboost.pyx", line 7029, in _catboost._check_train_params
-  File "_catboost.pyx", line 7051, in _catboost._check_train_params
-_catboost.CatBoostError: catboost/private/libs/options/catboost_options.cpp:638: Error: rsm on GPU is supported for pairwise modes only
-20:43:40 INFO [rubin.feature_selection] CausalForest FS: X=(299988, 745) (dtypes: 491 numeric, 254 category), T=(299988,) (unique=2), Y=(299988,), n_jobs=-1, in_thread=False
-20:43:42 INFO [rubin.feature_selection] CausalForest FS: Subsampling 299988 → 99999 Zeilen (stratifiziert nach T).
-20:43:42 INFO [rubin.feature_selection] CausalForest FS: fit(99999×745, T unique=2, n_estimators=100, n_jobs=-1)...
+Analyse fehlgeschlagen: Fehlgeschlagen (Exit -6)
+
+Details:
+21:09:46 INFO [rubin.analysis] Arbeitsverzeichnis: /mnt/rubin/runs
+21:09:46 INFO [rubin.analysis] MLflow-Experiment 'rubin_GRP_PBV' (identisch mit DataPrep).
+21:09:46 INFO [rubin.analysis] Run-Name-Suffix 'wilder-eisvogel' aus DataPrep übernommen.
+21:09:47 INFO [rubin.analysis] DataPrep-Config nach MLflow geloggt: /mnt/rubin/runs/data/dataprep_config.yml
+21:09:47 INFO [rubin.analysis] ════════════════════════════════════════════════════════════
+21:09:47 INFO [rubin.analysis] rubin Pipeline Start
+21:09:47 INFO [rubin.analysis] ════════════════════════════════════════════════════════════
+21:09:47 INFO [rubin.analysis] Config: 8 Modelle (NonParamDML, DRLearner, SLearner, TLearner, XLearner, ParamDML, CausalForestDML, CausalForest), CATBOOST, 5-Fold CV, Parallel-Level 3
+21:09:47 INFO [rubin.analysis] Nuisance Cross-Fitting (DML + DR): 5 interne Folds
+21:09:47 INFO [rubin.analysis] Aktiv: BL-Tuning (100 Trials) | FMT (100 Trials) | CausalForest-Tuning | Ensemble
+21:09:47 INFO [rubin.analysis] Validierungsmodus: Cross-Validation (5 Folds, Seed=42, Tuning-Seed=18)
+21:09:47 INFO [rubin.analysis] Historischer Score: 3 NaN-Werte durch 0 ersetzt.
+21:09:47 INFO [rubin.analysis] dtypes.json auto-erkannt (runs/data/dtypes.json): 254 Spalten-Dtypes wiederhergestellt (254 kategorial).
+21:09:48 INFO [rubin.analysis] Memory-Reduktion: 240.7 MB → 240.7 MB (0% gespart).
+21:09:48 INFO [rubin.analysis] Daten geladen: X=(299988, 745), T=(299988,) (unique=[0, 1]), Y=(299988,) (unique=[0, 1]), S=(299988,)
+21:09:48 INFO [rubin.categorical] Kategorische Spalten erkannt: 254 von 745 Features (['D_FRAU', 'GESELLSCHAFT_MM', 'BEAMTER_FLG']... (+251)). Patche BOTH .fit()-Methoden für EconML-Kompatibilität.
+21:09:49 INFO [rubin.feature_selection] Feature-Selektion: 2 Methoden sequentiell (alle Kerne pro Methode).
+21:09:49 INFO [rubin.gpu] CatBoost GPU erkannt: 1 NVIDIA GPU(s) verfügbar → task_type='GPU'. Inkompatible Parameter (colsample_bylevel, rsm) werden automatisch entfernt.
+21:09:49 INFO [rubin.categorical] CatBoost categorical patch (fit): 254 cat_features injiziert (DataFrame).
+Application terminated with error: ??+0 (0x7F1B59EB989A)
+??+0 (0x7F1B5970F439)
+??+0 (0x7F1B5AD146CD)
+??+0 (0x7F1B5AD134C6)
+??+0 (0x7F1B5AD14988)
+??+0 (0x7F1B5993BC9F)
+??+0 (0x7F1B5993BA9E)
+??+0 (0x7F203BD32AA4)
+??+0 (0x7F203BDBFC6C)
+
+(TCudaException) catboost/cuda/cuda_lib/cuda_base.h:245: CUDA error 222: the provided PTX was compiled with an unsupported toolchain.
+Terminating due to uncaught exception 0x4419acc0410    what() -> "catboost/cuda/cuda_lib/cuda_base.h:245: CUDA error 222: the provided PTX was compiled with an unsupported toolchain."
+ of type TCudaException
