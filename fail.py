@@ -1,21 +1,15 @@
-^C(generic) ubuntu@192.168.5.216 ~/rubin $ nvidia-smi | head -4
-Sat May  2 21:29:30 2026       
-+-----------------------------------------------------------------------------------------+
-| NVIDIA-SMI 570.211.01             Driver Version: 570.211.01     CUDA Version: 12.8     |
-|-----------------------------------------+------------------------+----------------------+
-(generic) ubuntu@192.168.5.216 ~/rubin $ python -c "import catboost; print('CatBoost:', catboost.__version__)"
-Traceback (most recent call last):
-  File "<string>", line 1, in <module>
-ModuleNotFoundError: No module named 'catboost'
-(generic) ubuntu@192.168.5.216 ~/rubin $ pixi -c "import catboost; print('CatBoost:', catboost.__version__)"
-error: unexpected argument '-c' found
-
-Usage: pixi [OPTIONS] [COMMAND]
-
-For more information, try '--help'.
-(generic) ubuntu@192.168.5.216 ~/rubin $ pixi run python -c "import catboost; print('CatBoost:', catboost.__version__)"
-CatBoost: 1.2.10
-(generic) ubuntu@192.168.5.216 ~/rubin $ nvidia-smi --query-gpu=name,compute_cap --format=csv
-name, compute_cap
-Tesla V100-PCIE-32GB, 7.0
-(generic) ubuntu@192.168.5.216 ~/rubin $ 
+Schritt 1 — Prüfe woher CatBoost kommt:
+bashpixi run python -c "import catboost; print(catboost.__file__)"
+Schritt 2 — Installiere CatBoost von PyPI statt conda:
+bashpixi run pip install catboost==1.2.10 --force-reinstall --break-system-packages
+Schritt 3 — Teste GPU:
+bashpixi run python -c "
+from catboost import CatBoostRegressor
+import numpy as np
+m = CatBoostRegressor(iterations=5, task_type='GPU', verbose=1, allow_writing_files=False)
+m.fit(np.random.rand(100,5).astype(np.float32), np.random.rand(100))
+print('GPU OK!')
+"
+Falls Schritt 2 nicht hilft, probiere eine ältere Version:
+bashpixi run pip install catboost==1.2.7 --force-reinstall --break-system-packages
+Poste mir die Ausgabe — dann kann ich gezielt weiter debuggen.
