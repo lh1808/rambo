@@ -1,15 +1,29 @@
-Schritt 1 — Prüfe woher CatBoost kommt:
-bashpixi run python -c "import catboost; print(catboost.__file__)"
-Schritt 2 — Installiere CatBoost von PyPI statt conda:
-bashpixi run pip install catboost==1.2.10 --force-reinstall --break-system-packages
-Schritt 3 — Teste GPU:
-bashpixi run python -c "
-from catboost import CatBoostRegressor
-import numpy as np
-m = CatBoostRegressor(iterations=5, task_type='GPU', verbose=1, allow_writing_files=False)
-m.fit(np.random.rand(100,5).astype(np.float32), np.random.rand(100))
-print('GPU OK!')
+# 1. Welche CUDA-Libs sieht das pixi-Environment?
+pixi run python -c "
+import ctypes, os
+try:
+    cuda = ctypes.CDLL('libcuda.so.1')
+    print('libcuda.so.1 geladen')
+except: print('libcuda.so.1 NICHT gefunden')
+
+# CatBoost's interne CUDA-Version
+from catboost.utils import get_gpu_device_count
+print('GPU count:', get_gpu_device_count())
 "
-Falls Schritt 2 nicht hilft, probiere eine ältere Version:
-bashpixi run pip install catboost==1.2.7 --force-reinstall --break-system-packages
-Poste mir die Ausgabe — dann kann ich gezielt weiter debuggen.
+
+# 2. Gibt es konfliktende CUDA-Pakete in pixi?
+pixi list | grep -i cuda
+
+# 3. LD_LIBRARY_PATH prüfen
+pixi run env | grep -i LD_LIBRARY_PATH
+
+# 4. Welche libcuda wird tatsächlich gelinkt?
+pixi run python -c "
+import catboost._catboost as cb
+import subprocess
+pid = str(subprocess.os.getpid())
+result = subprocess.run(['cat', f'/proc/{pid}/maps'], capture_output=True, text=True)
+for line in result.stdout.split('\n'):
+    if 'cuda' in line.lower() or 'nvidia' in line.lower():
+        print(line.split()[-1] if len(line.split()) > 5 else line)
+"
