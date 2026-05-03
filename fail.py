@@ -1,46 +1,391 @@
-[rubin] Step 1/11: Daten laden & Preprocessing
-[rubin] dtypes.json auto-erkannt: 254 Spalten-Dtypes wiederhergestellt (254 kategorial).
-[rubin] Step 2/11: Feature-Selektion
-[rubin] Step 3/11: Base-Learner-Tuning
-[rubin] Kategorische Features: 74 von 165 Spalten → CATBOOST erhält cat_feature-Indizes.
-23:08:46 INFO [rubin.analysis] Arbeitsverzeichnis: /mnt/rubin/runs
-23:08:46 INFO [rubin.analysis] MLflow-Experiment 'rubin_GRP_PBV' (identisch mit DataPrep).
-23:08:46 INFO [rubin.analysis] Run-Name-Suffix 'goldener-otter' aus DataPrep übernommen.
-23:08:46 INFO [rubin.analysis] DataPrep-Config nach MLflow geloggt: /mnt/rubin/runs/data/dataprep_config.yml
-23:08:46 INFO [rubin.analysis] ════════════════════════════════════════════════════════════
-23:08:46 INFO [rubin.analysis] rubin Pipeline Start
-23:08:46 INFO [rubin.analysis] ════════════════════════════════════════════════════════════
-23:08:46 INFO [rubin.analysis] Config: 8 Modelle (NonParamDML, DRLearner, SLearner, TLearner, XLearner, ParamDML, CausalForestDML, CausalForest), CATBOOST, 5-Fold CV, Parallel-Level 3
-23:08:46 INFO [rubin.analysis] Nuisance Cross-Fitting (DML + DR): 5 interne Folds
-23:08:46 INFO [rubin.analysis] Aktiv: BL-Tuning (100 Trials) | FMT (100 Trials) | CausalForest-Tuning | Ensemble
-23:08:46 INFO [rubin.analysis] Validierungsmodus: Cross-Validation (5 Folds, Seed=42, Tuning-Seed=18)
-23:08:46 INFO [rubin.analysis] Historischer Score: 3 NaN-Werte durch 0 ersetzt.
-23:08:47 INFO [rubin.analysis] dtypes.json auto-erkannt (runs/data/dtypes.json): 254 Spalten-Dtypes wiederhergestellt (254 kategorial).
-23:08:48 INFO [rubin.analysis] Memory-Reduktion: 240.7 MB → 240.7 MB (0% gespart).
-23:08:48 INFO [rubin.analysis] Daten geladen: X=(299988, 745), T=(299988,) (unique=[0, 1]), Y=(299988,) (unique=[0, 1]), S=(299988,)
-23:08:48 INFO [rubin.categorical] Kategorische Spalten erkannt: 254 von 745 Features (['D_FRAU', 'GESELLSCHAFT_MM', 'BEAMTER_FLG']... (+251)). Patche BOTH .fit()-Methoden für EconML-Kompatibilität.
-23:08:49 INFO [rubin.feature_selection] Feature-Selektion: 2 Methoden sequentiell (alle Kerne pro Methode).
-23:08:50 INFO [rubin.gpu] CatBoost GPU erkannt: 1 NVIDIA GPU(s) verfügbar → task_type='GPU'. Inkompatible Parameter (colsample_bylevel, rsm) werden automatisch entfernt.
-23:08:50 INFO [rubin.categorical] CatBoost categorical patch (fit): 254 cat_features injiziert (DataFrame).
-23:09:32 INFO [rubin.feature_selection] CausalForest FS: X=(299988, 745) (dtypes: 491 numeric, 254 category), T=(299988,) (unique=2), Y=(299988,), n_jobs=-1, in_thread=False
-23:09:34 INFO [rubin.feature_selection] CausalForest FS: Subsampling 299988 → 99999 Zeilen (stratifiziert nach T).
-23:09:34 INFO [rubin.feature_selection] CausalForest FS: fit(99999×745, T unique=2, n_estimators=100, n_jobs=-1)...
-23:21:53 INFO [rubin.feature_selection] Korrelationsfilter (|r| > 0.90, importance-gesteuert): 87 Features entfernt, 404 verbleiben.
-23:21:54 INFO [rubin.analysis] Importance-Umverteilung: 87 entfernte Features → Importance auf Partner übertragen.
-23:21:54 INFO [rubin.feature_selection] Feature-Selection 'catboost_importance': Top-15% = 99 / 658 Features.
-23:21:54 INFO [rubin.feature_selection] Feature-Selection 'causal_forest': Top-15% = 99 / 658 Features.
-23:21:54 INFO [rubin.feature_selection] Feature-Selection Union: 165 / 658 Features behalten, 493 entfernt.
-23:21:54 INFO [rubin.analysis] Feature-Selektion gesamt: 745 → 165 Features (Korrelation: −87, Importance: −493)
-23:21:54 INFO [rubin.analysis] Feature-Selektion: 745 → 165 Features (-580 entfernt)
-23:21:54 INFO [rubin.categorical] Kategorische Spalten erkannt: 74 von 165 Features (['GESELLSCHAFT_MM', 'PLZ1', 'PLZ_1A']... (+71)). Patche CATBOOST .fit()-Methoden für EconML-Kompatibilität.
-23:21:54 INFO [rubin.analysis] Starte Tuning: X=(299988, 165), Y=(299988,) (unique=[0, 1]), T=(299988,) (unique=[0, 1])
-23:21:54 INFO [rubin.tuning] tune_all gestartet: models=['NonParamDML', 'DRLearner', 'SLearner', 'TLearner', 'XLearner', 'ParamDML', 'CausalForestDML', 'CausalForest'], X=(299988, 165), Y=(299988,) (unique=[0, 1]), T=(299988,) (unique=[0, 1]), cv_splits=5, n_trials=100, parallel_trials=20, parallel_level=3, cores_per_fit=4, CPU=[effective=80]
-23:21:54 INFO [rubin.tuning] Tuning-Plan: 7 Tasks für 8 Modelle.
-23:21:54 INFO [rubin.tuning] Tuning-Task 'catboost__outcome__classifier__all__no_t__y': X_input=299988 rows, indices=299988, X_task=(299988, 165), target=(299988,) (unique=[0, 1]), train_subsample=80%, T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome
-23:21:54 INFO [rubin.categorical] CatBoost categorical patch (fit): 74 cat_features injiziert (DataFrame).
-03:39:09 INFO [rubin.tuning] BLT 'catboost__outcome__classifier__all__no_t__y': 72/100 Trials abgeschlossen (0 fehlgeschlagen, 28 gepruned, parallel=1).
-03:39:09 INFO [rubin.tuning] Tuning-Task 'catboost__outcome_regression__regressor__all__with_t__y': X_input=299988 rows, indices=299988, X_task=(299988, 166), target=(299988,) (unique=[0, 1]), train_subsample=80%, T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome_regression
-06:54:34 INFO [rubin.tuning] BLT 'catboost__outcome_regression__regressor__all__with_t__y': 74/100 Trials abgeschlossen (0 fehlgeschlagen, 26 gepruned, parallel=1).
-06:54:35 INFO [rubin.tuning] Tuning-Task 'catboost__outcome_regression__regressor__all_direct__with_t__y': X_input=299988 rows, indices=299988, X_task=(299988, 166), target=(299988,) (unique=[0, 1]), train_subsample=100%, T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=outcome_regression
-10:28:42 INFO [rubin.tuning] BLT 'catboost__outcome_regression__regressor__all_direct__with_t__y': 74/100 Trials abgeschlossen (0 fehlgeschlagen, 26 gepruned, parallel=1).
-10:28:42 INFO [rubin.tuning] Tuning-Task 'catboost__grouped_outcome_regression__regressor__group_specific_shared_params__no_t__y': X_input=299988 rows, indices=299988, X_task=(299988, 165), target=(299988,) (unique=[0, 1]), train_subsample=100%, T_task unique=[0, 1], cv_splits=5, target_name=Y, objective=grouped_outcome_regression
+[rubin] Step 4/11: Final-Model-Tuning
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:50:26,253] Trial 6 failed with value None.
+[W 2026-05-03 12:50:28,042] Trial 8 failed with parameters: {'iterations': 350, 'learning_rate': 0.018809408110099568, 'depth': 2, 'l2_leaf_reg': 44.45070767588796, 'random_strength': 1.1416200500933449, 'subsample': 0.7060707365337817, 'rsm': 0.6419783554953077, 'min_data_in_leaf': 439, 'model_size_reg': 0.10970122512795853, 'leaf_estimation_iterations': 5} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:50:28,045] Trial 8 failed with value None.
+[W 2026-05-03 12:50:29,064] Trial 5 failed with parameters: {'iterations': 317, 'learning_rate': 0.014358561674786177, 'depth': 6, 'l2_leaf_reg': 8.338679796984108, 'random_strength': 8.460108481087596, 'subsample': 0.5977418910424116, 'rsm': 0.6837322920291478, 'min_data_in_leaf': 351, 'model_size_reg': 3.3146950732053293, 'leaf_estimation_iterations': 3} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:50:29,068] Trial 5 failed with value None.
+[W 2026-05-03 12:59:49,216] Trial 10 failed with parameters: {'iterations': 242, 'learning_rate': 0.08644533267163283, 'depth': 3, 'l2_leaf_reg': 50.71187444649126, 'random_strength': 1.3009042852293657, 'subsample': 0.8402981710085186, 'rsm': 0.37784408910639194, 'min_data_in_leaf': 460, 'model_size_reg': 4.68921667931623, 'leaf_estimation_iterations': 1} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:59:49,629] Trial 10 failed with value None.
+[W 2026-05-03 12:59:51,935] Trial 11 failed with parameters: {'iterations': 295, 'learning_rate': 0.01018575473773546, 'depth': 4, 'l2_leaf_reg': 9.71923788416116, 'random_strength': 9.93645608782917, 'subsample': 0.5843447032046994, 'rsm': 0.45727123010283954, 'min_data_in_leaf': 66, 'model_size_reg': 14.017314879770142, 'leaf_estimation_iterations': 4} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:59:51,942] Trial 11 failed with value None.
+[W 2026-05-03 12:59:54,707] Trial 12 failed with parameters: {'iterations': 140, 'learning_rate': 0.03621294076757047, 'depth': 6, 'l2_leaf_reg': 8.74877409613634, 'random_strength': 1.634887521263846, 'subsample': 0.6482941777370633, 'rsm': 0.4487276079436804, 'min_data_in_leaf': 280, 'model_size_reg': 0.8619936846381854, 'leaf_estimation_iterations': 1} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:59:54,982] Trial 12 failed with value None.
+[W 2026-05-03 12:59:57,825] Trial 13 failed with parameters: {'iterations': 106, 'learning_rate': 0.07064514050690418, 'depth': 2, 'l2_leaf_reg': 3.3385993928608273, 'random_strength': 0.9663692858557871, 'subsample': 0.6698850038579695, 'rsm': 0.6222056311702404, 'min_data_in_leaf': 160, 'model_size_reg': 1.2277752731172051, 'leaf_estimation_iterations': 5} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:59:57,845] Trial 13 failed with value None.
+[W 2026-05-03 12:59:58,895] Trial 14 failed with parameters: {'iterations': 252, 'learning_rate': 0.020503112411709917, 'depth': 6, 'l2_leaf_reg': 53.623948433435466, 'random_strength': 0.5943204004452838, 'subsample': 0.6442314945192923, 'rsm': 0.2665709757565696, 'min_data_in_leaf': 402, 'model_size_reg': 3.230727124293863, 'leaf_estimation_iterations': 1} because of the following error: CatBoostError("'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features").
+Traceback (most recent call last):
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206, in _run_trial
+    value_or_values = func(trial)
+                      ^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 1543, in objective
+    est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr])
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 1703, in fit
+    return super().fit(Y, T, X=X, W=W, sample_weight=sample_weight, freq_weight=freq_weight, sample_var=sample_var,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 501, in fit
+    return super().fit(Y, T, X=X, W=W,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_cate_estimator.py", line 134, in call
+    m(self, Y, T, *args, **kwargs)
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 821, in fit
+    nuisances, fitted_models, new_inds, scores = self._fit_nuisances(
+                                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 971, in _fit_nuisances
+    nuisances, fitted_models, fitted_inds, scores = _crossfit(self._ortho_learner_model_nuisance, folds,
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 278, in _crossfit
+    nuisance_temp, model_out, score_temp = _fit_fold(model, train_idxs, test_idxs,
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/_ortho_learner.py", line 104, in _fit_fold
+    score_temp = model.score(*args_test, **kwargs_test)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/_rlearner.py", line 64, in score
+    T_score = self._model_t.score(X, W, T, **filter_none_kwargs(sample_weight=sample_weight),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/sklearn_extensions/model_selection.py", line 338, in score
+    return self.best_model.score(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/econml/dml/dml.py", line 82, in score
+    return self._model.score(XW_combined, Target)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5869, in score
+    predicted_classes = self._predict(
+                        ^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2926, in _predict
+    data, data_is_single_object = self._process_predict_input_data(data, parent_method_name, thread_count)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2906, in _process_predict_input_data
+    data = Pool(
+           ^^^^^
+  File "/mnt/rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 805, in __init__
+    raise CatBoostError(
+_catboost.CatBoostError: 'data' is numpy array of floating point numerical type, it means no categorical features, but 'cat_features' parameter specifies nonzero number of categorical features
+[W 2026-05-03 12:59:58,898] Trial 14 failed with value None.
