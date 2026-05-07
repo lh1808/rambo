@@ -17,4 +17,3 @@ pydantic_core._pydantic_core.ValidationError: 1 validation error for AnalysisCon
 causal_forest.econml_tune_params
   Extra inputs are not permitted [type=extra_forbidden, input_value='auto', input_type=str]
     For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
-RuntimeError: The NVIDIA driver on your system is too old (found version 12080). Please update your GPU driver by downloading and installing a new version from the URL: http://www.nvidia.com/Download/index.aspx Alternatively, go to: https://pytorch.org to install a PyTorch version that has been compiled with your version of the CUDA driver.
