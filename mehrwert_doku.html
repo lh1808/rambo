@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Mehrwertberechnung: Kausales Uplift Modeling vs. Affinitäts-Score</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px;
+    color: #172B4D;
+    line-height: 1.6;
+    background: #fff;
+  }
+  h1 { font-size: 28px; color: #172B4D; border-bottom: 2px solid #9B111E; padding-bottom: 12px; margin-top: 0; }
+  h2 { font-size: 22px; color: #172B4D; margin-top: 40px; border-bottom: 1px solid #DFE1E6; padding-bottom: 8px; }
+  h3 { font-size: 17px; color: #42526E; margin-top: 28px; }
+  p { margin: 10px 0; }
+
+  /* Status-Badge */
+  .status-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 3px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .status-live { background: #E3FCEF; color: #006644; }
+
+  /* Info-Panels */
+  .panel {
+    border-radius: 4px; padding: 16px 20px; margin: 20px 0;
+  }
+  .panel-info {
+    background: #DEEBFF; border-left: 4px solid #0052CC;
+  }
+  .panel-success {
+    background: #E3FCEF; border-left: 4px solid #00875A;
+  }
+  .panel-warning {
+    background: #FFFAE6; border-left: 4px solid #FF991F;
+  }
+  .panel-title {
+    font-weight: 700; margin-bottom: 6px; font-size: 14px;
+  }
+
+  /* Tabellen */
+  table {
+    border-collapse: collapse; width: 100%; margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #DFE1E6; padding: 10px 14px; text-align: left; font-size: 14px;
+  }
+  th {
+    background: #F4F5F7; font-weight: 600; color: #172B4D;
+  }
+  tr:nth-child(even) td { background: #FAFBFC; }
+
+  /* Mathe-Blöcke */
+  .math-block {
+    background: #F4F5F7; border: 1px solid #DFE1E6; border-radius: 4px;
+    padding: 18px 24px; margin: 16px 0; font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+    font-size: 16px; line-height: 2; overflow-x: auto;
+  }
+  .math-inline {
+    font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+    font-style: italic; white-space: nowrap;
+  }
+
+  /* Code */
+  code {
+    background: #F4F5F7; padding: 2px 6px; border-radius: 3px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 13px;
+  }
+
+  /* Diagramm-Container */
+  .diagram-container {
+    margin: 24px 0; text-align: center;
+  }
+  .diagram-container svg {
+    max-width: 100%;
+    height: auto;
+  }
+  .diagram-caption {
+    font-size: 13px; color: #6B778C; margin-top: 8px; font-style: italic;
+  }
+
+  /* Meta-Info oben */
+  .meta-table {
+    font-size: 13px; color: #6B778C; margin-bottom: 24px;
+  }
+  .meta-table td {
+    border: none; padding: 3px 16px 3px 0; background: none;
+  }
+  .meta-table td:first-child { font-weight: 600; color: #42526E; }
+
+  /* Nummerierte Definitionen */
+  .def-list { counter-reset: defcounter; list-style: none; padding-left: 0; }
+  .def-list li {
+    counter-increment: defcounter;
+    padding: 8px 0 8px 36px; position: relative;
+  }
+  .def-list li::before {
+    content: counter(defcounter) ".";
+    position: absolute; left: 0; font-weight: 700; color: #9B111E;
+  }
+
+  /* Proof-Box */
+  .proof-box {
+    border: 2px solid #9B111E; border-radius: 6px; padding: 20px 24px; margin: 20px 0;
+    background: #FFF5F5;
+  }
+  .proof-box h4 {
+    margin-top: 0; color: #9B111E; font-size: 15px;
+  }
+  .qed { text-align: right; font-size: 18px; color: #9B111E; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- META                                                         -->
+<!-- ============================================================ -->
+<h1>Mehrwertberechnung: Kausales Uplift Modeling vs. Affinitäts-Score</h1>
+
+<div class="panel panel-info">
+  <div class="panel-title">Zusammenfassung</div>
+  Dieses Dokument beschreibt das Vorgehen zur Messung des monetären Mehrwerts eines kausalen Uplift-Modells gegenüber dem bisherigen Affinitäts-Scoring.
+  Die Kennzahl <strong>Mehrwert (ΔU)</strong> quantifiziert den zusätzlich erwarteten kausalen Effekt, der durch die Umstellung der Kundenselektion entsteht, und sollte bei jeder Kampagne mitgeführt werden.
+</div>
+
+
+<!-- ============================================================ -->
+<!-- 1. HINTERGRUND                                               -->
+<!-- ============================================================ -->
+<h2>1 &nbsp; Hintergrund &amp; Problemstellung</h2>
+
+<h3>1.1 &nbsp; Bisheriges Vorgehen: Affinitäts-Score</h3>
+<p>
+  Der Affinitäts-Score schätzt die Wahrscheinlichkeit <span class="math-inline">P(Abschluss = 1 | X)</span>, dass ein Kunde einen Abschluss tätigt —
+  <em>unabhängig davon, ob er beworben wurde oder nicht</em>. Die Top-K Kunden nach diesem Score werden für eine Kampagne selektiert.
+</p>
+<p>
+  Das Kernproblem: Kunden mit hohem Affinitäts-Score hätten das gewünschte Verhalten häufig <em>ohnehin</em> gezeigt.
+  Sie zu bewerben verursacht Kosten, ohne einen kausalen Zusatznutzen zu generieren. Im schlimmsten Fall werden Kunden beworben, die durch die Maßnahme sogar negativ beeinflusst werden („Sleeping Dogs").
+</p>
+
+<h3>1.2 &nbsp; Neues Vorgehen: Kausales Uplift Modeling</h3>
+<p>
+  Das kausale Modell schätzt den <strong>Conditional Average Treatment Effect (CATE)</strong>:
+</p>
+<div class="math-block">
+  τ(x) &nbsp;=&nbsp; E[Y(1) − Y(0) | X = x]
+</div>
+<p>
+  Dabei steht <span class="math-inline">Y(1)</span> für das potenzielle Ergebnis unter Treatment und <span class="math-inline">Y(0)</span> für das unter Kontrolle.
+  Der CATE gibt an, um wie viel sich die Abschlusswahrscheinlichkeit <em>kausal durch das Treatment</em> ändert — also den reinen Uplift.
+  Die Top-K Kunden nach <span class="math-inline">τ̂(x)</span> werden selektiert. Damit werden genau jene Kunden beworben, bei denen die Maßnahme den größten <em>inkrementellen</em> Effekt hat.
+</p>
+
+
+<!-- ============================================================ -->
+<!-- 2. GEGENÜBERSTELLUNG                                         -->
+<!-- ============================================================ -->
+<h2>2 &nbsp; Gegenüberstellung der Selektionslogiken</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:30%">Dimension</th>
+      <th style="width:35%">Affinitäts-Score</th>
+      <th style="width:35%">Kausaler Uplift-Score (CATE)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Zielgröße</strong></td>
+      <td>P(Abschluss | X)</td>
+      <td>E[Abschluss(1) − Abschluss(0) | X]</td>
+    </tr>
+    <tr>
+      <td><strong>Interpretation</strong></td>
+      <td>„Wie wahrscheinlich reagiert der Kunde positiv?"</td>
+      <td>„Wie viel bewirkt die Maßnahme <em>zusätzlich</em>?"</td>
+    </tr>
+    <tr>
+      <td><strong>Sleeping Dogs</strong></td>
+      <td>Werden nicht erkannt</td>
+      <td>Werden erkannt (τ̂ &lt; 0) und ausgeschlossen</td>
+    </tr>
+    <tr>
+      <td><strong>Sure Things</strong></td>
+      <td>Werden bevorzugt selektiert</td>
+      <td>Erhalten niedrigen Score (τ̂ ≈ 0)</td>
+    </tr>
+    <tr>
+      <td><strong>Persuadables</strong></td>
+      <td>Werden nur zufällig getroffen</td>
+      <td>Werden gezielt selektiert (τ̂ ≫ 0)</td>
+    </tr>
+    <tr>
+      <td><strong>Befüllung der Treatment-Menge</strong></td>
+      <td>Suboptimal</td>
+      <td>Optimal bei gegebener fester Menge K</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- Diagramm: Kundentypen-Quadranten -->
+<div class="diagram-container">
+<svg viewBox="0 0 680 420" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <!-- Background -->
+  <rect x="40" y="30" width="600" height="340" fill="#FAFBFC" stroke="#DFE1E6" rx="4"/>
+
+  <!-- Quadrant-Grid -->
+  <line x1="340" y1="30" x2="340" y2="370" stroke="#B3BAC5" stroke-dasharray="6,4"/>
+  <line x1="40" y1="200" x2="640" y2="200" stroke="#B3BAC5" stroke-dasharray="6,4"/>
+
+  <!-- Quadrant-Labels -->
+  <!-- oben links: Sleeping Dogs -->
+  <rect x="60" y="50" width="250" height="130" rx="6" fill="#FFEBE6" fill-opacity="0.6" stroke="#DE350B" stroke-width="1.5"/>
+  <text x="185" y="95" text-anchor="middle" font-weight="700" font-size="15" fill="#BF2600">Sleeping Dogs</text>
+  <text x="185" y="115" text-anchor="middle" font-size="12" fill="#42526E">Hohe Affinität, negativer Uplift</text>
+  <text x="185" y="135" text-anchor="middle" font-size="12" fill="#42526E">→ Treatment schadet</text>
+  <text x="185" y="160" text-anchor="middle" font-size="11" fill="#6B778C">Affinität selektiert ✗ · CATE schließt aus ✓</text>
+
+  <!-- oben rechts: Persuadables -->
+  <rect x="370" y="50" width="250" height="130" rx="6" fill="#E3FCEF" fill-opacity="0.7" stroke="#00875A" stroke-width="2"/>
+  <text x="495" y="95" text-anchor="middle" font-weight="700" font-size="15" fill="#006644">Persuadables</text>
+  <text x="495" y="115" text-anchor="middle" font-size="12" fill="#42526E">Hohe Affinität, hoher Uplift</text>
+  <text x="495" y="135" text-anchor="middle" font-size="12" fill="#42526E">→ Treatment wirkt kausal</text>
+  <text x="495" y="160" text-anchor="middle" font-size="11" fill="#6B778C">Beide selektieren ✓</text>
+
+  <!-- unten links: Lost Causes -->
+  <rect x="60" y="220" width="250" height="130" rx="6" fill="#F4F5F7" fill-opacity="0.8" stroke="#B3BAC5" stroke-width="1.5"/>
+  <text x="185" y="265" text-anchor="middle" font-weight="700" font-size="15" fill="#6B778C">Lost Causes</text>
+  <text x="185" y="285" text-anchor="middle" font-size="12" fill="#42526E">Niedrige Affinität, kein Uplift</text>
+  <text x="185" y="305" text-anchor="middle" font-size="12" fill="#42526E">→ Treatment wirkungslos</text>
+  <text x="185" y="330" text-anchor="middle" font-size="11" fill="#6B778C">Keiner selektiert ✓</text>
+
+  <!-- unten rechts: Sure Things -->
+  <rect x="370" y="220" width="250" height="130" rx="6" fill="#FFFAE6" fill-opacity="0.7" stroke="#FF991F" stroke-width="1.5"/>
+  <text x="495" y="265" text-anchor="middle" font-weight="700" font-size="15" fill="#974F0C">Sure Things</text>
+  <text x="495" y="285" text-anchor="middle" font-size="12" fill="#42526E">Hohe Affinität, kein Uplift</text>
+  <text x="495" y="305" text-anchor="middle" font-size="12" fill="#42526E">→ Reagieren ohnehin positiv</text>
+  <text x="495" y="330" text-anchor="middle" font-size="11" fill="#6B778C">Affinität selektiert ✗ · CATE schließt aus ✓</text>
+
+  <!-- Achsen-Labels -->
+  <text x="340" y="395" text-anchor="middle" font-size="13" fill="#42526E" font-weight="600">Affinitäts-Score P(Y=1|X) →</text>
+  <text x="18" y="200" text-anchor="middle" font-size="13" fill="#42526E" font-weight="600" transform="rotate(-90,18,200)">CATE τ̂(x) →</text>
+</svg>
+<div class="diagram-caption">Abb. 1: Kundentypen-Quadranten. Der Affinitäts-Score selektiert entlang der X-Achse, der CATE entlang der Y-Achse.</div>
+</div>
+
+
+<!-- ============================================================ -->
+<!-- 3. BERECHNUNG                                                -->
+<!-- ============================================================ -->
+<h2>3 &nbsp; Mehrwertberechnung im Detail</h2>
+
+<h3>3.1 &nbsp; Definitionen</h3>
+
+<table>
+  <thead>
+    <tr><th>Symbol</th><th>Bedeutung</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><span class="math-inline">N</span></td><td>Gesamtanzahl Kunden im Scoring-Universum</td></tr>
+    <tr><td><span class="math-inline">K</span></td><td>Fest vorgegebene Anzahl Treatments (z.&nbsp;B. 100.000 Briefe). K wird extern bestimmt — es wird keine Optimalmenge berechnet, sondern die vorgegebene Menge optimal befüllt.</td></tr>
+    <tr><td><span class="math-inline">τ̂(xᵢ)</span></td><td>Geschätzter CATE (kausaler Score) für Kunde <em>i</em></td></tr>
+    <tr><td><span class="math-inline">â(xᵢ)</span></td><td>Affinitäts-Score für Kunde <em>i</em></td></tr>
+    <tr><td><span class="math-inline">S<sub>kausal</sub></span></td><td>Top-K Kunden nach τ̂(x), absteigend sortiert</td></tr>
+    <tr><td><span class="math-inline">S<sub>affinität</sub></span></td><td>Top-K Kunden nach â(x), absteigend sortiert</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 &nbsp; Berechnungsformel</h3>
+
+<p>
+  Für beide Selektionsmengen wird der geschätzte CATE <em>desselben kausalen Modells</em> aufsummiert. Die Differenz ergibt den Mehrwert:
+</p>
+
+<div class="math-block">
+  <strong>ΔU</strong> &nbsp;=&nbsp; Σ<sub>i ∈ S<sub>kausal</sub></sub> τ̂(xᵢ) &nbsp;−&nbsp; Σ<sub>i ∈ S<sub>affinität</sub></sub> τ̂(xᵢ)
+</div>
+
+<p>
+  Gleichbedeutend lässt sich dies als Summierung über die Mengendifferenz schreiben:
+</p>
+
+<div class="math-block">
+  ΔU &nbsp;=&nbsp; Σ<sub>i ∈ (S<sub>kausal</sub> \ S<sub>affinität</sub>)</sub> τ̂(xᵢ) &nbsp;−&nbsp; Σ<sub>i ∈ (S<sub>affinität</sub> \ S<sub>kausal</sub>)</sub> τ̂(xᵢ)
+</div>
+
+<p>
+  Die Schnittmenge <span class="math-inline">S<sub>kausal</sub> ∩ S<sub>affinität</sub></span> fällt weg, da sie in beiden Summen gleich vorkommt. Der Mehrwert entsteht also ausschließlich aus den Kunden, die <em>nur</em> durch den kausalen Score selektiert werden, abzüglich jener, die <em>nur</em> durch den Affinitäts-Score selektiert würden.
+</p>
+
+<div class="panel panel-success">
+  <div class="panel-title">Interpretation</div>
+  <strong>ΔU</strong> entspricht der erwarteten Anzahl zusätzlicher Abschlüsse, die das kausale Modell gegenüber dem Affinitätsansatz in einer konkreten Kampagne liefert.
+</div>
+
+
+<!-- Diagramm: Prozessfluss -->
+<div class="diagram-container">
+<svg viewBox="0 0 760 540" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#42526E"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00875A"/>
+    </marker>
+  </defs>
+
+  <!-- Titel -->
+  <text x="380" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="#172B4D">Prozessfluss: Mehrwertberechnung pro Kampagne</text>
+
+  <!-- Step 1: Alle Kunden scoren -->
+  <rect x="240" y="48" width="280" height="52" rx="6" fill="#DEEBFF" stroke="#0052CC" stroke-width="1.5"/>
+  <text x="380" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="#0052CC">① Alle N Kunden scoren</text>
+  <text x="380" y="87" text-anchor="middle" font-size="11" fill="#42526E">Kausales Modell → τ̂(xᵢ) für jeden Kunden</text>
+
+  <!-- Pfeil -->
+  <line x1="380" y1="100" x2="380" y2="128" stroke="#42526E" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Gabelung -->
+  <rect x="210" y="130" width="340" height="36" rx="6" fill="#F4F5F7" stroke="#B3BAC5"/>
+  <text x="380" y="153" text-anchor="middle" font-size="12" fill="#42526E">Sortiere Kunden nach zwei Kriterien</text>
+
+  <!-- Linker Zweig -->
+  <line x1="300" y1="166" x2="300" y2="196" stroke="#42526E" stroke-width="1.5"/>
+  <line x1="300" y1="196" x2="160" y2="196" stroke="#42526E" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Rechter Zweig -->
+  <line x1="460" y1="166" x2="460" y2="196" stroke="#42526E" stroke-width="1.5"/>
+  <line x1="460" y1="196" x2="600" y2="196" stroke="#42526E" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Linke Box: Top-K nach CATE -->
+  <rect x="30" y="198" width="250" height="60" rx="6" fill="#E3FCEF" stroke="#00875A" stroke-width="1.5"/>
+  <text x="155" y="222" text-anchor="middle" font-size="13" font-weight="600" fill="#006644">② Top K nach τ̂(x)</text>
+  <text x="155" y="242" text-anchor="middle" font-size="11" fill="#42526E">S_kausal  (tatsächliche Selektion)</text>
+
+  <!-- Rechte Box: Top-K nach Affinität -->
+  <rect x="480" y="198" width="250" height="60" rx="6" fill="#FFFAE6" stroke="#FF991F" stroke-width="1.5"/>
+  <text x="605" y="222" text-anchor="middle" font-size="13" font-weight="600" fill="#974F0C">③ Top K nach â(x)</text>
+  <text x="605" y="242" text-anchor="middle" font-size="11" fill="#42526E">S_affinität  (kontrafaktische Selektion)</text>
+
+  <!-- Pfeile runter -->
+  <line x1="155" y1="258" x2="155" y2="300" stroke="#42526E" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="605" y1="258" x2="605" y2="300" stroke="#42526E" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Summierung links -->
+  <rect x="50" y="302" width="210" height="48" rx="6" fill="#E3FCEF" stroke="#00875A"/>
+  <text x="155" y="322" text-anchor="middle" font-size="12" font-weight="600" fill="#006644">④ Summiere τ̂ über S_kausal</text>
+  <text x="155" y="339" text-anchor="middle" font-size="11" fill="#42526E">Σ τ̂(xᵢ) für i ∈ S_kausal</text>
+
+  <!-- Summierung rechts -->
+  <rect x="500" y="302" width="210" height="48" rx="6" fill="#FFFAE6" stroke="#FF991F"/>
+  <text x="605" y="322" text-anchor="middle" font-size="12" font-weight="600" fill="#974F0C">⑤ Summiere τ̂ über S_affinität</text>
+  <text x="605" y="339" text-anchor="middle" font-size="11" fill="#42526E">Σ τ̂(xᵢ) für i ∈ S_affinität</text>
+
+  <!-- Pfeile zur Differenz -->
+  <line x1="155" y1="350" x2="155" y2="400" stroke="#42526E" stroke-width="1.5"/>
+  <line x1="155" y1="400" x2="310" y2="400" stroke="#42526E" stroke-width="1.5"/>
+  <line x1="605" y1="350" x2="605" y2="400" stroke="#42526E" stroke-width="1.5"/>
+  <line x1="605" y1="400" x2="450" y2="400" stroke="#42526E" stroke-width="1.5"/>
+
+  <!-- Minus-Zeichen -->
+  <circle cx="380" cy="400" r="14" fill="#F4F5F7" stroke="#42526E" stroke-width="1.5"/>
+  <text x="380" y="405" text-anchor="middle" font-size="18" font-weight="700" fill="#42526E">−</text>
+
+  <!-- Pfeil nach unten zum Ergebnis -->
+  <line x1="380" y1="414" x2="380" y2="452" stroke="#00875A" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+  <!-- Ergebnis-Box -->
+  <rect x="220" y="454" width="320" height="60" rx="8" fill="#9B111E" fill-opacity="0.08" stroke="#9B111E" stroke-width="2"/>
+  <text x="380" y="478" text-anchor="middle" font-size="15" font-weight="700" fill="#9B111E">⑥ ΔU = Mehrwert der Kampagne</text>
+  <text x="380" y="500" text-anchor="middle" font-size="12" fill="#42526E">Dokumentation pro Kampagne</text>
+</svg>
+<div class="diagram-caption">Abb. 2: Prozessfluss der Mehrwertberechnung — dieselben τ̂-Werte, zwei verschiedene Selektionen.</div>
+</div>
+
+
+<h3>3.3 &nbsp; Rechenbeispiel</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th></th>
+      <th>S<sub>kausal</sub> (Top 100k nach CATE)</th>
+      <th>S<sub>affinität</sub> (Top 100k nach Affinität)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Σ τ̂(xᵢ)</strong></td>
+      <td style="text-align:right">4.820 Zusatzabschlüsse</td>
+      <td style="text-align:right">2.130 Zusatzabschlüsse</td>
+    </tr>
+    <tr>
+      <td><strong>ΔU</strong></td>
+      <td colspan="2" style="text-align:center; color:#9B111E; font-weight:700">
+        4.820 − 2.130 = <u>2.690 zusätzliche Abschlüsse</u>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  In diesem Beispiel liefert die kausale Selektion 2.690 Abschlüsse mehr als die Affinitätsselektion — bei identischer, fest vorgegebener Treatment-Menge (K = 100.000 Briefe).
+</p>
+
+
+<!-- ============================================================ -->
+<!-- 4. VALIDITÄT                                                 -->
+<!-- ============================================================ -->
+<h2>4 &nbsp; Validität der Methodik</h2>
+
+<h3>4.1 &nbsp; Beweis: CATE-Ranking maximiert den erwarteten Gesamtuplift bei fester Treatment-Menge</h3>
+
+<div class="proof-box">
+  <h4>Theorem (Optimalität der CATE-Selektion)</h4>
+  <p>
+    Sei <span class="math-inline">τ(xᵢ)</span> der wahre CATE für Kunde <em>i</em>, und sei <span class="math-inline">K &lt; N</span> die fest vorgegebene Treatment-Menge.
+    Die Menge <span class="math-inline">S* = argmax<sub>|S|=K</sub> Σ<sub>i∈S</sub> τ(xᵢ)</span> wird genau durch die Top-K Kunden nach absteigendem <span class="math-inline">τ(xᵢ)</span> gebildet.
+  </p>
+  <p><strong>Beweis:</strong></p>
+  <p>
+    Das Problem ist eine lineare Optimierung mit Kardinalitätsbedingung. Wir maximieren:
+  </p>
+  <div class="math-block">
+    max<sub>S ⊆ {1,…,N}, |S|=K</sub> &nbsp; Σ<sub>i∈S</sub> τ(xᵢ)
+  </div>
+  <p>
+    Da die Zielfunktion separabel über die Kunden ist (jeder Summand hängt nur von <em>i</em> ab) und die einzige Nebenbedingung <span class="math-inline">|S| = K</span> ist, wird das Maximum erreicht, indem die K größten Summanden gewählt werden.
+  </p>
+  <p>
+    Formal: Seien <span class="math-inline">τ(x<sub>(1)</sub>) ≥ τ(x<sub>(2)</sub>) ≥ … ≥ τ(x<sub>(N)</sub>)</span> die geordneten CATE-Werte. Dann gilt für jede zulässige Menge <span class="math-inline">S</span> mit <span class="math-inline">|S| = K</span>:
+  </p>
+  <div class="math-block">
+    Σ<sub>i∈S</sub> τ(xᵢ) &nbsp;≤&nbsp; Σ<sub>j=1</sub><sup>K</sup> τ(x<sub>(j)</sub>) &nbsp;=&nbsp; Σ<sub>i∈S*</sub> τ(xᵢ)
+  </div>
+  <p>
+    Die Ungleichung folgt direkt aus dem Rearrangement-Lemma: Ersetzt man in <span class="math-inline">S</span> ein Element <span class="math-inline">i ∉ S*</span> durch ein Element <span class="math-inline">j ∈ S* \ S</span>,
+    so gilt <span class="math-inline">τ(x<sub>j</sub>) ≥ τ(x<sub>i</sub>)</span> per Konstruktion von <span class="math-inline">S*</span>, und die Summe steigt (oder bleibt gleich). Durch iteratives Austauschen wird jede Menge <span class="math-inline">S</span> in <span class="math-inline">S*</span> überführt. &nbsp;
+  </p>
+  <p class="qed">◼</p>
+</div>
+
+<div class="panel panel-warning">
+  <div class="panel-title">Wichtig: Modellkalibrierung</div>
+  Die obige Optimalität setzt voraus, dass <span class="math-inline">τ̂(x)</span> ein konsistenter Schätzer von <span class="math-inline">τ(x)</span> ist — d.&nbsp;h. das <em>Ranking</em> der geschätzten CATEs muss dem Ranking der wahren CATEs entsprechen.
+  Ein gut kalibriertes kausales Modell, validiert über z.&nbsp;B. den <strong>DRTester</strong> (Chernozhukov et al., 2018) und <strong>Calibration Plots</strong>, gewährleistet dies.
+  Diese Validierungen sollten im Rahmen der Modellentwicklung durchgeführt werden.
+</div>
+
+<h3>4.2 &nbsp; Warum ΔU ≥ 0 garantiert ist</h3>
+
+<div class="proof-box">
+  <h4>Korollar (Nicht-Negativität des Mehrwerts)</h4>
+  <p>
+    Es gilt stets: &nbsp;<strong>ΔU ≥ 0</strong>.
+  </p>
+  <p><strong>Beweis:</strong></p>
+  <p>
+    <span class="math-inline">S<sub>kausal</sub></span> ist per Definition die Menge, die <span class="math-inline">Σ<sub>i∈S</sub> τ̂(xᵢ)</span> unter allen Mengen der Größe K maximiert (siehe Theorem oben). <span class="math-inline">S<sub>affinität</sub></span> ist lediglich <em>eine</em> zulässige Menge der Größe K. Daher:
+  </p>
+  <div class="math-block">
+    Σ<sub>i∈S<sub>kausal</sub></sub> τ̂(xᵢ) &nbsp;≥&nbsp; Σ<sub>i∈S<sub>affinität</sub></sub> τ̂(xᵢ)
+    &nbsp;&nbsp;⟹&nbsp;&nbsp; ΔU ≥ 0
+  </div>
+  <p class="qed">◼</p>
+</div>
+
+<p>
+  Die kausale Selektion kann <em>niemals</em> schlechter abschneiden als die Affinitätsselektion — gemessen am CATE. Im Grenzfall, dass beide Selektionen identisch sind, ist ΔU = 0.
+</p>
+
+
+<h3>4.3 &nbsp; Quellen der Validität</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Aspekt</th>
+      <th>Begründung</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Einheitlicher Bewertungsmaßstab</strong></td>
+      <td>Beide Mengen werden mit <em>demselben</em> kausalen Modell (τ̂) bewertet. Es wird nicht „Äpfel mit Birnen" verglichen — der Unterschied liegt ausschließlich in der Selektion.</td>
+    </tr>
+    <tr>
+      <td><strong>Kausaltheoretische Fundierung</strong></td>
+      <td>Der CATE basiert auf dem Rubin-Kausalmodell (Potential Outcomes Framework). Die Differenz Y(1)−Y(0) hat eine klar definierte kausale Interpretation (Imbens &amp; Rubin, 2015).</td>
+    </tr>
+    <tr>
+      <td><strong>Optimalitätsbeweis</strong></td>
+      <td>Top-K-nach-CATE maximiert den Gesamtuplift bei fester Treatment-Menge. Jede andere Selektion (inkl. Affinität) liefert höchstens denselben Wert (Rearrangement-Lemma).</td>
+    </tr>
+    <tr>
+      <td><strong>Modellvalidierung</strong></td>
+      <td>DRTester, QINI-Kurven und Calibration Plots stellen sicher, dass τ̂ ein valides Ranking liefert.</td>
+    </tr>
+    <tr>
+      <td><strong>Kontrafaktische Vergleichbarkeit</strong></td>
+      <td>Es wird nicht verglichen, was passiert, sondern was passiert <em>wäre</em> — der Vergleich ist ex-ante (vor Kampagnendurchführung) und daher frei von Post-hoc-Verzerrungen.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<!-- ============================================================ -->
+<!-- 5. VENN-DIAGRAMM                                             -->
+<!-- ============================================================ -->
+<h2>5 &nbsp; Mengenvisualisierung</h2>
+
+<div class="diagram-container">
+<svg viewBox="0 0 700 380" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+
+  <!-- Hintergrund -->
+  <rect x="0" y="0" width="700" height="380" fill="white" rx="4"/>
+
+  <!-- Kausale Menge (links) -->
+  <ellipse cx="290" cy="190" rx="170" ry="130" fill="#E3FCEF" fill-opacity="0.5" stroke="#00875A" stroke-width="2"/>
+  <!-- Affinitätsmenge (rechts) -->
+  <ellipse cx="410" cy="190" rx="170" ry="130" fill="#FFFAE6" fill-opacity="0.5" stroke="#FF991F" stroke-width="2"/>
+
+  <!-- Überlappung nochmal füllen -->
+  <clipPath id="clip-left"><ellipse cx="290" cy="190" rx="170" ry="130"/></clipPath>
+  <ellipse cx="410" cy="190" rx="170" ry="130" clip-path="url(#clip-left)" fill="#DEEBFF" fill-opacity="0.5" stroke="none"/>
+
+  <!-- Labels -->
+  <text x="200" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#006644">Nur kausal</text>
+  <text x="200" y="165" text-anchor="middle" font-size="11" fill="#42526E">S_kausal \ S_affinität</text>
+  <text x="200" y="200" text-anchor="middle" font-size="12" fill="#006644">Höherer Ø-CATE</text>
+  <text x="200" y="218" text-anchor="middle" font-size="11" fill="#006644">→ Persuadables</text>
+
+  <text x="350" y="175" text-anchor="middle" font-size="13" font-weight="700" fill="#0052CC">Schnitt-</text>
+  <text x="350" y="193" text-anchor="middle" font-size="13" font-weight="700" fill="#0052CC">menge</text>
+  <text x="350" y="215" text-anchor="middle" font-size="11" fill="#42526E">fällt bei ΔU raus</text>
+
+  <text x="500" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="#974F0C">Nur Affinität</text>
+  <text x="500" y="165" text-anchor="middle" font-size="11" fill="#42526E">S_affinität \ S_kausal</text>
+  <text x="500" y="200" text-anchor="middle" font-size="12" fill="#974F0C">Niedrigerer Ø-CATE</text>
+  <text x="500" y="218" text-anchor="middle" font-size="11" fill="#974F0C">→ Sure Things / Sleeping Dogs</text>
+
+  <!-- Legenden-Label unten -->
+  <rect x="130" y="340" width="16" height="16" rx="3" fill="#E3FCEF" stroke="#00875A"/>
+  <text x="152" y="353" font-size="12" fill="#42526E">S_kausal (Top K nach τ̂)</text>
+  <rect x="370" y="340" width="16" height="16" rx="3" fill="#FFFAE6" stroke="#FF991F"/>
+  <text x="392" y="353" font-size="12" fill="#42526E">S_affinität (Top K nach â)</text>
+</svg>
+<div class="diagram-caption">Abb. 3: Venn-Diagramm der Selektionsmengen. Der Mehrwert ΔU entsteht durch Austausch der orangenen durch die grüne exklusive Menge.</div>
+</div>
+
+
+<!-- ============================================================ -->
+<!-- 6. OPERATIVER ABLAUF                                         -->
+<!-- ============================================================ -->
+<h2>6 &nbsp; Operativer Ablauf je Kampagne</h2>
+
+<ol class="def-list">
+  <li><strong>Scoring:</strong> Das kausale Modell wird auf den gesamten Kundenbestand angewendet. Jeder Kunde erhält seinen geschätzten CATE <span class="math-inline">τ̂(xᵢ)</span>.</li>
+  <li><strong>Kausale Selektion:</strong> Die Top-K Kunden nach <span class="math-inline">τ̂</span> werden für das Treatment selektiert (<span class="math-inline">S<sub>kausal</sub></span>). Dies ist die Selektionsliste, die für das Treatment verwendet wird.</li>
+  <li><strong>Kontrafaktische Selektion:</strong> Parallel wird bestimmt, welche Top-K Kunden der Affinitäts-Score gewählt hätte (<span class="math-inline">S<sub>affinität</sub></span>). Dies erfordert lediglich eine Sortierung — kein eigener Modell-Lauf.</li>
+  <li><strong>CATE-Summierung:</strong> Für <em>beide</em> Mengen wird der CATE des kausalen Modells aufsummiert.</li>
+  <li><strong>Mehrwert-Dokumentation:</strong> Die Differenz ΔU (in Einheit: zusätzliche Abschlüsse) wird im Kampagnen-Reporting festgehalten. Bei Bedarf kann ΔU über den Ø Deckungsbeitrag je Abschluss in € monetarisiert werden.</li>
+</ol>
+
+
+<!-- ============================================================ -->
+<!-- 7. LITERATUR                                                 -->
+<!-- ============================================================ -->
+<h2>7 &nbsp; Literatur &amp; Referenzen</h2>
+
+<table>
+  <thead>
+    <tr><th>Quelle</th><th>Relevanz</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Imbens, G. W. &amp; Rubin, D. B. (2015). <em>Causal Inference for Statistics, Social, and Biomedical Sciences.</em> Cambridge University Press.</td>
+      <td>Grundlage des Potential Outcomes Frameworks und der CATE-Definition.</td>
+    </tr>
+    <tr>
+      <td>Chernozhukov, V. et al. (2018). „Double/Debiased Machine Learning for Treatment and Structural Parameters." <em>The Econometrics Journal.</em></td>
+      <td>Theoretische Fundierung des DML-Schätzers für CATE-Schätzung.</td>
+    </tr>
+    <tr>
+      <td>Athey, S. &amp; Imbens, G. (2016). „Recursive Partitioning for Heterogeneous Causal Effects." <em>PNAS.</em></td>
+      <td>Causal Forest als nicht-parametrischer CATE-Schätzer.</td>
+    </tr>
+    <tr>
+      <td>Radcliffe, N. J. &amp; Surry, P. D. (2011). „Real-World Uplift Modelling with Significance-Based Uplift Trees."</td>
+      <td>Praxis des Uplift Modeling in Marketing-Kampagnen; Kundentypen-Quadrant (Persuadables, Sure Things, etc.).</td>
+    </tr>
+    <tr>
+      <td>EconML Documentation — Microsoft Research.</td>
+      <td>Implementierung der DML- und DR-Learner für heterogene Treatment-Effekt-Schätzung.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+</body>
+</html>
