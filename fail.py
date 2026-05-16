@@ -1,4 +1,10 @@
-19:34:24 INFO [rubin.tuning] FMT 'NonParamDML': Starte 10 Trials (cache_values, R-Score, 5-Fold, parallel_jobs=-1).
-19:41:39 INFO [rubin.tuning] FMT 'NonParamDML': 8/10 Trials abgeschlossen (0 fehlgeschlagen, 2 gepruned, parallel=1).
-19:41:39 INFO [rubin.tuning] FMT 'NonParamDML': Raw=5.75238e-06, Adjusted=-5.93004e-05 (Penalty aktiv, Gap-Abzug=6.50527e-05)
-19:41:39 INFO [rubin.tuning] FMT 'NonParamDML': Study + Cache + Scorers freigegeben, gc.collect() durchgeführt.
+19:58:28 INFO [rubin.analysis]   CausalForestDML: RCT-Modus → konstante Propensity P(T|X) = mean(T) (DummyClassifier).
+19:58:28 WARNING [rubin.analysis] CFT 'CausalForestDML' fehlgeschlagen.
+Traceback (most recent call last):
+  File "/mnt/rubin/rubin/pipelines/analysis_pipeline.py", line 921, in _run_training
+    result = tune_causal_forest(
+             ^^^^^^^^^^^^^^^^^^^
+  File "/mnt/rubin/rubin/tuning_optuna.py", line 2229, in tune_causal_forest
+    est = CausalForestDML(
+          ^^^^^^^^^^^^^^^^
+TypeError: econml.dml.causal_forest.CausalForestDML() got multiple values for keyword argument 'n_jobs'
