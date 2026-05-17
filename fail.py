@@ -1,9 +1,7 @@
-20:17:50 INFO [rubin.tuning] GRF: 5 Fold-Splits vorberechnet (CATBOOST Base-Learner für RScorer). model_t = DummyClassifier (RCT: konstante Propensity).
-20:18:55 INFO [rubin.tuning] CFT 'CausalForest': RScorer (unabhängige Nuisance, 2-Fold T×Y) pro Fold erstellt (5 Scorers).
-20:18:55 INFO [rubin.tuning] CFT 'CausalForest': Starte 10 Trials (CausalForestAdapter + RScorer, R-Score, 5-Fold, parallel_jobs=-1).
-20:18:55 INFO [rubin.tuning] CFT 'CausalForest': 10/10 Trials abgeschlossen (0 fehlgeschlagen, 0 gepruned, parallel=1).
-20:18:56 INFO [rubin.tuning] CFT 'CausalForest': Study + Cache freigegeben, gc.collect() durchgeführt.
-20:18:56 INFO [rubin.analysis] CFT 'CausalForest': R-Score → -1e+12 (10 Trials abgeschlossen).
-20:18:56 INFO [rubin.analysis]   CausalForest: Starte 5-Fold Cross-Prediction (Seed=42).
-20:18:56 INFO [rubin.training] CausalForest: Erzwinge sequentielle Folds (GRF nutzt intern joblib-Prozesse, die in Threads zu Deadlocks führen).
-20:18:56 INFO [rubin.training] CausalForest: 5 Folds sequentiell.
+11:58:07 INFO [rubin.dataprep] Deduplizierung auf 'PARTNER_ID_V': 472873 → 472860 Zeilen (13 Duplikate entfernt).
+11:58:07 INFO [rubin.dataprep] Datei 0: 64638 Zeilen, Treatment-Rate: 61.3%
+11:58:07 INFO [rubin.dataprep] Datei 1: 78243 Zeilen, Treatment-Rate: 61.7%
+11:58:07 INFO [rubin.dataprep] Datei 2: 149993 Zeilen, Treatment-Rate: 66.7%
+11:58:07 INFO [rubin.dataprep] Datei 3: 179986 Zeilen, Treatment-Rate: 50.0%
+11:58:07 WARNING [rubin.dataprep] Treatment-Imbalance erkannt! Treatment-Raten pro Datei: ['61.3%', '61.7%', '66.7%', '50.0%'] (Differenz: 16.7 Prozentpunkte). Dies kann zu verzerrten Uplift-Metriken führen.
+11:58:34 INFO [rubin.dataprep] Treatment-Balance Downsampling: 472860 → 389983 Zeilen (18% entfernt). Ziel-Treatment-Rate: 50.0%.
