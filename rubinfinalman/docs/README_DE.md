@@ -4,12 +4,13 @@ Diese Dokumente beschreiben Nutzung, Konfiguration und Erweiterung des Framework
 
 - Architekturüberblick: `docs/architektur.md`
 - Globale Konfigurationsreferenz: `docs/konfiguration.md`
-- Tuning (Optuna, R-Score, Overfit-Penalty): `docs/tuning_optuna.md`
-- Evaluation (DRTester, Uplift-Plots): `docs/evaluation.md`
+- Tuning (Optuna BLT/FMT/CFT, Skill Scores, Overfit-Penalty, Dual-Seed): `docs/tuning_optuna.md`
+- Evaluation (DRTester, native Uplift-Plots, Metriken): `docs/evaluation.md`
 - Bundles/Production: `docs/bundles.md`
 - Explainability: `docs/explainability.md`
 - Entwicklerleitfaden: `docs/developer_guide.md`
 - Domino App-Deployment: `docs/domino_deployment.md`
+- Web-UI Build-Prozess: `docs/app_build.md`
 
 
 ## Beispiel-Konfigurationen (`configs/`)
@@ -18,32 +19,33 @@ Im Ordner `configs/` liegen mehrere vorkonfigurierte Beispiele für verschiedene
 
 - `config_reference_all_options.yml`: vollständige Referenz mit **allen** Feldern (Nachschlagewerk)
 - `config_quickstart.yml`: minimaler Einstieg – ein Modell, kein Tuning, kein Bundle
+- `config_standard.yml`: Standardkonfiguration mit CatBoost, Tuning und Ensemble
 - `config_exploration.yml`: schnelle Iteration mit 10% Downsampling und wenigen Trials
-- `config_lgbm_standard.yml`: LightGBM mit moderatem Tuning (30 Trials) + Bundle-Export
-- `config_lgbm_intensiv.yml`: LightGBM mit gründlichem Tuning (80 Trials), Final-Model-Tuning, persistente Studies
+- `config_speed.yml`: Speed-Tuning mit Single-Fold überall – für große Datensätze
 - `config_catboost_standard.yml`: CatBoost mit moderatem Tuning (30 Trials) + Bundle-Export
 - `config_catboost_intensiv.yml`: CatBoost mit gründlichem Tuning (80 Trials), Final-Model-Tuning, persistente Studies
-- `config_dml_focus.yml`: Fokus auf DML-Familie (NonParamDML, DRLearner, CausalForestDML mit EconML-Tune)
+- `config_lgbm_intensiv.yml`: LightGBM mit gründlichem Tuning (80 Trials), Final-Model-Tuning, persistente Studies
+- `config_dml_focus.yml`: Fokus auf DML-Familie (NonParamDML, DRLearner, CausalForestDML)
+- `config_grf_focus.yml`: Fokus auf CausalForest-Familie (CausalForestDML, CausalForest) mit CF-Tuning
 - `config_external_eval.yml`: Externe Validierung – Training und Evaluation auf getrennten Datensätzen (kein Leakage)
 - `config_explainability.yml`: Feature-Selektion + erweiterte SHAP/Segment-Einstellungen
 - `config_benchmark.yml`: Vergleich neuer Scores gegen einen historischen Score (S)
 - `config_full.yml`: End-to-End mit DataPrep-Sektion (Pfade anpassen)
 - `config_multi_treatment.yml`: Multi-Treatment-Szenario (T ∈ {0, 1, …, K-1}) mit DML-Modellen
 - `config_binary_treatment.yml`: Binary-Treatment-Referenz mit allen BT-Modellen, FMT und Explainability
-- `config_speed.yml`: Speed-Tuning mit Single-Fold überall – für große Datensätze
 
 Aufrufbeispiel:
 
 ```bash
-pixi run analyze -- --config configs/config_lgbm_standard.yml --export-bundle
-# oder: python run_analysis.py --config configs/config_lgbm_standard.yml --export-bundle
+pixi run analyze -- --config configs/config_standard.yml --export-bundle
+# oder: python run_analysis.py --config configs/config_standard.yml --export-bundle
 ```
 
 
 Diese Codebasis trennt **Analyse** und **Production** sauber voneinander:
 
 - **Datenaufbereitung**: Mehrdatei-Merge, Treatment-Balance-Prüfung, kategorische Features, NaN-Behandlung, „Train Many, Evaluate Some" (Eval-Maske)
-- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), Tuning (BL via Optuna + FMT mit OOF-CV + Overfit-Penalty), Evaluieren, Surrogate-Einzelbaum (Champion), Explainability (SHAP), HTML-Report mit klickbaren Plots (Lightbox).
+- **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung), 3-stufiges Tuning (BLT via Optuna + FMT mit OOF-CV + CFT für CausalForest, jeweils mit Overfit-Penalty und Skill Scores), Evaluieren (DRTester + native Uplift-Plots: Qini, Uplift-by-Percentile, Treatment-Balance + ATE-Barplot), Surrogate-Einzelbaum (Champion), Explainability (SHAP), HTML-Report mit klickbaren Plots (Lightbox).
 - **Production-Pipeline**: Stabiles Scoring auf neuen Daten (inkl. Champion- und Surrogate-Option).
 
 Die wichtigsten Einstiege:
@@ -60,7 +62,7 @@ Die wichtigsten Einstiege:
 ### Environment aufsetzen (empfohlen: pixi)
 
 [Pixi](https://pixi.sh) verwaltet alle Dependencies (Python, conda-forge, PyPI) automatisch
-und erzeugt ein reproduzierbares Lockfile. Installation: `curl -fsSL https://pixi.sh/install.sh | bash`
+und erzeugt ein reproduzierbares Lockfile.
 
 > **Wichtig — TLS im Firmennetz:** Die beiden Environment-Variablen `PIXI_TLS_ROOT_CERTS`
 > und `UV_NATIVE_TLS` **müssen gesetzt sein, bevor** `pixi install` aufgerufen wird.
@@ -170,3 +172,4 @@ Eine vollständige Referenz aller Felder (inkl. Begründungen und Empfehlungen) 
 
 ### Hinweise zu Tuning und "Locking"
 
+Wenn Tuning aktiviert ist, werden bestimmte Evaluationsparameter automatisch "gelockt" (z. B. `selection.metric` kann nicht mehr zwischen Tuning und Evaluation wechseln). Das verhindert, dass Tuning auf eine Metrik optimiert, aber auf einer anderen evaluiert wird. Details in `docs/tuning_optuna.md`.

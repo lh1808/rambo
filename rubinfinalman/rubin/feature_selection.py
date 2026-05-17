@@ -4,8 +4,9 @@ from __future__ import annotations
 
 Unterstützte Methoden
 ---------------------
-- ``lgbm_importance``: LightGBM-Regressor auf Outcome (Y), Gain-Importance.
+- ``catboost_importance``: CatBoost-Regressor auf Outcome (Y), Feature-Importance.
   Schnell, erfasst prädiktive Relevanz für das Outcome.
+- ``lgbm_importance``: LightGBM-Regressor auf Outcome (Y), Gain-Importance.
   Robuster als Gain (kein Split-Bias), aber rechenintensiver.
 - ``causal_forest``: EconML GRF CausalForest Feature-Importances.
   Erfasst kausale Relevanz (Heterogenität des Treatment-Effekts).
@@ -437,7 +438,7 @@ def compute_importances(
 def select_features_by_importance(
     X: pd.DataFrame,
     importances: Dict[str, pd.Series],
-    max_features: int = 60,
+    max_features: int = 77,
 ) -> Tuple[pd.DataFrame, List[str], Dict[str, List[str]]]:
     """Wählt Features per Max-Feature-Budget gleichmäßig auf alle Methoden verteilt.
 
@@ -449,7 +450,7 @@ def select_features_by_importance(
     ----------
     X : Feature-DataFrame
     importances : Dict von Methodenname -> Importance-Serie
-    max_features : Maximale Anzahl Features nach Selektion (Default: 60)
+    max_features : Maximale Anzahl Features nach Selektion (Default: 77)
 
     Returns
     -------

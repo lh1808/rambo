@@ -1004,62 +1004,17 @@ def _find_analysis_python() -> str:
     default_python = ROOT / ".pixi" / "envs" / "default" / "bin" / "python"
     if default_python.exists():
         log.info("Analyse-Python: %s (pixi default-env)", default_python)
-        _ensure_sklift(str(default_python))
         return str(default_python)
 
     # 2. pixi ohne benanntes Environment
     pixi_python = ROOT / ".pixi" / "env" / "bin" / "python"
     if pixi_python.exists():
         log.info("Analyse-Python: %s (pixi env)", pixi_python)
-        _ensure_sklift(str(pixi_python))
         return str(pixi_python)
 
     # 3. Fallback: gleiches Python wie der Server
     log.info("Analyse-Python: %s (sys.executable fallback)", sys.executable)
-    _ensure_sklift(sys.executable)
     return sys.executable
-
-
-_sklift_checked = False
-
-
-def _ensure_sklift(python: str) -> None:
-    """Stellt sicher, dass scikit-uplift im Analyse-Python installiert ist.
-
-    scikit-uplift ist auf manchen conda-forge-Mirrors nicht verfügbar.
-    Dieser Check läuft einmalig beim ersten Analyse-Start und installiert
-    das Paket via pip nach, falls es fehlt. Alle Dependencies (sklearn,
-    numpy, pandas, matplotlib) sind bereits über conda installiert.
-    """
-    global _sklift_checked
-    if _sklift_checked:
-        return
-    _sklift_checked = True
-
-    try:
-        result = subprocess.run(
-            [python, "-c", "import sklift"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            log.info("scikit-uplift: bereits installiert in %s", python)
-            return
-    except Exception:
-        pass
-
-    log.info("scikit-uplift: nicht gefunden in %s – installiere via pip...", python)
-    try:
-        result = subprocess.run(
-            [python, "-m", "pip", "install", "--no-deps", "--disable-pip-version-check",
-             "--quiet", "scikit-uplift>=0.5"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode == 0:
-            log.info("scikit-uplift: erfolgreich installiert.")
-        else:
-            log.warning("scikit-uplift: pip install fehlgeschlagen: %s", result.stderr.strip())
-    except Exception as e:
-        log.warning("scikit-uplift: Installation fehlgeschlagen: %s", e)
 
 
 @app.route("/api/run-analysis", methods=["POST"])

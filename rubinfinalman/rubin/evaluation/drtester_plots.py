@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Evaluation mit EconML-DRTester und scikit-uplift Plots.
+"""Evaluation mit EconML-DRTester und nativen Uplift-Plots.
 
 Hintergrund
 -----------
@@ -17,7 +17,7 @@ Da die CATE-Vorhersagen in rubin bereits vorliegen, kapselt dieses Modul
 eine angepasste DRTester-Variante (`CustomDRTester`), die vorberechnete
 CATE-Werte direkt akzeptiert.
 
-Zusätzlich werden Plots aus scikit-uplift (sklift) erzeugt, die für die
+Zusätzlich werden native Uplift-Plots erzeugt, die für die
 visuelle Beurteilung der Sortierung genutzt werden."""
 
 from dataclasses import dataclass
@@ -48,9 +48,9 @@ from econml.validate import EvaluationResults
 from econml.validate.drtester import DRTester
 from econml.validate.utils import calculate_dr_outcomes
 
-# scikit-uplift (sklift) wird NICHT mehr verwendet.
+# Native Uplift-Plot-Implementierungen (Qini, Percentile, Balance).
 # Alle 3 Visualisierungen (Qini, Uplift-by-Percentile, Treatment-Balance) sind
-# nativ implementiert mit rubin-Farbpalette. sklift 0.5.1 hat einen bekannten
+# Implementiert mit rubin-Farbpalette.
 # numpy >=1.24 Kompatibilitäts-Bug (GitHub Issue #213) und wurde seit 2022
 # nicht mehr aktualisiert.
 
@@ -393,12 +393,12 @@ class DrTesterPlotBundle:
     qini_plot: plt.Figure
     toc_plot: plt.Figure
     policy_values: pd.DataFrame
-    sklift_qini: Optional[plt.Figure]
-    sklift_percentile: Optional[plt.Figure]
+    uplift_qini: Optional[plt.Figure]
+    uplift_percentile: Optional[plt.Figure]
     treatment_balance: Optional[plt.Figure]
 
     _PLOT_FIELDS = ["cal_plot", "qini_plot", "toc_plot",
-                    "sklift_qini", "sklift_percentile", "treatment_balance"]
+                    "uplift_qini", "uplift_percentile", "treatment_balance"]
 
     def all_figures(self) -> list:
         """Alle nicht-None Figures als (name, fig)-Paare."""
@@ -696,7 +696,6 @@ def generate_ate_barplot(
         ax.set_title("Outcome Rate by Treatment Group", fontsize=13, fontweight="bold",
                      color=RUBIN_COLORS["ruby_dark"])
         ax.set_ylim(0, max(rates) * (1.35 if n_groups > 2 else 1.25))
-        ax.grid(axis="y", alpha=0.3)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         fig.tight_layout()
@@ -711,9 +710,9 @@ def _native_uplift_by_percentile(
     strategy: str = "overall", kind: str = "bar",
     n_bins: int = 10, string_percentiles: bool = True,
 ) -> Optional[plt.Figure]:
-    """Uplift-by-Percentile Plot — feature-complete Ersatz für sklift.
+    """Uplift-by-Percentile Plot — native rubin-Implementierung.
 
-    Repliziert ``sklift.viz.plot_uplift_by_percentile`` vollständig inkl. aller
+    Vollständige Uplift-by-Percentile-Implementierung inkl. aller
     Parameter-Optionen (strategy, kind, bins, string_percentiles).
 
     Args:
@@ -724,7 +723,7 @@ def _native_uplift_by_percentile(
         n_bins: Anzahl Bins (Default 10).
         string_percentiles: True → X-Labels als Strings ('0-10', '10-20', ...).
 
-    Hintergrund: sklift 0.5.1 hat bekannten numpy >=1.24 Bug (GitHub #213)."""
+    """
     try:
         from rubin.utils.plot_theme import RUBIN_COLORS, COLOR_MODEL, COLOR_REFERENCE, COLOR_BASELINE
 
@@ -787,7 +786,7 @@ def _native_uplift_by_percentile(
         weighted_avg = (sum(u * nt for u, nt in zip(bin_uplifts, n_treat_bins)) / total_treat
                         if total_treat > 0 else 0.0)
 
-        # Perzentil-Werte (Mittelwerte der Bin-Ränder, wie sklift)
+        # Perzentil-Werte (Mittelwerte der Bin-Ränder)
         pct_values = np.array([(i + 0.5) * 100 / n_bins for i in range(n_bins)])
 
         if string_percentiles:
@@ -799,12 +798,12 @@ def _native_uplift_by_percentile(
         # ── Plotting ──
         if kind == "line":
             fig, ax = plt.subplots(figsize=(8, 6))
-            ax.errorbar(pct_values, rr_treat, yerr=std_treat, linewidth=2,
-                        color=RUBIN_COLORS["ruby_dark"], label="treatment\nresponse rate")
-            ax.errorbar(pct_values, rr_ctrl, yerr=std_ctrl, linewidth=2,
-                        color=COLOR_REFERENCE, label="control\nresponse rate")
-            ax.errorbar(pct_values, bin_uplifts, yerr=std_uplifts, linewidth=2,
-                        color=COLOR_MODEL, label="uplift")
+            ax.plot(pct_values, rr_treat, linewidth=2,
+                    color=RUBIN_COLORS["ruby_dark"], label="treatment\nresponse rate", marker="o", markersize=4)
+            ax.plot(pct_values, rr_ctrl, linewidth=2,
+                    color=COLOR_REFERENCE, label="control\nresponse rate", marker="o", markersize=4)
+            ax.plot(pct_values, bin_uplifts, linewidth=2,
+                    color=COLOR_MODEL, label="uplift", marker="s", markersize=4)
             ax.fill_between(pct_values, rr_treat, rr_ctrl, alpha=0.1, color=COLOR_MODEL)
             if min(bin_uplifts) < 0:
                 ax.axhline(y=0, color="black", linewidth=1)
@@ -828,21 +827,21 @@ def _native_uplift_by_percentile(
                      color=RUBIN_COLORS.get("slate", "#57606A"))
 
             # axes[0]: Uplift bars
-            axes[0].bar(pct_values, bin_uplifts, width=delta / 1.5, yerr=std_uplifts,
+            axes[0].bar(pct_values, bin_uplifts, width=delta / 1.5,
                         color=COLOR_MODEL, edgecolor="black", linewidth=0.5, alpha=0.7,
-                        capsize=2, label="uplift")
+                        label="uplift")
             axes[0].axhline(0, color="black", linewidth=1)
             axes[0].legend(loc="upper right")
             axes[0].tick_params(axis="x", bottom=False)
             axes[0].set_title(f"Uplift by percentile\nweighted average uplift = {weighted_avg:.4f}")
 
             # axes[1]: Response rates
-            axes[1].bar(pct_values - w / 2, rr_treat, width=w, yerr=std_treat,
+            axes[1].bar(pct_values - w / 2, rr_treat, width=w,
                         color=RUBIN_COLORS["ruby_dark"], edgecolor="black", linewidth=0.5,
-                        alpha=0.7, capsize=2, label="treatment\nresponse rate")
-            axes[1].bar(pct_values + w / 2, rr_ctrl, width=w, yerr=std_ctrl,
+                        alpha=0.7, label="treatment\nresponse rate")
+            axes[1].bar(pct_values + w / 2, rr_ctrl, width=w,
                         color=COLOR_REFERENCE, edgecolor="black", linewidth=0.5,
-                        alpha=0.7, capsize=2, label="control\nresponse rate")
+                        alpha=0.7, label="control\nresponse rate")
             axes[1].axhline(0, color="black", linewidth=1)
             axes[1].set_xticks(pct_values)
             axes[1].set_xticklabels(pct_labels, rotation=45)
@@ -862,9 +861,9 @@ def _native_treatment_balance(
     uplift: np.ndarray, treatment: np.ndarray,
     random: bool = True, winsize: float = 0.1,
 ) -> Optional[plt.Figure]:
-    """Treatment-Balance-Kurve — feature-complete Ersatz für sklift.
+    """Treatment-Balance-Kurve — native rubin-Implementierung.
 
-    Repliziert ``sklift.viz.plot_treatment_balance_curve`` vollständig inkl.
+    Vollständige Treatment-Balance-Implementierung inkl.
     aller Parameter (random, winsize).
 
     Args:
@@ -909,9 +908,9 @@ def _native_qini_curve(
     random: bool = True, perfect: bool = False, negative_effect: bool = True,
     name: str = None,
 ) -> Optional[plt.Figure]:
-    """Qini-Kurve — feature-complete Ersatz für sklift.
+    """Qini-Kurve — native rubin-Implementierung.
 
-    Repliziert ``sklift.viz.plot_qini_curve`` vollständig inkl. aller
+    Vollständige Qini-Kurven-Implementierung inkl. aller
     Parameter (random, perfect, negative_effect, name).
 
     Args:
@@ -930,7 +929,7 @@ def _native_qini_curve(
         n_c_safe = np.maximum(curve.n_control, 1)
         y_qini = curve.y_treat - curve.y_control * curve.n_treat / n_c_safe
         n = len(np.asarray(y_true).ravel())
-        x = np.r_[0, curve.fraction * n]  # Absolute Anzahl targeted (wie sklift)
+        x = np.r_[0, curve.fraction * n]  # Absolute Anzahl targeted
         y_qini = np.r_[0, y_qini]
 
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -976,7 +975,7 @@ def _native_qini_curve(
         return None
 
 
-def generate_sklift_plots(
+def generate_uplift_plots(
     cate_preds_val: np.ndarray,
     T_val: np.ndarray,
     Y_val: np.ndarray,
@@ -984,7 +983,7 @@ def generate_sklift_plots(
     """Erzeugt Uplift-Plots: Qini-Kurve, Uplift-by-Percentile, Treatment-Balance.
 
     Alle Plots sind native rubin-Implementierungen mit rubin-Farbpalette.
-    Ersetzt die sklearn-uplift-Abhängigkeit (sklift 0.5.1 hat bekannte
+    Native Uplift-Plots (
     numpy-Kompatibilitätsprobleme, GitHub Issue #213).
 
     Gibt (qini, percentile, treatment_balance) als Matplotlib-Figures zurück.
@@ -1018,7 +1017,7 @@ def evaluate_cate_with_plots(
     n_bootstrap: int = 1000,
     seed: Optional[int] = None,
 ) -> DrTesterPlotBundle:
-    """Hauptfunktion: DRTester-Auswertung + sklift-Plots.
+    """Hauptfunktion: DRTester-Auswertung + Uplift-Plots.
 
     Wenn fitted_tester übergeben wird, werden die vorberechneten Nuisance-Ergebnisse
     (DR-Outcomes) wiederverwendet — das spart das teure Nuisance-CV-Fitting.
@@ -1099,7 +1098,7 @@ def evaluate_cate_with_plots(
             policy_values = pd.DataFrame()
 
     # ── Uplift-Plots: Qini, Uplift-by-Percentile, Treatment-Balance ──
-    # Native rubin-Implementierungen (sklift 0.5.1 hat numpy-Kompatibilitäts-Bug)
+    # Native rubin-Implementierungen
     uplift = np.asarray(cate_preds_val).ravel()
     y_val_arr = np.asarray(Y_val).ravel()
     t_val_arr = np.asarray(T_val).ravel()
@@ -1114,8 +1113,8 @@ def evaluate_cate_with_plots(
         qini_plot=qini_plot,
         toc_plot=toc_plot,
         policy_values=policy_values,
-        sklift_qini=sk_qini,
-        sklift_percentile=sk_pct,
+        uplift_qini=sk_qini,
+        uplift_percentile=sk_pct,
         treatment_balance=sk_tb,
     )
 
@@ -1260,8 +1259,127 @@ def policy_value_comparison_plots(
         ax.set_xlabel("Treated Percentage")
         ax.set_ylabel("Policy Value")
         ax.legend(loc="upper left")
-        ax.grid(True)
 
         plots[model_name] = fig
 
     return plots
+
+
+
+def plot_score_redistribution(
+    cate_scores: np.ndarray,
+    hist_scores: np.ndarray,
+    n_bins: int = 10,
+    model_name: str = "",
+) -> "matplotlib.figure.Figure":
+    """Score-Redistribution-Plot: Gestapeltes Balkendiagramm mit Colorbar.
+
+    Zeigt pro Dezil des neuen CATE-Scores, welcher Anteil der Samples
+    aus welchem Dezil des historischen Scores stammt.
+
+    Parameters
+    ----------
+    cate_scores : (n,) array
+        Neue CATE-Vorhersagen (höher = stärkerer Treatment-Effekt).
+    hist_scores : (n,) array
+        Historische Scores (höher = besser gemäß historical_score.higher_is_better).
+    n_bins : int
+        Anzahl der Perzentil-Bins (Default 10 = Dezile).
+    model_name : str
+        Modellname für den Titel.
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.colorbar import ColorbarBase
+    from scipy.stats import spearmanr
+    try:
+        from rubin.utils.plot_theme import RUBIN_COLORS, apply_rubin_theme
+        apply_rubin_theme()
+    except ImportError:
+        RUBIN_COLORS = {"ruby_dark": "#6B0D15", "ruby": "#9B111E",
+                        "ruby_pale": "#FDF2F3", "slate": "#57606A",
+                        "text": "#24292F", "grid": "#EDE6E7"}
+
+    cate_scores = np.asarray(cate_scores, dtype=float).ravel()
+    hist_scores = np.asarray(hist_scores, dtype=float).ravel()
+    assert len(cate_scores) == len(hist_scores), (
+        "CATE und historische Scores müssen gleich lang sein."
+    )
+
+    # ── Rangkorrelation ──
+    rho, _ = spearmanr(cate_scores, hist_scores)
+
+    # ── Dezil-Zuordnung (0=niedrigste 10%, n_bins-1=höchste 10%) ──
+    def _assign_bins(scores, n):
+        edges = np.percentile(scores, np.linspace(0, 100, n + 1))
+        edges[-1] += 1e-10
+        bins = np.digitize(scores, edges[1:], right=False)
+        return np.clip(bins, 0, n - 1)
+
+    cate_bins = _assign_bins(cate_scores, n_bins)
+    hist_bins = _assign_bins(hist_scores, n_bins)
+
+    # ── Transitionsmatrix: (n_bins × n_bins) — row=hist, col=cate ──
+    matrix = np.zeros((n_bins, n_bins), dtype=float)
+    for cb, hb in zip(cate_bins, hist_bins):
+        matrix[hb, cb] += 1.0
+
+    col_sums = matrix.sum(axis=0, keepdims=True)
+    col_sums[col_sums == 0] = 1.0
+    matrix_pct = matrix / col_sums * 100.0
+
+    # ── Spalten umkehren: D10 (höchstes CATE) links, D1 rechts ──
+    # Konsistent mit Qini-Kurve und Uplift-by-Percentile (Top-Kunden links)
+    matrix_pct = matrix_pct[:, ::-1]
+
+    # ── Farbverlauf: D1 (niedrigstes hist.) = hell, Dn (höchstes) = dunkel ──
+    cmap = LinearSegmentedColormap.from_list(
+        "rubin_redistribution",
+        [RUBIN_COLORS["ruby_pale"], RUBIN_COLORS["ruby"], RUBIN_COLORS["ruby_dark"]],
+        N=256,
+    )
+    colors = [cmap(i / (n_bins - 1)) for i in range(n_bins)]
+
+    # ── Figure ──
+    fig = plt.figure(figsize=(8, 6))
+    gs = fig.add_gridspec(1, 2, width_ratios=[35, 1], wspace=0.05)
+    ax = fig.add_subplot(gs[0])
+    cax = fig.add_subplot(gs[1])
+
+    x = np.arange(1, n_bins + 1)
+    bottom = np.zeros(n_bins)
+
+    for hist_d in range(n_bins):
+        heights = matrix_pct[hist_d, :]
+        ax.bar(x, heights, bottom=bottom, width=0.82,
+               color=colors[hist_d], edgecolor="white", linewidth=0.5)
+        bottom += heights
+
+    ax.set_xlabel("Dezil des Kausal-Scores (CATE)")
+    ax.set_ylabel("Anteil der Samples (%)")
+
+    # Kompakte Kennzahl statt Titel (wie native Plots)
+    ax.set_title(f"Score-Redistribution\nSpearman \u03c1 = {rho:.3f}")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"D{n_bins + 1 - i}" for i in x])
+    ax.set_ylim(0, 100)
+    ax.set_xlim(0.35, n_bins + 0.65)
+
+    # ── Colorbar ──
+    norm = Normalize(vmin=1, vmax=n_bins)
+    cb = ColorbarBase(cax, cmap=cmap, norm=norm, orientation="vertical")
+    cb.set_label("Dezil Hist. Score", fontsize=10, labelpad=8)
+    tick_labels = [f"D{i}" for i in range(1, n_bins + 1)]
+    tick_labels[0] = "D1\n(niedrig)"
+    tick_labels[-1] = f"D{n_bins}\n(hoch)"
+    cb.set_ticks(list(range(1, n_bins + 1)))
+    cb.set_ticklabels(tick_labels, fontsize=8)
+    cb.ax.tick_params(size=0)
+
+    fig.subplots_adjust(bottom=0.10, top=0.90, left=0.10, right=0.91)
+    return fig

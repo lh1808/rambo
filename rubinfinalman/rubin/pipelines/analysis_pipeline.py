@@ -4,13 +4,19 @@ from __future__ import annotations
 Die Analyse-Pipeline ist der zentrale Einstiegspunkt für Entwicklungs- und
 Evaluationsläufe.
 Aufgaben:
-- Einlesen der vorbereiteten Input-Dateien (X/T/Y, optional S)
+- Einlesen der vorbereiteten Input-Dateien (X/T/Y, optional S, eval_mask)
 - optionale Feature-Filterung (Korrelation / Importance)
-- optionales Base-Learner-Tuning mit Optuna
-- Training der konfigurierten kausalen Learner
-- Cross-Predictions (standardmäßig) für robuste Evaluation
+- optionales Base-Learner-Tuning (BLT) mit Optuna
+- optionales Final-Model-Tuning (FMT) mit Nuisance-Caching
+- optionales CausalForest-Tuning (CFT) mit setattr + refit_final
+- Training der konfigurierten kausalen Learner + Cross-Predictions
+  (inkl. Fold-Aligned Predictions für leakage-freies Surrogate-Training)
+- RCT-Diagnose: Propensity-Skill prüfen, DummyClassifier für konstante Propensity
 - Uplift-Metriken (Qini, AUUC, Uplift@k, Policy Value)
-- Logging nach MLflow
+- DRTester-Plots (BLP, Calibration, Qini/TOC-CIs, Policy Values)
+- Surrogate-Einzelbaum mit voller Evaluation (Fold-Aligned, alle Plots)
+- Historischer Score-Vergleich (Score-Redistribution, Custom Qini)
+- Logging nach MLflow, optional HTML-Report
 - optional: synchroner Bundle-Export (Production-Artefakte)
 Wichtig:
 Die Production-Pipeline arbeitet ausschließlich auf Bundles.
@@ -39,11 +45,13 @@ from rubin.model_management import ModelEntry, choose_champion, write_registry, 
 from rubin.model_registry import ModelContext, ModelRegistry, default_registry
 from rubin.preprocessing import build_simple_preprocessor_from_dataframe
 from rubin.settings import AnalysisConfig
-from rubin.training import _predict_effect, train_and_crosspredict_bt_bo, is_multi_treatment, SurrogateTreeWrapper, SURROGATE_MODEL_NAME
+from rubin.training import _predict_effect, train_and_crosspredict_bt_bo, is_multi_treatment, SurrogateTreeWrapper, SURROGATE_MODEL_NAME, get_fold_aligned_data, store_fold_aligned_data
 from rubin.utils.data_utils import reduce_mem_usage, available_cpu_count
 from rubin.utils.io_utils import read_table
 from rubin.utils.categorical_patch import patch_categorical_features
-from rubin.tuning_optuna import BaseLearnerTuner, FinalModelTuner, build_base_learner
+from rubin.tuning.base_learner import BaseLearnerTuner
+from rubin.tuning.final_model import FinalModelTuner
+from rubin.tuning.common import build_base_learner
 from rubin.evaluation.uplift_metrics import auuc, policy_value, qini_coefficient, uplift_at_k, uplift_curve, mt_eval_summary
 from rubin.evaluation.drtester_plots import (
     CustomDRTester,
@@ -52,7 +60,7 @@ from rubin.evaluation.drtester_plots import (
     fit_drtester_nuisance,
     generate_ate_barplot,
     generate_cate_distribution_plot,
-    generate_sklift_plots,
+    generate_uplift_plots,
     plot_custom_qini_curve,
     save_dataframe_as_png,
     policy_value_comparison_plots,
@@ -221,8 +229,8 @@ class AnalysisPipeline:
                     S = S_df[col].loc[idx].to_numpy(dtype=float)
                     S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
                 except Exception:
+                    self._logger.warning("Historischer Score konnte nicht geladen werden (Spalte '%s').", self.cfg.historical_score.column, exc_info=True)
                     S = None
-            # ── Daten-Summary ──
             _t_arr = np.asarray(T)
             _y_arr = np.asarray(Y)
             _n_treat = int((_t_arr > 0).sum())
@@ -262,7 +270,7 @@ class AnalysisPipeline:
                             if dt == "category":
                                 _n_cat += 1
                         except Exception:
-                            pass
+                            self._logger.debug("dtype-Cast für Spalte '%s' → '%s' fehlgeschlagen.", c, dt)
                 if _n_applied:
                     self._logger.info(
                         "dtypes.json geladen: %d Spalten-Dtypes angewendet (%d kategorial).",
@@ -289,14 +297,14 @@ class AnalysisPipeline:
                                 if dt == "category":
                                     _n_cat += 1
                             except Exception:
-                                pass
+                                self._logger.debug("dtype-Cast für Spalte '%s' → '%s' fehlgeschlagen (auto-detect).", c, dt)
                     if _n_restored:
                         self._logger.info(
                             "dtypes.json auto-erkannt (%s): %d Spalten-Dtypes wiederhergestellt (%d kategorial).",
                             _auto_dtypes, _n_restored, _n_cat,
                         )
                 except Exception:
-                    pass
+                    self._logger.debug("Auto-Erkennung dtypes.json fehlgeschlagen.", exc_info=True)
 
         # Memory-Reduktion: Datentypen downcasten (float64→float32, int64→int32 etc.)
         if getattr(self.cfg.data_processing, "reduce_memory", True):
@@ -308,26 +316,10 @@ class AnalysisPipeline:
                 n_before / 1e6, n_after / 1e6, (1 - n_after / max(n_before, 1)) * 100,
             )
 
-        # Kategorische Spalten explizit als category-Dtype markieren.
-        # Drei Quellen (in Prioritätsreihenfolge):
-        #   1. cfg.data_processing.categorical_columns (explizit vom User)
-        #   2. dtypes.json (von DataPrep → enthält "category" wenn korrekt erzeugt)
-        #   3. Parquet-Metadaten (preserven category-Dtype automatisch)
-        # Quelle 2+3 werden bereits oben bei dtypes-Anwendung / Parquet-Load abgedeckt.
-        # Hier ergänzen wir Quelle 1 als Override: Falls der User explizite
-        # categorical_columns angegeben hat, werden diese zu category konvertiert.
-        cat_cols = getattr(self.cfg.data_processing, "categorical_columns", None)
-        if cat_cols:
-            n_cat = 0
-            for c in cat_cols:
-                if c in X.columns and not isinstance(X[c].dtype, pd.CategoricalDtype):
-                    try:
-                        X[c] = X[c].astype("category")
-                        n_cat += 1
-                    except Exception:
-                        pass
-            if n_cat > 0:
-                self._logger.info("Kategorische Spalten aus Config angewendet: %d Spalten als category markiert.", n_cat)
+        # Kategorische Spalten werden über zwei Quellen als category-Dtype markiert:
+        #   1. dtypes.json (von DataPrep → enthält "category" wenn korrekt erzeugt)
+        #   2. Parquet-Metadaten (preserven category-Dtype automatisch)
+        # Beide werden oben bei dtypes-Anwendung / Parquet-Load abgedeckt.
 
         self._logger.info(
             "Daten geladen: X=%s, T=%s (unique=%s), Y=%s (unique=%s), S=%s",
@@ -474,7 +466,10 @@ class AnalysisPipeline:
         return X, removed
 
     def _run_tuning(self, cfg, X, T, Y, mlflow, _progress_cb=None):
-        """Base-Learner-Tuning (Optuna) und optionales Final-Model-Tuning."""
+        """Base-Learner-Tuning (BLT), Final-Model-Tuning (FMT), CausalForest-Tuning (CFT).
+
+        Bei RCT: BLT Propensity-Diagnose (Skill ≈ 0 bestätigt Randomisierung).
+        Gibt tuned_params_by_model zurück (Dict: model_name → role → params)."""
         tuned_params_by_model: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         if cfg.tuning.enabled:
@@ -494,6 +489,29 @@ class AnalysisPipeline:
             for _tk, _tv in sorted(tuner.best_scores.items()):
                 _sk = tuner.skill_scores.get(_tk, 0.0)
                 self._logger.info("  %-40s best=%.6g  skill=%.4f", _tk, _tv, _sk)
+
+            # RCT-Diagnose: Propensity-Skill prüfen.
+            # Bei echtem RCT sollte kein Propensity-Modell besser als Zufall sein (Skill ≈ 0).
+            # Training nutzt dann DummyClassifier(strategy="prior") für P(T|X) = const.
+            _is_rct_check = getattr(cfg, "study_type", "rct") == "rct"
+            if _is_rct_check:
+                _prop_skills = {k: v for k, v in tuner.skill_scores.items() if "propensity" in k}
+                _max_prop_skill = max(_prop_skills.values()) if _prop_skills else 0.0
+                if _max_prop_skill > 0.01:
+                    self._logger.warning(
+                        "RCT-Diagnose: Propensity-Skill = %.4f > 0.01. "
+                        "Das Propensity-Modell kann Treatment besser als Zufall vorhersagen — "
+                        "die Daten sind möglicherweise NICHT randomisiert. "
+                        "Prüfe die Treatment-Zuweisung. Training verwendet trotzdem konstante "
+                        "Propensity (DummyClassifier), wie für RCT konfiguriert.",
+                        _max_prop_skill,
+                    )
+                else:
+                    self._logger.info(
+                        "RCT-Diagnose bestätigt: Propensity-Skill = %.4f ≈ 0. "
+                        "Training verwendet konstante Propensity P(T|X) = mean(T) = %.3f.",
+                        _max_prop_skill, float(np.mean(T)),
+                    )
 
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
             for task_key, score in tuner.best_scores.items():
@@ -642,9 +660,8 @@ class AnalysisPipeline:
                     raw_val = sc
                     pen_val = final_tuner.best_scores.get(pen_key)
                     model_short = tk.replace("final__", "")
-                    # Score-Label: je nach Modell und Methode
-                    # Score-Label je nach Modell: NonParamDML → R-Loss, DRLearner → DR-MSE
-                    score_label = "OOF-DR-MSE" if "drlearner" in model_short.lower() else "OOF-R-Loss"
+                    # Score-Label: R-Score via externem RScorer (unabhängige Nuisance)
+                    score_label = "OOF-R-Score"
                     if pen_val is not None:
                         delta = abs(raw_val - pen_val)
                         if delta > 1e-10:
@@ -668,17 +685,19 @@ class AnalysisPipeline:
                     fmt_internal_cv = getattr(cfg.final_model_tuning, "cv_splits", 3)
                     _mc = cfg.data_processing.mc_iters or 1
                     _fits_per_dml = _mc * fmt_internal_cv * 2 + 1  # Nuisance + model_final
+                    _scorer_fits_per_fold = 4  # RScorer: cv=2 × (model_y + model_t)
                     fmt_plan_list = []
                     for mname in cfg.models.models_to_train:
                         name_lower = (mname or "").lower()
                         if name_lower in ("nonparamdml", "drlearner"):
                             _outer = 1 if fmt_single_fold else fmt_outer_cv
-                            _fpt = _outer * _fits_per_dml
+                            _pre_fit = _outer * (_fits_per_dml + _scorer_fits_per_fold)
+                            _trial_fits = fmt_n_trials * _outer  # 1 refit_final pro Fold pro Trial
                             fmt_plan_list.append({
                                 "model": mname, "method": f"OOF {'1' if fmt_single_fold else str(_outer)}-Fold CV",
-                                "trials": fmt_n_trials, "fits_per_trial": _fpt,
-                                "total_fits": fmt_n_trials * _fpt,
-                                "note": f"{_outer} äußere Fold(s) × {_fits_per_dml} Fits/Fold (est.fit(train) + est.score(val), cv={fmt_internal_cv}).",
+                                "trials": fmt_n_trials, "fits_per_trial": _outer,
+                                "total_fits": _pre_fit + _trial_fits,
+                                "note": f"{_outer} Fold(s) × ({_fits_per_dml}+{_scorer_fits_per_fold}) Pre-fit + {fmt_n_trials}T × {_outer} refit_final (RScorer.score).",
                             })
                     if fmt_plan_list:
                         self._report.add_fmt_plan(fmt_plan_list)
@@ -712,6 +731,11 @@ class AnalysisPipeline:
     def _run_training(self, cfg, X, T, Y, tuned_params_by_model, holdout_data, mlflow, _progress_cb=None):
         """Training der kausalen Learner + Cross-Predictions.
 
+        Bei RCT (study_type="rct") wird für Propensity-Rollen ein DummyClassifier
+        verwendet (konstante Propensity P(T|X) = mean(T)). Cross-Predictions sammeln
+        Fold-Aligned Predictions (pro Fold Full-Dataset-Predict) für leakage-freies
+        Surrogate-Training.
+
         Progress-Callback: Wenn CausalForest-Tuning aktiv ist, werden GRF-Modelle zuerst
         trainiert und unter dem Label "CausalForest-Tuning" emittiert; danach wechselt
         das Label auf "Training & Predictions" für die restlichen Modelle.
@@ -721,6 +745,7 @@ class AnalysisPipeline:
         fold_models: Dict[str, tuple] = {}  # {name: (fitted_model, val_indices)} für Explainability
         has_missing = X.isnull().any().any()
         keep_fold = cfg.shap_values.calculate_shap_values and holdout_data is None
+        _is_rct = getattr(cfg, "study_type", "rct") == "rct"
 
         # Progress-Steuerung: CausalForest-Tuning als eigene Phase vor dem Haupt-Training.
         # Dazu GRF-Modelle (CausalForestDML/CausalForest) in der Iteration zuerst
@@ -734,6 +759,7 @@ class AnalysisPipeline:
             _other = [m for m in _models_order if m not in _grf_names]
             _models_order = _grf + _other
         _last_label = None
+        _cft_tuner = None  # CausalForestTuner — wird bei Bedarf erstellt (RScorer-Cache intern)
 
         for name in _models_order:
             # Progress-Label emittieren, wenn Phase wechselt
@@ -814,7 +840,7 @@ class AnalysisPipeline:
                 dml_crossfit_folds=_dml_cv,
                 mc_iters=cfg.data_processing.mc_iters,
                 mc_agg=cfg.data_processing.mc_agg,
-
+                is_rct=_is_rct,
             )
 
             if name.lower() == "causalforestdml":
@@ -841,6 +867,10 @@ class AnalysisPipeline:
                     ctx.parallel_jobs = -1
 
             model = self.registry.create(name, ctx)
+
+            # RCT: Log wenn konstante Propensity verwendet wird
+            if _is_rct and name.lower() in {"nonparamdml", "paramdml", "causalforestdml", "drlearner"}:
+                self._logger.info("  %s: RCT-Modus → konstante Propensity P(T|X) = mean(T) (DummyClassifier).", name)
 
             # Debug: Effektive Parameter für jede Rolle loggen
             if name.lower() in {"nonparamdml", "drlearner"}:
@@ -875,7 +905,9 @@ class AnalysisPipeline:
             # CausalForest / CausalForestDML: Optuna-basiertes Tuning der Wald-Parameter
             if name in ("CausalForestDML", "CausalForest") and getattr(cfg.causal_forest, "use_econml_tune", False) and (not getattr(cfg.causal_forest, "tune_models", []) or name in getattr(cfg.causal_forest, "tune_models", [])):
                 try:
-                    from rubin.tuning_optuna import tune_causal_forest
+                    from rubin.tuning.causal_forest import CausalForestTuner
+                    if _cft_tuner is None:
+                        _cft_tuner = CausalForestTuner(cfg)
                     _n_cf_trials = int(getattr(cfg.causal_forest, "n_trials", 50))
                     # Nuisance-Params: BLT-getunte Params verwenden
                     _nuisance_y_params = dict(cfg.base_learner.fixed_params or {})
@@ -890,9 +922,8 @@ class AnalysisPipeline:
                         if _roles.get("model_t"):
                             _nuisance_t_params.update(_roles["model_t"])
                             break
-                    result = tune_causal_forest(
-                        cfg=cfg, X=X, Y=Y, T=T,
-                        model_type=name,
+                    result = _cft_tuner.tune(
+                        model_type=name, X=X, Y=Y, T=T,
                         n_trials=_n_cf_trials,
                         nuisance_params_y=_nuisance_y_params,
                         nuisance_params_t=_nuisance_t_params,
@@ -916,13 +947,31 @@ class AnalysisPipeline:
                             mc_iters=cfg.data_processing.mc_iters,
                             mc_agg=cfg.data_processing.mc_agg,
                         )
-                        model = self._registry.create(name, _ctx_new)
+                        model = self.registry.create(name, _ctx_new)
                         models[name] = model
                     mlflow.log_param(f"cf_tune__{name}__enabled", True)
                     mlflow.log_param(f"cf_tune__{name}__n_trials", _n_cf_trials)
                     mlflow.log_param(f"cf_tune__{name}__best_params", str(best_p))
                     if best_score is not None:
-                        mlflow.log_metric(f"cf_tune__{name}__best_r_loss", best_score)
+                        mlflow.log_metric(f"cf_tune__{name}__best_r_score", best_score)
+                    self._logger.info(
+                        "CFT '%s': R-Score → %.6g (%d Trials abgeschlossen).",
+                        name, best_score if best_score is not None else float("nan"),
+                        result.get("n_trials_completed", 0),
+                    )
+                    # Report: CFT-Ergebnisse analog zu FMT
+                    if hasattr(self, '_report'):
+                        _cft_mode = "cache_values + refit_final" if name == "CausalForestDML" else "CausalForestAdapter + RScorer"
+                        self._report.add_cft_info({
+                            "model_type": name,
+                            "n_trials": _n_cf_trials,
+                            "n_trials_completed": result.get("n_trials_completed", 0),
+                            "best_score": best_score,
+                            "mode": _cft_mode,
+                            "single_fold": bool(getattr(cfg.causal_forest, "single_fold", False)),
+                        })
+                        if best_p:
+                            self._report.add_cft_best_params(name, best_p)
                 except Exception:
                     self._logger.warning("CFT '%s' fehlgeschlagen.", name, exc_info=True)
                     mlflow.log_param(f"cf_tune__{name}__enabled", False)
@@ -1021,6 +1070,10 @@ class AnalysisPipeline:
             gc.collect()  # Zwischen Modellen: deepcopy-Reste und Fold-Daten freigeben
 
         _n_trained = len(models)
+        # CFT-Scorer-Cache freigeben (kann mehrere GB halten)
+        if _cft_tuner is not None:
+            del _cft_tuner
+            gc.collect()
         _n_skipped = len(cfg.models.models_to_train) - _n_trained
         if _n_skipped > 0:
             self._logger.info("Training: %d Modelle trainiert, %d übersprungen (NaN in Daten).", _n_trained, _n_skipped)
@@ -1028,7 +1081,15 @@ class AnalysisPipeline:
         return models, preds, fold_models
 
     def _run_evaluation(self, cfg, X, T, Y, S, holdout_data, preds, models, tuned_params_by_model, mlflow, eval_mask=None):
-        """Uplift-Evaluation und Diagnose-Plots."""
+        """Uplift-Evaluation und Diagnose-Plots.
+
+        Drei Phasen:
+        1. Quick-Metriken (Qini, AUUC, Uplift@K%, Policy Value) + CATE-Verteilung pro Modell
+        2. DRTester-Plots (BLP, Calibration, Qini/TOC-CIs) für Champion + Level-abhängig
+        3. Uplift-Plots (Qini-Kurve, Uplift-by-Percentile, Treatment Balance, Score-Redistribution)
+
+        Returns: (eval_summary, policy_values_dict, fitted_tester_bt)
+        fitted_tester_bt wird für Surrogate-DRTester weiterverwendet."""
         eval_summary: Dict[str, Dict[str, float]] = {}
         policy_values_dict: Dict[str, pd.DataFrame] = {}
         is_mt = is_multi_treatment(T)
@@ -1283,7 +1344,7 @@ class AnalysisPipeline:
             "alle Modelle" if pl <= 2 else ("nur Champion" if pl >= 4 else "Champion + Challenger"),
         )
 
-        # ── Phase 2: DRTester-Plots + sklift (Level-abhängig) ──
+        # ── Phase 2: DRTester-Plots + Uplift-Plots (Level-abhängig) ──
         # Level 1-2: Alle Modelle bekommen volle Diagnostik
         # Level 3:   Champion + bester Challenger
         # Level 4:   Nur Champion
@@ -1317,7 +1378,14 @@ class AnalysisPipeline:
                     tuned_params_by_model, eval_summary, policy_values_dict, mlflow,
                     fitted_tester=fitted_tester_bt, eval_mask=eval_mask)
 
-        # ── Phase 3: scikit-uplift Plots (IMMER für alle Modelle) ──
+        # ── Historischen Score für Phase 3 + Phase 4 vorab berechnen ──
+        hist_score_eval = S
+        if holdout_data is not None and holdout_data[3] is not None:
+            hist_score_eval = holdout_data[3]
+        elif eval_mask is not None and S is not None:
+            hist_score_eval = S[eval_mask]
+
+        # ── Phase 3: Uplift-Plots (IMMER für alle Modelle) ──
         # Schnell (~2-5s pro Modell), reine Histogramm/Kurven-Plots ohne
         # Bootstrap-Berechnungen. Unabhängig von Phase 2 (DRTester), damit
         # alle Modelle Qini-Kurve, Uplift-by-Percentile und Treatment-Balance
@@ -1326,7 +1394,7 @@ class AnalysisPipeline:
         eval_T = holdout_data[1] if holdout_data is not None else T
         eval_Y = holdout_data[2] if holdout_data is not None else Y
         for mname, dfp in preds.items():
-            # ── Train Many, Evaluate Some: auch sklift-Plots auf Eval-Subset ──
+            # ── Train Many, Evaluate Some: auch Uplift-Plots auf Eval-Subset ──
             if eval_mask is not None and holdout_data is None:
                 dfp = dfp.loc[eval_mask].reset_index(drop=True)
                 eval_T_sk = T[eval_mask]
@@ -1351,57 +1419,63 @@ class AnalysisPipeline:
                     arm_T_bin = (eval_T_sk[arm_mask] == arm).astype(int)
                     arm_Y = eval_Y_sk[arm_mask]
                     try:
-                        sk_qini, sk_pct, sk_tb = generate_sklift_plots(arm_cate, arm_T_bin, arm_Y)
+                        sk_qini, sk_pct, sk_tb = generate_uplift_plots(arm_cate, arm_T_bin, arm_Y)
                         if not _is_rct:
                             sk_tb = None  # Treatment Balance nur bei RCT aussagekräftig
                         if sk_qini is not None:
-                            _log_figure_fast(mlflow, sk_qini, f"sklift_qini__{mname}_T{arm}.png")
+                            _log_figure_fast(mlflow, sk_qini, f"uplift_qini__{mname}_T{arm}.png")
                         if sk_pct is not None:
-                            _log_figure_fast(mlflow, sk_pct, f"sklift_percentile__{mname}_T{arm}.png")
+                            _log_figure_fast(mlflow, sk_pct, f"uplift_percentile__{mname}_T{arm}.png")
                         if sk_tb is not None:
                             _log_figure_fast(mlflow, sk_tb, f"treatment_balance__{mname}_T{arm}.png")
                         if hasattr(self, '_report'):
                             label = f"{mname}_T{arm}"
-                            for fig, key in [(sk_qini, "sklift_qini"), (sk_pct, "sklift_percentile"), (sk_tb, "treatment_balance")]:
+                            for fig, key in [(sk_qini, "uplift_qini"), (sk_pct, "uplift_percentile"), (sk_tb, "treatment_balance")]:
                                 if fig is not None:
                                     self._report.add_plot(label, key, fig)
                         for fig in [sk_qini, sk_pct, sk_tb]:
                             if fig is not None:
                                 plt.close(fig)
                     except Exception:
-                        self._logger.warning("sklift-Plots für %s T%d fehlgeschlagen.", mname, arm, exc_info=True)
+                        self._logger.warning("Uplift-Plots für %s T%d fehlgeschlagen.", mname, arm, exc_info=True)
             else:
                 pred_col = f"Predictions_{mname}"
                 if pred_col not in dfp.columns:
                     continue
                 cate_vals = dfp[pred_col].to_numpy(dtype=float)
                 try:
-                    sk_qini, sk_pct, sk_tb = generate_sklift_plots(cate_vals, eval_T_sk, eval_Y_sk)
+                    sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, eval_T_sk, eval_Y_sk)
                     if not _is_rct:
                         sk_tb = None  # Treatment Balance nur bei RCT aussagekräftig
                     if sk_qini is not None:
-                        _log_figure_fast(mlflow, sk_qini, f"sklift_qini__{mname}.png")
+                        _log_figure_fast(mlflow, sk_qini, f"uplift_qini__{mname}.png")
                     if sk_pct is not None:
-                        _log_figure_fast(mlflow, sk_pct, f"sklift_percentile__{mname}.png")
+                        _log_figure_fast(mlflow, sk_pct, f"uplift_percentile__{mname}.png")
                     if sk_tb is not None:
                         _log_figure_fast(mlflow, sk_tb, f"treatment_balance__{mname}.png")
                     if hasattr(self, '_report'):
-                        for fig, key in [(sk_qini, "sklift_qini"), (sk_pct, "sklift_percentile"), (sk_tb, "treatment_balance")]:
+                        for fig, key in [(sk_qini, "uplift_qini"), (sk_pct, "uplift_percentile"), (sk_tb, "treatment_balance")]:
                             if fig is not None:
                                 self._report.add_plot(mname, key, fig)
                     for fig in [sk_qini, sk_pct, sk_tb]:
                         if fig is not None:
                             plt.close(fig)
                 except Exception:
-                    self._logger.warning("sklift-Plots für %s fehlgeschlagen.", mname, exc_info=True)
+                    self._logger.warning("Uplift-Plots für %s fehlgeschlagen.", mname, exc_info=True)
 
-        # Historischer Score (nur BT)
-        hist_score_eval = S
-        if holdout_data is not None and holdout_data[3] is not None:
-            hist_score_eval = holdout_data[3]
-        elif eval_mask is not None and S is not None:
-            hist_score_eval = S[eval_mask]
+                # ── Score-Redistribution-Plot (nur wenn historischer Score vorhanden) ──
+                if hist_score_eval is not None:
+                    try:
+                        from rubin.evaluation.drtester_plots import plot_score_redistribution
+                        fig_redist = plot_score_redistribution(cate_vals, hist_score_eval, model_name=mname)
+                        _log_figure_fast(mlflow, fig_redist, f"score_redistribution__{mname}.png")
+                        if hasattr(self, '_report'):
+                            self._report.add_plot(mname, "score_redistribution", fig_redist)
+                        plt.close(fig_redist)
+                    except Exception:
+                        self._logger.warning("Score-Redistribution-Plot für %s fehlgeschlagen.", mname, exc_info=True)
 
+        # Historischer Score (nur BT) — hist_score_eval bereits oben berechnet
         if hist_score_eval is not None and is_mt:
             self._logger.info("Historischer Score (S) vorhanden, wird aber bei Multi-Treatment übersprungen.")
 
@@ -1424,7 +1498,7 @@ class AnalysisPipeline:
 
         Metriken (Qini, AUUC, etc.) werden bereits in Phase 1 berechnet.
         Diese Methode erzeugt nur die teuren DRTester-Plots (Calibration,
-        Qini/TOC mit Bootstrap-CIs) und scikit-uplift-Plots."""
+        Qini/TOC mit Bootstrap-CIs) und Uplift-Plots."""
         import matplotlib.pyplot as plt
         pred_col = f"Predictions_{mname}"
         if pred_col not in dfp.columns:
@@ -1468,7 +1542,7 @@ class AnalysisPipeline:
                 bundle.add_to_report(self._report, mname)
             bundle.close_figures()
         except Exception:
-            self._logger.warning("DRTester/SkLift-Plots für %s fehlgeschlagen.", mname, exc_info=True)
+            self._logger.warning("DRTester/Uplift-Plots für %s fehlgeschlagen.", mname, exc_info=True)
 
         return eval_summary, policy_values_dict
 
@@ -1477,7 +1551,7 @@ class AnalysisPipeline:
 
         Metriken (per-Arm Qini, AUUC, globaler Policy Value) werden bereits
         in Phase 1 berechnet. Diese Methode erzeugt nur die teuren
-        DRTester-Plots pro Treatment-Arm und scikit-uplift-Plots."""
+        DRTester-Plots pro Treatment-Arm und Uplift-Plots."""
         import matplotlib.pyplot as plt
 
         # eval_mask: auf Eval-Subset filtern (wie bei _evaluate_bt)
@@ -1645,7 +1719,7 @@ class AnalysisPipeline:
                     self._report.add_plot(mname, f"qini_vs_{hist_name}", fig)
                 plt.close(fig)
         except Exception:
-            self._logger.warning("DRTester/SkLift-Plots für historischen Score fehlgeschlagen.", exc_info=True)
+            self._logger.warning("DRTester/Uplift-Plots für historischen Score fehlgeschlagen.", exc_info=True)
 
         try:
             hist_pv = policy_values_dict.get(hist_name)
@@ -1855,11 +1929,19 @@ class AnalysisPipeline:
                 if depth is not None:
                     n_leaves = 2 ** int(depth)
         except Exception:
-            pass
-        return depth, n_leaves
+            logging.getLogger("rubin.pipeline").debug("Surrogate-Bauminfo konnte nicht extrahiert werden (%s).", base_type, exc_info=True)
 
-    def _train_and_evaluate_surrogate(self, cfg, X, T, Y, teacher_name, preds, holdout_data, models, eval_summary, mlflow, surrogate_name=None, run_drtester=False, fitted_tester=None, eval_mask=None):
-        """Trainiert den Surrogate-Einzelbaum und evaluiert ihn.
+    def _train_and_evaluate_surrogate(self, cfg, X, T, Y, teacher_name, preds, holdout_data, models, eval_summary, mlflow, surrogate_name=None, run_drtester=False, fitted_tester=None, eval_mask=None, S=None):
+        """Trainiert den Surrogate-Einzelbaum und evaluiert ihn (volle Evaluation wie Champion).
+
+        Nutzt Fold-Aligned Predictions für komplett leakage-freies Training:
+        Für Surrogate-Fold k wird Champion_k's Prediction verwendet — Champion_k hat
+        Fold k nie gesehen → kein Informationspfad von Val-Samples ins Training-Target.
+        Final-Fit für Produktion nutzt Full-Data-Refit-Predictions des Champions.
+
+        Volle Evaluation: Metriken (Qini, AUUC, Uplift@K%), DRTester-Plots (BLP,
+        Calibration, Qini/TOC-CIs, Policy Values), Uplift-Plots, Score-Redistribution,
+        Custom Qini vs. Historischer Score.
 
         Parameters
         ----------
@@ -1868,9 +1950,11 @@ class AnalysisPipeline:
         surrogate_name : str, optional
             Name für den Surrogate im eval_summary/Report. Default: SURROGATE_MODEL_NAME.
         run_drtester : bool
-            Wenn True, werden volle DRTester-Plots (BLP, Calibration, Qini, TOC, Policy Values) erzeugt.
+            Wenn True, werden volle DRTester-Plots erzeugt.
         fitted_tester : CustomDRTester, optional
-            Pre-fitted DRTester für DRTester-Plots (vermeidet redundantes Nuisance-Fitting).
+            Pre-fitted DRTester (vermeidet redundantes Nuisance-Fitting).
+        S : np.ndarray, optional
+            Historischer Score für Score-Redistribution und Custom Qini Plots.
 
         Returns
         -------
@@ -1899,28 +1983,46 @@ class AnalysisPipeline:
             if is_mt:
                 mt_cols_train = sorted([c for c in champion_df.columns if c.startswith(f"Train_{teacher_name}_T")])
                 mt_cols_pred = sorted([c for c in champion_df.columns if c.startswith(f"Predictions_{teacher_name}_T")])
-                # Fallback auf OOF-Predictions wenn Train-Predictions nicht verfügbar
-                if mt_cols_train and not np.all(np.isnan(champion_df[mt_cols_train[0]].to_numpy(dtype=float))):
-                    target_2d = champion_df[mt_cols_train].to_numpy()
-                    self._logger.info("Surrogate trainiert auf Train-Predictions (Full-Data-Refit) des Champions.")
-                else:
-                    target_2d = champion_df[mt_cols_pred].to_numpy()
-                    self._logger.info("Surrogate: Train-Predictions nicht verfügbar, verwende OOF-Predictions.")
-                n_effects = target_2d.shape[1]
+                n_effects = len(mt_cols_pred)
 
-                surrogate_preds = np.full_like(target_2d, np.nan, dtype=float)
+                fold_aligned, fold_splits = get_fold_aligned_data(champion_df)
+                _use_fold_aligned = fold_aligned and fold_splits and len(fold_aligned) == len(fold_splits)
+
+                if _use_fold_aligned:
+                    self._logger.info(
+                        "Surrogate MT K-Fold CV: Fold-Aligned Predictions (%d Folds, komplett leakage-frei).",
+                        len(fold_splits),
+                    )
+
+                surrogate_preds = np.full((len(X), n_effects), np.nan, dtype=float)
                 final_trees = {}
-                _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
                 for k in range(n_effects):
-                    target_k = target_2d[:, k]
-                    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-                    for tr_idx, va_idx in cv.split(X, _surr_strata):
-                        tree_k = self._build_surrogate_regressor(cfg)
-                        tree_k.fit(X.iloc[tr_idx], target_k[tr_idx])
-                        surrogate_preds[va_idx, k] = tree_k.predict(X.iloc[va_idx])
+                    if _use_fold_aligned:
+                        for fold_k, (tr_idx, va_idx) in enumerate(fold_splits):
+                            fp = fold_aligned[fold_k]
+                            fold_target_k = fp[:, k] if fp.ndim > 1 else fp
+                            tree_k = self._build_surrogate_regressor(cfg)
+                            tree_k.fit(X.iloc[tr_idx], fold_target_k[tr_idx])
+                            surrogate_preds[va_idx, k] = tree_k.predict(X.iloc[va_idx])
+                    else:
+                        # Fallback: OOF
+                        oof_k = champion_df[mt_cols_pred[k]].to_numpy(dtype=float)
+                        _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
+                        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+                        for tr_idx, va_idx in cv.split(X, _surr_strata):
+                            tree_k = self._build_surrogate_regressor(cfg)
+                            tree_k.fit(X.iloc[tr_idx], oof_k[tr_idx])
+                            surrogate_preds[va_idx, k] = tree_k.predict(X.iloc[va_idx])
 
+                    # Final-Fit Produktion
+                    if mt_cols_train and not np.all(np.isnan(champion_df[mt_cols_train[0]].to_numpy(dtype=float))):
+                        prod_k = champion_df[mt_cols_train[k]].to_numpy(dtype=float)
+                    elif _use_fold_aligned:
+                        prod_k = np.mean([fold_aligned[i][:, k] if fold_aligned[i].ndim > 1 else fold_aligned[i] for i in sorted(fold_aligned.keys())], axis=0)
+                    else:
+                        prod_k = champion_df[mt_cols_pred[k]].to_numpy(dtype=float)
                     final_tree_k = self._build_surrogate_regressor(cfg)
-                    final_tree_k.fit(X, target_k)
+                    final_tree_k.fit(X, prod_k)
                     final_trees[k] = final_tree_k
 
                 surrogate_df = pd.DataFrame({"Y": Y, "T": T})
@@ -1934,24 +2036,61 @@ class AnalysisPipeline:
                 final_tree = None  # Nicht genutzt bei MT
             else:
                 train_col = f"Train_{teacher_name}"
-                pred_col = f"Predictions_{teacher_name}"
-                # Fallback auf OOF-Predictions wenn Train-Predictions nicht verfügbar
-                if train_col in champion_df.columns and not np.all(np.isnan(champion_df[train_col].to_numpy(dtype=float))):
-                    target = champion_df[train_col].to_numpy()
-                    self._logger.info("Surrogate trainiert auf Train-Predictions (Full-Data-Refit) des Champions.")
-                else:
-                    target = champion_df[pred_col].to_numpy()
-                    self._logger.info("Surrogate: Train-Predictions nicht verfügbar, verwende OOF-Predictions.")
-                surrogate_preds = np.full_like(target, np.nan, dtype=float)
-                _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
-                cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-                for tr_idx, va_idx in cv.split(X, _surr_strata):
-                    tree = self._build_surrogate_regressor(cfg)
-                    tree.fit(X.iloc[tr_idx], target[tr_idx])
-                    surrogate_preds[va_idx] = tree.predict(X.iloc[va_idx])
 
+                # ── Fold-Aligned Predictions (komplett Leakage-frei) ──
+                # Jeder Champion_k wurde ohne Fold k trainiert. Champion_k.predict(X_all)
+                # enthält KEINE Information über Fold k. Für Surrogate-Fold k (Val) wird
+                # Champion_k's Prediction auf den Train-Folds als Target verwendet.
+                # → Kein Informationspfad von Val-Samples ins Training-Target.
+                fold_aligned, fold_splits = get_fold_aligned_data(champion_df)
+
+                if fold_aligned and fold_splits and len(fold_aligned) == len(fold_splits):
+                    self._logger.info(
+                        "Surrogate K-Fold CV: Fold-Aligned Predictions (%d Folds, komplett leakage-frei). "
+                        "Jeder Surrogate-Fold nutzt Champion-Predictions von einem Modell, "
+                        "das den Val-Fold nie gesehen hat.",
+                        len(fold_splits),
+                    )
+                    surrogate_preds = np.full(len(X), np.nan, dtype=float)
+                    for fold_k, (tr_idx, va_idx) in enumerate(fold_splits):
+                        # Champion_k hat Fold k (= va_idx) NIE gesehen → leakage-frei
+                        fold_target = fold_aligned[fold_k]
+                        if fold_target.ndim > 1:
+                            fold_target = fold_target.ravel()
+                        tree = self._build_surrogate_regressor(cfg)
+                        tree.fit(X.iloc[tr_idx], fold_target[tr_idx])
+                        surrogate_preds[va_idx] = tree.predict(X.iloc[va_idx])
+                else:
+                    # Fallback: OOF-Predictions (indirekt leakage, aber akzeptabel)
+                    self._logger.warning(
+                        "Surrogate: Fold-Aligned Predictions nicht verfügbar. "
+                        "Fallback auf OOF-Predictions (indirekt leakage)."
+                    )
+                    pred_col = f"Predictions_{teacher_name}"
+                    oof_target = champion_df[pred_col].to_numpy(dtype=float)
+                    surrogate_preds = np.full_like(oof_target, np.nan, dtype=float)
+                    _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
+                    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+                    for tr_idx, va_idx in cv.split(X, _surr_strata):
+                        tree = self._build_surrogate_regressor(cfg)
+                        tree.fit(X.iloc[tr_idx], oof_target[tr_idx])
+                        surrogate_preds[va_idx] = tree.predict(X.iloc[va_idx])
+
+                # Final-Fit für Produktion: Full-Data-Refit-Predictions als Ziel
+                # (weniger Rauschen → besseres Produktionsmodell, keine Evaluation darauf).
+                if train_col in champion_df.columns and not np.all(np.isnan(champion_df[train_col].to_numpy(dtype=float))):
+                    production_target = champion_df[train_col].to_numpy(dtype=float)
+                    self._logger.info("Surrogate Final-Fit: Trainiert auf Full-Data-Refit-Predictions (Produktion).")
+                else:
+                    # Fallback: Averaged Fold-Aligned Predictions (alle K Modelle gemittelt)
+                    if fold_aligned:
+                        production_target = np.mean([fold_aligned[k].ravel() if fold_aligned[k].ndim > 1 else fold_aligned[k] for k in sorted(fold_aligned.keys())], axis=0)
+                        self._logger.info("Surrogate Final-Fit: Gemittelte Fold-Aligned Predictions (K Modelle).")
+                    else:
+                        production_target = champion_df[f"Predictions_{teacher_name}"].to_numpy(dtype=float)
+                        self._logger.info("Surrogate Final-Fit: OOF-Predictions als Fallback.")
                 final_tree = self._build_surrogate_regressor(cfg)
-                final_tree.fit(X, target)
+                final_tree.fit(X, production_target)
                 final_trees = {}
 
                 surrogate_df = pd.DataFrame({"Y": Y, "T": T})
@@ -2068,7 +2207,7 @@ class AnalysisPipeline:
         except Exception:
             self._logger.warning("Surrogate-CATE-Verteilungsplot fehlgeschlagen.", exc_info=True)
 
-        # Surrogate sklift-Plots (Qini-Kurve, Uplift-by-Percentile, Treatment-Balance)
+        # Surrogate Uplift-Plots (Qini-Kurve, Uplift-by-Percentile, Treatment-Balance)
         try:
             import matplotlib.pyplot as plt
             y_s = surr_eval_df["Y"].to_numpy()
@@ -2085,13 +2224,13 @@ class AnalysisPipeline:
                     arm_T_bin = (t_s[arm_mask] == k).astype(int)
                     arm_Y = y_s[arm_mask]
                     try:
-                        sk_qini, sk_pct, sk_tb = generate_sklift_plots(arm_cate, arm_T_bin, arm_Y)
+                        sk_qini, sk_pct, sk_tb = generate_uplift_plots(arm_cate, arm_T_bin, arm_Y)
                         if getattr(cfg, "study_type", "rct") != "rct":
                             sk_tb = None
                         label = f"{sname}_T{k}"
                         for fig, key, fname in [
-                            (sk_qini, "sklift_qini", f"sklift_qini__{sname}_T{k}.png"),
-                            (sk_pct, "sklift_percentile", f"sklift_percentile__{sname}_T{k}.png"),
+                            (sk_qini, "uplift_qini", f"uplift_qini__{sname}_T{k}.png"),
+                            (sk_pct, "uplift_percentile", f"uplift_percentile__{sname}_T{k}.png"),
                             (sk_tb, "treatment_balance", f"treatment_balance__{sname}_T{k}.png"),
                         ]:
                             if fig is not None:
@@ -2100,18 +2239,18 @@ class AnalysisPipeline:
                                     self._report.add_plot(label, key, fig)
                                 plt.close(fig)
                     except Exception:
-                        self._logger.warning("sklift-Plots für %s T%d fehlgeschlagen.", sname, k, exc_info=True)
+                        self._logger.warning("Uplift-Plots für %s T%d fehlgeschlagen.", sname, k, exc_info=True)
             else:
                 pred_col_s = f"Predictions_{sname}"
                 if pred_col_s in surr_eval_df.columns:
                     cate_vals = surr_eval_df[pred_col_s].to_numpy(dtype=float)
                     try:
-                        sk_qini, sk_pct, sk_tb = generate_sklift_plots(cate_vals, t_s, y_s)
+                        sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, t_s, y_s)
                         if getattr(cfg, "study_type", "rct") != "rct":
                             sk_tb = None
                         for fig, key, fname in [
-                            (sk_qini, "sklift_qini", f"sklift_qini__{sname}.png"),
-                            (sk_pct, "sklift_percentile", f"sklift_percentile__{sname}.png"),
+                            (sk_qini, "uplift_qini", f"uplift_qini__{sname}.png"),
+                            (sk_pct, "uplift_percentile", f"uplift_percentile__{sname}.png"),
                             (sk_tb, "treatment_balance", f"treatment_balance__{sname}.png"),
                         ]:
                             if fig is not None:
@@ -2120,9 +2259,50 @@ class AnalysisPipeline:
                                     self._report.add_plot(sname, key, fig)
                                 plt.close(fig)
                     except Exception:
-                        self._logger.warning("sklift-Plots für %s fehlgeschlagen.", sname, exc_info=True)
+                        self._logger.warning("Uplift-Plots für %s fehlgeschlagen.", sname, exc_info=True)
         except Exception:
-            self._logger.warning("Surrogate-sklift-Plots fehlgeschlagen.", exc_info=True)
+            self._logger.warning("Surrogate-Uplift-Plots fehlgeschlagen.", exc_info=True)
+
+        # ── Score-Redistribution-Plot (nur wenn historischer Score vorhanden) ──
+        if not is_mt:
+            try:
+                import matplotlib.pyplot as plt
+                hist_score_eval = S
+                if holdout_data is not None and holdout_data[3] is not None:
+                    hist_score_eval = holdout_data[3]
+                elif eval_mask is not None and S is not None:
+                    hist_score_eval = S[eval_mask]
+                if hist_score_eval is not None:
+                    pred_col_s = f"Predictions_{sname}"
+                    if pred_col_s in surr_eval_df.columns:
+                        cate_vals = surr_eval_df[pred_col_s].to_numpy(dtype=float)
+                        from rubin.evaluation.drtester_plots import plot_score_redistribution
+                        fig_redist = plot_score_redistribution(cate_vals, hist_score_eval, model_name=sname)
+                        _log_figure_fast(mlflow, fig_redist, f"score_redistribution__{sname}.png")
+                        if hasattr(self, '_report'):
+                            self._report.add_plot(sname, "score_redistribution", fig_redist)
+                        plt.close(fig_redist)
+
+                        # Custom Qini: Surrogate vs historischer Score
+                        hist_name = getattr(cfg.historical_score, "name", None)
+                        if hist_name:
+                            try:
+                                df_cmp = pd.DataFrame({
+                                    "Y": surr_eval_df["Y"].to_numpy(),
+                                    "T": surr_eval_df["T"].to_numpy(),
+                                    sname: cate_vals,
+                                    hist_name: hist_score_eval,
+                                })
+                                fig_cq, ax_cq = plt.subplots(figsize=(10, 6))
+                                plot_custom_qini_curve(data=df_cmp, causal_score_label=sname, affinity_score_label=hist_name, ax=ax_cq, relative_axes=True)
+                                _log_figure_fast(mlflow, fig_cq, f"custom_qini__{sname}_vs_{hist_name}.png")
+                                if hasattr(self, '_report'):
+                                    self._report.add_plot(sname, f"qini_vs_{hist_name}", fig_cq)
+                                plt.close(fig_cq)
+                            except Exception:
+                                self._logger.warning("Custom-Qini-Plot %s vs %s fehlgeschlagen.", sname, hist_name, exc_info=True)
+            except Exception:
+                self._logger.warning("Score-Redistribution/Custom-Qini-Plot für %s fehlgeschlagen.", sname, exc_info=True)
 
         # Baumtiefe und Blattanzahl loggen
         try:
@@ -2723,7 +2903,9 @@ class AnalysisPipeline:
         random.seed(_seed)
 
         # ── Schritte zählen ──
-        total = 5  # load, fs, tune, train, eval
+        total = 4  # load, fs, train, eval
+        if cfg.tuning.enabled:
+            total += 1  # BLT
         if getattr(cfg, "final_model_tuning", None) is not None and cfg.final_model_tuning.enabled:
             total += 1  # fmt
         # CausalForest-Tuning als eigene Phase (vor dem Haupt-Training), wenn aktiviert
@@ -3084,7 +3266,8 @@ class AnalysisPipeline:
             elif cfg.feature_selection.enabled:
                 self._logger.info("Feature-Selektion: Alle %d Features beibehalten.", X.shape[1])
 
-            _progress("Base-Learner-Tuning")
+            if cfg.tuning.enabled:
+                _progress("Base-Learner-Tuning")
             # Zweiter Patch mit post-FS Spaltenindizes (Spalten haben sich geändert).
             with patch_categorical_features(X, base_learner_type=cfg.base_learner.type) as cat_indices:
                 if cat_indices:
@@ -3146,6 +3329,37 @@ class AnalysisPipeline:
                         )
                         preds[ENSEMBLE_NAME] = ensemble_df
                         models[ENSEMBLE_NAME] = ensemble_model
+
+                        # Fold-Aligned Predictions für Ensemble aus Einzelmodellen bauen.
+                        # Jedes Einzelmodell hat fold_aligned_preds[k] = Champion_k.predict(X_all).
+                        # Der Ensemble-Durchschnitt pro Fold ist ebenfalls leakage-frei,
+                        # weil jeder Champion_k Fold k nie gesehen hat.
+                        try:
+                            _ens_fold_aligned = {}
+                            _ens_fold_splits = None
+                            _n_with_folds = 0
+                            for _mn in model_names:
+                                _mdf = preds.get(_mn)
+                                if _mdf is not None:
+                                    _mfa, _mfs = get_fold_aligned_data(_mdf)
+                                    if _mfa and _mfs:
+                                        if not _ens_fold_splits:
+                                            _ens_fold_splits = _mfs
+                                            _ens_fold_aligned = {k: np.array(v, dtype=float) for k, v in _mfa.items()}
+                                        else:
+                                            for k in _mfa:
+                                                if k in _ens_fold_aligned:
+                                                    _ens_fold_aligned[k] = _ens_fold_aligned[k] + np.array(_mfa[k], dtype=float)
+                                        _n_with_folds += 1
+                            if _n_with_folds >= 2 and _ens_fold_splits:
+                                _ens_fold_aligned = {k: v / _n_with_folds for k, v in _ens_fold_aligned.items()}
+                                store_fold_aligned_data(ensemble_df, _ens_fold_aligned, _ens_fold_splits)
+                                self._logger.info(
+                                    "Ensemble: Fold-Aligned Predictions aus %d Einzelmodellen gemittelt (leakage-frei).",
+                                    _n_with_folds,
+                                )
+                        except Exception:
+                            self._logger.debug("Ensemble: Fold-Aligned Predictions konnten nicht gebaut werden.", exc_info=True)
                         _log_temp_artifact(mlflow, lambda p, _df=ensemble_df: _df.to_csv(p, index=False, float_format="%.10g"), f"predictions_{ENSEMBLE_NAME}.csv")
                         mlflow.log_param("ensemble_enabled", True)
                         mlflow.log_param("ensemble_models", ",".join(model_names))
@@ -3208,12 +3422,15 @@ class AnalysisPipeline:
 
                     if champion_name and champion_name in preds:
                         try:
-                            self._logger.info("Trainiere Surrogate auf Champion %s.", champion_name)
+                            self._logger.info("Trainiere Surrogate auf Champion %s (volle Evaluation inkl. DRTester).", champion_name)
                             surrogate_wrapper, surrogate_df = self._train_and_evaluate_surrogate(
                                 cfg, X, T, Y, champion_name, preds, holdout_data,
                                 models, eval_summary, mlflow,
                                 surrogate_name=SURROGATE_MODEL_NAME,
+                                run_drtester=True,
+                                fitted_tester=fitted_tester_bt,
                                 eval_mask=eval_mask,
+                                S=S,
                             )
                             preds[SURROGATE_MODEL_NAME] = surrogate_df
                             models[SURROGATE_MODEL_NAME] = surrogate_wrapper

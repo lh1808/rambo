@@ -200,7 +200,7 @@ Der Server startet auf Port 8501 (lokal) oder `$DOMINO_APP_PORT` (Domino).
 |---|---|---|
 | `DOMINO_APP_PORT` | – | Port für die App (von Domino gesetzt) |
 | `PORT` | `8501` | Fallback-Port (lokal) |
-| `HOST` | `0.0.0.0` | Bind-Adresse |
+| `RUBIN_HOST` | `0.0.0.0` | Bind-Adresse (bewusst nicht `HOST`, da Conda/pixi `HOST` überschreiben kann) |
 | `DOMINO_PROJECT_NAME` | (auto) | Von Domino gesetzt, nicht von rubin genutzt |
 
 ## Troubleshooting

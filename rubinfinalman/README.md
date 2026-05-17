@@ -23,7 +23,7 @@ Unterstützt werden:
 ### Environment aufsetzen (empfohlen: pixi)
 
 [Pixi](https://pixi.sh) verwaltet alle Dependencies (Python, conda-forge, PyPI) automatisch
-und erzeugt ein reproduzierbares Lockfile. Installation: `curl -fsSL https://pixi.sh/install.sh | bash`
+und erzeugt ein reproduzierbares Lockfile.
 
 > **Wichtig — TLS im Firmennetz:** Die beiden Environment-Variablen `PIXI_TLS_ROOT_CERTS`
 > und `UV_NATIVE_TLS` **müssen gesetzt sein, bevor** `pixi install` aufgerufen wird.
@@ -152,15 +152,15 @@ Siehe `docs/README_DE.md` für Einstieg und Details. Wichtige Themen sind:
 Abgedeckt sind unter anderem:
 - Schema-Validierung in Production (inkl. `schema_report.json`)
 - persistente Optuna-Studies (SQLite)
-- Base-Learner-Tuning mit Optuna (Bayesian TPE) und Overfit-Penalty
+- Base-Learner-Tuning (BLT) mit Optuna (Bayesian TPE), Skill Scores und Overfit-Penalty
+- CausalForest-Tuning (CFT) mit Optuna TPE über Wald-Parameter
 - Uplift-Metriken (Qini, AUUC, Uplift@k, Policy Value)
-- Combined Loss Diagnostic (Bach et al., 2024): Post-hoc-Qualitätskennzahl nach dem Base-Learner-Tuning
 - Final-Model-Tuning: OOF-CV mit est.score() — R-Loss (NonParamDML) / DR-MSE (DRLearner)
 - Explainability (SHAP) integriert in die Analyse-Pipeline
 - NaN-Toleranz: Alle Modelle außer CausalForestDML und CausalForest können mit fehlenden Werten umgehen (via LightGBM/CatBoost). CausalForestDML, CausalForest und die Feature-Selektionsmethode `causal_forest` (GRF) werden bei NaN automatisch übersprungen.
 - Feature-Selektion: Drei Methoden per Union — `catboost_importance` (Default, CatBoost Gain), `lgbm_importance` (LightGBM Gain), `causal_forest` (kausale Relevanz). Top-N% pro Methode + Korrelationsfilter.
 - Validierungsmodi: Cross-Validation (K-Fold), External (separater Eval-Datensatz, leakage-frei) und Train Many Evaluate Some (Eval-Maske auf Teilmenge)
-- Parallelisierung: Konfigurierbar über `constants.parallel_level` (1–4). Level 2 (Default) parallelisiert Base Learner, Level 3–4 parallelisieren zusätzlich CV-Folds via joblib. Kerne werden proportional aufgeteilt (keine Übersubskription)
+- Parallelisierung: Konfigurierbar über `constants.parallel_level` (1–4). Level 3 (Default) parallelisiert Base Learner und CV-Folds via joblib. Kerne werden proportional aufgeteilt (keine Übersubskription)
 - Kategorische Features: Automatisches Patching für EconML-Kompatibilität — LightGBM/CatBoost nutzen native kategoriale Splits (fit, predict, predict_proba, score), auch wenn EconML X intern zu numpy float64 konvertiert. dtypes.json wird automatisch erkannt.
 - Internes Cross-Fitting: Alle DML-Modelle und DRLearner verwenden `cv=5` (Default) für Nuisance-Residuals. Konfigurierbar über `data_processing.dml_crossfit_folds`.
 
@@ -186,17 +186,17 @@ Im Ordner `configs/` liegen mehrere vorkonfigurierte Beispiele für verschiedene
 - `config_reference_all_options.yml`: vollständige Referenz mit **allen** Feldern (Nachschlagewerk)
 - `config_quickstart.yml`: minimaler Einstieg – ein Modell, kein Tuning, kein Bundle
 - `config_exploration.yml`: schnelle Iteration mit 10% Downsampling und wenigen Trials
-- `config_standard.yml`: Standard-LightGBM mit moderatem Tuning + Bundle-Export
+- `config_standard.yml`: Standardkonfiguration mit CatBoost, Tuning und Ensemble
 - `config_lgbm_intensiv.yml`: LightGBM mit gründlichem Tuning (80 Trials), Final-Model-Tuning, persistente Studies
 - `config_catboost_standard.yml`: CatBoost mit moderatem Tuning (30 Trials) + Bundle-Export
 - `config_catboost_intensiv.yml`: CatBoost mit gründlichem Tuning (80 Trials), Final-Model-Tuning, persistente Studies
-- `config_dml_focus.yml`: Fokus auf DML-Familie (NonParamDML, DRLearner, CausalForestDML mit EconML-Tune)
+- `config_dml_focus.yml`: Fokus auf DML-Familie (NonParamDML, DRLearner, CausalForestDML)
 - `config_external_eval.yml`: Externe Validierung (separater Eval-Datensatz, kein Data-Leakage)
 - `config_explainability.yml`: Feature-Selektion + erweiterte SHAP/Segment-Einstellungen
 - `config_benchmark.yml`: Vergleich neuer Scores gegen einen historischen Score (S)
 - `config_full.yml`: End-to-End mit DataPrep-Sektion (Pfade anpassen)
-- `config_grf_focus.yml`: Fokus auf GRF-Modelle (CausalForestDML + CausalForest mit RScorer-Tuning)
-- `config_binary_treatment.yml`: Binary Treatment (T ∈ {0, 1}) mit allen 8 Modellen inkl. CausalForest & CausalForestDML tune()
+- `config_grf_focus.yml`: Fokus auf CausalForest-Familie (CausalForestDML, CausalForest) mit CF-Tuning
+- `config_binary_treatment.yml`: Binary Treatment (T ∈ {0, 1}) mit allen BT-Modellen, FMT und Explainability
 - `config_multi_treatment.yml`: Multi-Treatment-Szenario (T ∈ {0, 1, …, K-1}) mit DML-Modellen
 - `config_speed.yml`: Speed-Tuning mit Single-Fold – für große Datensätze (>500k Zeilen)
 

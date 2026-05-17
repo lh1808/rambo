@@ -34,7 +34,7 @@ base_learner:
 
 tuning:
   enabled: true
-  n_trials: 50
+  n_trials: 20                           # Wenige Trials + Single-Fold = maximaler Speed
   cv_splits: 5
   single_fold: true                    # ← Kernfeature: 1 Fold pro Trial
   metric: log_loss

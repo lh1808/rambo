@@ -12,8 +12,7 @@ feature_selection:
   methods:
   - catboost_importance
   - causal_forest
-  top_pct: 15.0
-  max_features: 100
+  max_features: 77
   correlation_threshold: 0.85
 models:
   models_to_train:
@@ -83,6 +82,7 @@ tuning:
         low: 0.0
         high: 10.0
 shap_values:
+  calculate_shap_values: true
   n_shap_values: 5000
   top_n_features: 25
   num_bins: 12
@@ -99,3 +99,5 @@ selection:
   metric: qini
   higher_is_better: true
   refit_champion_on_full_data: true
+surrogate_tree:
+  enabled: true

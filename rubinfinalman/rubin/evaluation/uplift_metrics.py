@@ -127,7 +127,12 @@ def policy_value(y: np.ndarray, t: np.ndarray, score: np.ndarray, threshold: flo
     Wert: Gewichteter Gesamtnutzen der Policy über alle Personen.
     - CATE >= threshold (behandeln): Uplift = E[Y|T=1] - E[Y|T=0]
     - CATE < threshold (nicht behandeln): Vermiedener Schaden = E[Y|T=0] - E[Y|T=1]
-    Gewichtet nach dem Anteil der jeweiligen Gruppe an der Gesamtpopulation."""
+    Gewichtet nach dem Anteil der jeweiligen Gruppe an der Gesamtpopulation.
+
+    WICHTIG: Nutzt naive Differenz-in-Means (kein IPW/Propensity-Weighting).
+    Nur bei randomisiertem Treatment (RCT) unverzerrt. Die Analyse-Pipeline
+    ruft diese Funktion nur bei study_type='rct' auf. Für Beobachtungsdaten
+    liefert der DRTester doubly-robust Policy Values (siehe drtester_plots.py)."""
     y = np.asarray(y).astype(int)
     t = np.asarray(t).astype(int)
     score = np.asarray(score).astype(float)

@@ -44,6 +44,12 @@ class TestModelRegistry:
         assert getattr(model, "random_state", None) == 123
         assert getattr(model, "cv", None) == 5
 
+    def test_create_drlearner_has_discrete_outcome(self):
+        """Prüft, dass DRLearner discrete_outcome=True hat (predict_proba für model_regression)."""
+        reg = default_registry()
+        model = reg.create("DRLearner", ModelContext(base_learner_type="lgbm"))
+        assert getattr(model, "discrete_outcome", False) is True
+
     def test_create_causalforestdml_has_discrete_flags(self):
         reg = default_registry()
         model = reg.create("CausalForestDML", ModelContext(base_learner_type="lgbm"))

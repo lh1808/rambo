@@ -13,8 +13,6 @@ bundle:
 
 `run_analysis.py` kann diese Werte bei Bedarf per CLI überschreiben.
 
-# Bundles (Analyse → Production)
-
 ## Was ist ein Bundle?
 Ein Bundle ist ein Ordner, der **alle** Artefakte enthält, die für ein reproduzierbares Scoring benötigt werden:
 
@@ -43,10 +41,6 @@ pixi run score -- --bundle runs/bundles/<bundle_id> --x new_X.parquet --out scor
 # Surrogate: --use-surrogate (interpretierbarer Einzelbaum)
 ```
 
-## Best Practices
-- Bundle-IDs sollten eindeutig sein (Timestamp + optional Run-ID).
-- Für Production zusätzlich Schema-Checks einführen (Spalten, Dtypes, Missing Rate).
-
 
 ## Zusätzliche Bundle-Inhalte (Schema & Metadaten)
 
@@ -60,8 +54,11 @@ Sie beschreibt erwartete Spalten und Datentypen des Feature-Matrix-Inputs.
 
 ### metadata.json (automatisch angereichert)
 Beim Schreiben der Metadaten werden automatisch ergänzt:
-- `created_at_utc`
-- `
+- `created_at_utc`: Erstellungszeitpunkt (UTC)
+- `refit_info`: Ob der Champion auf vollen Daten refittet wurde
+- `feature_columns`: Liste der verwendeten Features
+- `n_train_samples`: Anzahl Trainingszeilen
+- `champion_name`: Name des Champion-Modells
 
 Damit ist die Herkunft des Bundles schnell nachvollziehbar.
 
@@ -100,10 +97,11 @@ einsetzbar sind:
 
 - **Champion:** Wird (sofern `selection.refit_champion_on_full_data: true`) vor dem Export
   auf allen im Run verfügbaren Daten refittet.
-- **Challenger:** Im Cross-Validation-Modus werden Challenger-Modelle vor dem Export auf
-  den Trainingsdaten gefittet. Sie sind bereits durch den initialen
-  `fit()`-Aufruf trainiert. Damit ist sichergestellt, dass auch Challenger im Bundle
-  für Production-Scoring nutzbar sind.
+- **Champion (Ensemble):** Ist das Ensemble Champion, werden alle Einzelmodelle auf vollen Daten
+  refittet und ein neues `EnsembleCateEstimator` mit den refitteten Modellen erstellt.
+- **Challenger:** Werden vor dem Export auf allen Trainingsdaten gefittet, damit sie
+  für Production-Scoring nutzbar sind (im Cross-Validation-Modus werden sie initial nur
+  auf K-1 Folds trainiert — der Refit stellt sicher, dass alle Daten einfließen).
 - **Surrogate-Einzelbaum**: Bei `surrogate_tree.enabled: true` wird ein `SurrogateTree.pkl` ins Bundle exportiert — ein interpretierbarer Einzelbaum, der die CATEs des Champions nachbildet. Der Surrogate wird mit einem eigenen Registry-Eintrag in `model_registry.json` aufgenommen und ist über `score_surrogate(X)` oder `--use-surrogate` in Production nutzbar. Die Production-Pipeline prüft über `has_surrogate`, ob ein Surrogate verfügbar ist.
   Bei Multi-Treatment wird pro Arm ein eigener Baum trainiert.
 

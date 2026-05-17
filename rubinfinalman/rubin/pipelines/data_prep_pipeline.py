@@ -178,18 +178,26 @@ class DataPrepPipeline:
         raise ValueError(f"Unbekannte data_prep.multiple_files_option={opt}")
 
     def _check_and_balance_treatments(self, df: pd.DataFrame, treat_col: str, dp, _progress) -> pd.DataFrame:
-        """Prüft Treatment-Verteilung pro Datei und gleicht per Downsampling aus.
+        """Prüft Treatment-Verteilung pro Datei und gleicht per bidirektionalem Downsampling aus.
 
         Wenn die Treatment-Rate zwischen Dateien um mehr als 5 Prozentpunkte abweicht,
-        wird eine Warnung ausgegeben. Bei balance_treatments=True wird die überrepräsentierte
-        Gruppe pro Datei-Segment auf die niedrigste Rate heruntergesampelt.
+        wird eine Warnung ausgegeben. Bei balance_treatments=True werden beide Richtungen
+        simuliert (Treatment-Downsampling auf min(Raten) vs. Control-Downsampling auf max(Raten))
+        und die Variante mit weniger Datenverlust gewählt.
 
-        Warum ist das wichtig?
-        ─────────────────────
-        Unterschiedliche Treatment-Raten pro Datei können bei Cross-Validation dazu führen,
-        dass bestimmte Folds systematisch mehr/weniger Treatment-Beobachtungen enthalten.
-        Dies verzerrt die Uplift-Metriken (Qini, AUUC, Policy Value) und kann zu
-        überschätzten oder unterschätzten Treatment-Effekten führen.
+        Warum bidirektional?
+        ────────────────────
+        Beispiel: Dateien mit 61%, 62%, 67%, 50% Treatment-Rate.
+        - Nur Treatment-Downsampling (Ziel=50%): 18% Datenverlust
+        - Nur Control-Downsampling (Ziel=67%): 12% Datenverlust
+        Die optimale Richtung hängt von der Datenverteilung ab.
+
+        Warum überhaupt balancieren?
+        ────────────────────────────
+        DML handhabt Treatment-Imbalance theoretisch via Propensity-Residualisierung
+        (Chernozhukov et al. 2018). Aber bei Multi-File-Daten mit unterschiedlichen
+        Raten können CV-Folds systematisch andere Treatment-Verteilungen haben,
+        was Uplift-Metriken (Qini, AUUC, Policy Value) verzerrt.
         """
         file_ids = sorted(df["__file_source__"].unique())
         if len(file_ids) <= 1:
@@ -231,36 +239,77 @@ class DataPrepPipeline:
             )
 
             if dp.balance_treatments:
-                target_rate = min(rates)  # Niedrigste Treatment-Rate als Ziel
                 n_before = len(df)
-                balanced_parts = []
+                _seed = self.cfg.constants.random_seed
 
+                # ── Beide Richtungen simulieren, beste wählen ──
+                # Option A: target = min(rates) → Treatment-Gruppe downsamplen
+                # Option B: target = max(rates) → Control-Gruppe downsamplen
+                target_min = min(rates)
+                target_max = max(rates)
+
+                def _simulate_loss(target_r: float) -> int:
+                    """Berechnet wie viele Zeilen bei gegebener Ziel-Rate verloren gehen."""
+                    total_loss = 0
+                    for s in stats:
+                        if abs(s["treat_rate"] - target_r) < 0.01:
+                            continue
+                        part = df[df["__file_source__"] == s["file"]]
+                        n_t = int((part[treat_col] == 1).sum())
+                        n_c = int((part[treat_col] == 0).sum())
+                        if s["treat_rate"] > target_r and n_c > 0:
+                            # Treatment downsamplen
+                            target_n_t = int(target_r / (1 - target_r) * n_c)
+                            total_loss += max(0, n_t - max(target_n_t, 1))
+                        elif s["treat_rate"] < target_r and n_t > 0:
+                            # Control downsamplen
+                            target_n_c = int((1 - target_r) / target_r * n_t)
+                            total_loss += max(0, n_c - max(target_n_c, 1))
+                    return total_loss
+
+                loss_min = _simulate_loss(target_min)
+                loss_max = _simulate_loss(target_max)
+
+                if loss_min <= loss_max:
+                    target_rate = target_min
+                    _direction = "Treatment-Downsampling"
+                else:
+                    target_rate = target_max
+                    _direction = "Control-Downsampling"
+
+                self._logger.info(
+                    "Balance-Simulation: target=%.1f%% verliert %d Zeilen, "
+                    "target=%.1f%% verliert %d Zeilen. Gewählt: %.1f%% (%s).",
+                    target_min * 100, loss_min, target_max * 100, loss_max,
+                    target_rate * 100, _direction,
+                )
+
+                balanced_parts = []
                 for s in stats:
                     part = df[df["__file_source__"] == s["file"]].copy()
                     if abs(s["treat_rate"] - target_rate) < 0.01:
                         balanced_parts.append(part)
                         continue
 
-                    # Berechne, wie viele Treatment-Zeilen entfernt werden müssen
                     t_mask = part[treat_col] == 1
                     c_mask = part[treat_col] == 0
                     n_treat = int(t_mask.sum())
                     n_control = int(c_mask.sum())
 
                     if s["treat_rate"] > target_rate and n_control > 0:
-                        # Zu viel Treatment → Treatment-Zeilen reduzieren
+                        # Treatment downsamplen
                         target_n_treat = int(target_rate / (1 - target_rate) * n_control)
                         target_n_treat = max(target_n_treat, 1)
                         if target_n_treat < n_treat:
-                            treat_sample = part[t_mask].sample(n=target_n_treat, random_state=self.cfg.constants.random_seed)
+                            treat_sample = part[t_mask].sample(n=target_n_treat, random_state=_seed)
                             part = pd.concat([part[c_mask], treat_sample], ignore_index=True)
                     elif s["treat_rate"] < target_rate and n_treat > 0:
-                        # Zu wenig Treatment → Control-Zeilen reduzieren
+                        # Control downsamplen
                         target_n_control = int((1 - target_rate) / target_rate * n_treat)
                         target_n_control = max(target_n_control, 1)
                         if target_n_control < n_control:
-                            ctrl_sample = part[c_mask].sample(n=target_n_control, random_state=self.cfg.constants.random_seed)
-                            part = pd.concat([part[t_mask], ctrl_sample], ignore_index=True)
+                            control_sample = part[c_mask].sample(n=target_n_control, random_state=_seed)
+                            part = pd.concat([part[t_mask], control_sample], ignore_index=True)
 
                     balanced_parts.append(part)
 
@@ -268,9 +317,9 @@ class DataPrepPipeline:
                 n_after = len(df)
                 self._logger.info(
                     "Treatment-Balance Downsampling: %d → %d Zeilen (%.0f%% entfernt). "
-                    "Ziel-Treatment-Rate: %.1f%%.",
+                    "Ziel-Treatment-Rate: %.1f%% (%s).",
                     n_before, n_after, (1 - n_after / max(n_before, 1)) * 100,
-                    target_rate * 100,
+                    target_rate * 100, _direction,
                 )
                 if hasattr(dp, 'log_to_mlflow') and dp.log_to_mlflow:
                     try:
@@ -362,16 +411,13 @@ class DataPrepPipeline:
         _progress("Dateien einlesen")
         df = self._read_files()
 
-        # ── Treatment-Balance-Prüfung bei mehreren Dateien ──
-        treat_col = str(dp.treatment).upper()
-        eval_mask = None
-        if "__file_source__" in df.columns and treat_col in df.columns:
-            df = self._check_and_balance_treatments(df, treat_col, dp, _progress)
-
         _progress("Deduplizierung")
         # Deduplizierung: auf einen Eintrag pro Kunde reduzieren.
-        # Geschieht VOR der Feature-Reduktion, da die ID-Spalte typischerweise
-        # kein Feature ist und nach der Deduplizierung entfernt wird.
+        # Geschieht VOR der Treatment-Balance-Prüfung und Feature-Reduktion,
+        # damit die Balance-Raten auf deduplizierten Daten berechnet werden
+        # und die ID-Spalte anschließend entfernt werden kann.
+        treat_col = str(dp.treatment).upper()
+        eval_mask = None
         if dp.deduplicate:
             if not dp.deduplicate_id_column:
                 raise ValueError(
@@ -399,6 +445,10 @@ class DataPrepPipeline:
                 mlflow.log_metric("deduplicate_rows_before", n_before)
                 mlflow.log_metric("deduplicate_rows_after", n_after)
                 mlflow.log_metric("deduplicate_rows_removed", n_removed)
+
+        # ── Treatment-Balance-Prüfung bei mehreren Dateien (nach Dedup!) ──
+        if "__file_source__" in df.columns and treat_col in df.columns:
+            df = self._check_and_balance_treatments(df, treat_col, dp, _progress)
 
         # ── "Train Many, Evaluate Some": Eval-Maske extrahieren (nach Dedup!) ──
         if "__file_source__" in df.columns and dp.eval_file_index is not None:

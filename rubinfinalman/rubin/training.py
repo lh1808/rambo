@@ -16,6 +16,12 @@ diese externe Cross-Validation. DML/DR-Modelle haben zwar internes Cross-Fitting
 für Nuisance-Residuals, aber das model_final/CATE-Modell sieht dennoch alle
 Trainingsdaten. Echte Out-of-Fold-Garantie für die CATE-Predictions erfordert
 daher eine externe CV-Schleife.
+Fold-Aligned Predictions:
+Zusätzlich zu den OOF-Predictions wird pro Fold auf dem GESAMTEN Datensatz
+predictet. Diese Fold-Aligned Predictions (DataFrame.attrs["fold_aligned_preds"])
+ermöglichen komplett leakage-freies Surrogate-Training: Für Surrogate-Fold k
+wird Champion_k's Prediction verwendet, wobei Champion_k den Val-Fold k nie
+gesehen hat → kein Informationspfad von Val-Samples ins Training-Target.
 Parallelisierung:
 Die CV-Folds sind vollständig unabhängig voneinander. Dieses Modul nutzt
 joblib mit Thread-basiertem Backend, um Folds parallel zu verarbeiten.
@@ -61,7 +67,14 @@ Rückgabe:
     # EconML gibt je nach Modell/Version verschiedene Shapes zurück:
     # BT: (n,), (n,1), (n,1,1) → immer auf (n,) reduzieren
     # MT: (n, K-1), (n, K-1, 1) → auf (n, K-1) reduzieren
-    pred = pred.squeeze()
+    # WICHTIG: Nicht blanket squeeze() verwenden — das würde bei MT mit K-1=1
+    # (theoretischer Edge-Case) die Treatment-Dimension kollabieren.
+    # Stattdessen: nur Trailing-Singleton-Dimensionen ab Axis 2 entfernen,
+    # dann (n,1) → (n,) nur wenn genau 2D mit letzter Dim=1.
+    while pred.ndim > 2:
+        pred = pred.squeeze(axis=-1)
+    if pred.ndim == 2 and pred.shape[1] == 1:
+        pred = pred.ravel()
     # Falls squeeze() ein Skalar erzeugt (n=1), zurück zu 1D
     if pred.ndim == 0:
         pred = pred.reshape(1)
@@ -123,19 +136,21 @@ def _fit_single_fold(
     T: np.ndarray,
     tr_idx: np.ndarray,
     va_idx: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Trainiert einen einzelnen CV-Fold und gibt (va_idx, fold_predictions) zurück.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Trainiert einen einzelnen CV-Fold und gibt (va_idx, fold_predictions, full_predictions) zurück.
 
     Thread-safe: Jeder Aufruf arbeitet auf einer eigenen deepcopy des Modells.
     LightGBM/CatBoost geben den GIL während des C++-Trainings frei,
-    sodass mehrere Threads echte Parallelität erzielen."""
+    sodass mehrere Threads echte Parallelität erzielen.
+
+    full_predictions: Predictions auf dem GESAMTEN Datensatz (nicht nur Val).
+    Für Fold-Aligned Surrogate-Training (leakage-frei)."""
     m = copy.deepcopy(model_template)
     m.fit(Y[tr_idx], T[tr_idx], X=X.iloc[tr_idx])
     fold_pred = _predict_effect(m, X.iloc[va_idx])
+    full_pred = _predict_effect(m, X)
     del m
-    # Kein gc.collect() hier — gc ist global und verursacht Thread-Contention.
-    # Wird nach Abschluss aller Folds einmalig aufgerufen.
-    return va_idx, fold_pred
+    return va_idx, fold_pred, full_pred
 
 
 
@@ -148,10 +163,19 @@ def _run_folds_sequential(
     preds: np.ndarray,
     is_mt: bool,
     keep_last_model: bool = False,
-) -> tuple[np.ndarray, Any, np.ndarray | None]:
-    """Sequentielle Fold-Verarbeitung. Gibt (preds, last_model, last_val_idx) zurück."""
+    collect_full_preds: bool = False,
+) -> tuple[np.ndarray, Any, np.ndarray | None, dict | None]:
+    """Sequentielle Fold-Verarbeitung.
+
+    Returns
+    -------
+    preds, last_model, last_val_idx, fold_full_preds
+        fold_full_preds: Dict {fold_idx: np.ndarray} mit Predictions auf ALLEN Samples
+        pro Fold-Modell (nur wenn collect_full_preds=True). Für Fold-Aligned Surrogate.
+    """
     last_model = None
     last_val_idx = None
+    fold_full_preds = {} if collect_full_preds else None
     for i, (tr_idx, va_idx) in enumerate(folds):
         try:
             m = copy.deepcopy(model)
@@ -170,6 +194,12 @@ def _run_folds_sequential(
         else:
             preds[va_idx] = fold_pred
 
+        # Fold-Aligned Predictions: Modell predictet auf ALLEN Samples (nicht nur Val).
+        # Für Surrogate-Leakage-Prävention: Champion_k.predict(X_all) enthält keine
+        # Info über Fold k (Champion_k wurde ohne Fold k trainiert).
+        if collect_full_preds:
+            fold_full_preds[i] = _predict_effect(m, X)
+
         if keep_last_model and i == len(folds) - 1:
             last_model = m
             last_val_idx = va_idx
@@ -177,7 +207,7 @@ def _run_folds_sequential(
             del m
             gc.collect()
 
-    return preds, last_model, last_val_idx
+    return preds, last_model, last_val_idx, fold_full_preds
 
 
 def train_and_crosspredict_bt_bo(
@@ -204,9 +234,14 @@ Vorgehen:
 - Die CV-Folds werden parallel verarbeitet (joblib, Thread-Backend).
   LightGBM und CatBoost geben den GIL während des C++-Trainings frei,
   sodass mehrere Folds echte Parallelität erzielen.
+- Pro Fold wird zusätzlich auf dem GESAMTEN Datensatz predictet (Fold-Aligned
+  Predictions). Diese werden in DataFrame.attrs["fold_aligned_preds"] gespeichert
+  und ermöglichen komplett leakage-freies Surrogate-Training.
 
 Ergebnis (BT):
   DataFrame mit Spalten: Y, T, Predictions_<model_name>, optional Train_<model_name>
+  attrs["fold_aligned_preds"]: Dict {fold_idx: np.ndarray} mit Full-Dataset-Predictions pro Fold
+  attrs["fold_splits"]: Liste der (tr_idx, va_idx) Tuples
 Ergebnis (MT, K Treatment-Arme):
   DataFrame mit Spalten: Y, T, Predictions_<model_name>_T1, ..., Predictions_<model_name>_T{K-1},
   OptimalTreatment_<model_name>, optional Train_<model_name>_T1, ..."""
@@ -265,11 +300,14 @@ Ergebnis (MT, K Treatment-Arme):
 
     last_fold_model = None
     last_fold_val_idx = None
+    fold_full_preds = None  # Dict {fold_idx: full_pred_array} für Fold-Aligned Surrogate
 
     if n_parallel >= 2 and len(folds) >= 2:
         # ── Parallele Fold-Verarbeitung ──
         # Thread-Backend: LightGBM/CatBoost geben den GIL frei → echte Parallelität.
         # Shared Memory: kein Serialisierungs-Overhead für X, Y, T.
+        # Fold-Full-Predictions werden parallel mitgesammelt (_fit_single_fold
+        # predictet auf X_all und gibt full_pred als 3. Rückgabewert zurück).
         try:
             from joblib import Parallel, delayed
 
@@ -283,11 +321,13 @@ Ergebnis (MT, K Treatment-Arme):
                 for tr_idx, va_idx in folds
             )
 
-            for va_idx, fold_pred in results:
+            fold_full_preds = {}
+            for fold_i, (va_idx, fold_pred, full_pred) in enumerate(results):
                 if is_mt:
                     preds[va_idx, :] = fold_pred
                 else:
                     preds[va_idx] = fold_pred
+                fold_full_preds[fold_i] = full_pred
 
             del results
             gc.collect()
@@ -304,13 +344,17 @@ Ergebnis (MT, K Treatment-Arme):
                 "%s: Parallele Fold-Verarbeitung fehlgeschlagen (%s). "
                 "Fallback auf sequentiell.", model_name, e,
             )
-            preds, last_fold_model, last_fold_val_idx = _run_folds_sequential(
-                model, X, Y, T, folds, preds, is_mt, keep_last_model=keep_last_fold_model)
+            preds, last_fold_model, last_fold_val_idx, fold_full_preds = _run_folds_sequential(
+                model, X, Y, T, folds, preds, is_mt,
+                keep_last_model=keep_last_fold_model,
+                collect_full_preds=True)
     else:
         # ── Sequentielle Fold-Verarbeitung ──
         _logger.info("%s: %d Folds sequentiell.", model_name, len(folds))
-        preds, last_fold_model, last_fold_val_idx = _run_folds_sequential(
-            model, X, Y, T, folds, preds, is_mt, keep_last_model=keep_last_fold_model)
+        preds, last_fold_model, last_fold_val_idx, fold_full_preds = _run_folds_sequential(
+            model, X, Y, T, folds, preds, is_mt,
+            keep_last_model=keep_last_fold_model,
+            collect_full_preds=True)
 
     # ── NaN-Check: Jedes Sample sollte genau einmal predicted worden sein ──
     n_nan = int(np.isnan(preds).sum()) if preds.ndim == 1 else int(np.isnan(preds).any(axis=1).sum())
@@ -354,13 +398,70 @@ Ergebnis (MT, K Treatment-Arme):
                     out[f"Train_{model_name}_T{k+1}"] = np.nan
             else:
                 out[f"Train_{model_name}"] = np.nan
+
+    # Fold-Aligned Predictions für Surrogate-Training (Leakage-Prävention).
+    # fold_full_preds[k] = Champion_k.predict(X_all), wobei Champion_k ohne Fold k trainiert wurde.
+    # fold_splits[k] = (tr_idx, va_idx) — gleiche Folds wie Cross-Prediction.
+    # Der Surrogate nutzt für seinen Fold k: fold_full_preds[k][tr_idx] als Target,
+    # wobei Champion_k den Val-Fold k NIE gesehen hat → komplett leakage-frei.
+    if fold_full_preds is not None:
+        store_fold_aligned_data(out, fold_full_preds, folds)
+
     if keep_last_fold_model:
         return out, last_fold_model, last_fold_val_idx
     return out
 
 
 # ---------------------------------------------------------------------------
-# Surrogate-Einzelbaum
+# Fold-Aligned Data: Sicherer Zugriff auf fold_aligned_preds / fold_splits
+# ---------------------------------------------------------------------------
+# DataFrame.attrs ist experimentell und wird bei vielen Pandas-Operationen
+# (.copy(), .merge(), .concat(), .reset_index()) NICHT propagiert.
+# Zur Absicherung: Daten werden zusätzlich in einem Modul-Level-Cache
+# gespeichert (WeakValueDictionary ist hier nicht möglich, da numpy-Arrays
+# keine Weak-Referenzen unterstützen). Der Cache wird bei jedem Aufruf
+# von store_fold_aligned_data() aktualisiert und bei get_fold_aligned_data()
+# als Fallback genutzt.
+# ---------------------------------------------------------------------------
+
+_fold_data_cache: dict[int, tuple[dict, list]] = {}
+
+
+def store_fold_aligned_data(
+    df: pd.DataFrame,
+    fold_aligned_preds: dict,
+    fold_splits: list,
+) -> None:
+    """Speichert Fold-Aligned Daten sowohl in DataFrame.attrs als auch im Modul-Cache."""
+    df.attrs["fold_aligned_preds"] = fold_aligned_preds
+    df.attrs["fold_splits"] = fold_splits
+    _fold_data_cache[id(df)] = (fold_aligned_preds, fold_splits)
+
+
+def get_fold_aligned_data(
+    df: pd.DataFrame,
+) -> tuple[dict | None, list | None]:
+    """Holt Fold-Aligned Daten — zuerst aus attrs, dann aus dem Modul-Cache.
+
+    Returns (fold_aligned_preds, fold_splits) oder (None, None) wenn nicht verfügbar.
+    Loggt eine Warnung wenn attrs verloren gegangen sind aber Cache noch da ist.
+    """
+    fa = df.attrs.get("fold_aligned_preds")
+    fs = df.attrs.get("fold_splits")
+    if fa is not None and fs is not None:
+        return fa, fs
+
+    # Fallback: Modul-Cache (überlebt .copy() etc.)
+    cached = _fold_data_cache.get(id(df))
+    if cached is not None:
+        _logger.warning(
+            "Fold-Aligned Daten aus attrs verloren (vermutlich durch DataFrame-Operation). "
+            "Fallback auf Modul-Cache. Tipp: DataFrame nicht kopieren/mergen bevor "
+            "Surrogate-Training die Fold-Daten konsumiert hat."
+        )
+        return cached
+
+    return None, None
 # ---------------------------------------------------------------------------
 
 SURROGATE_MODEL_NAME = "SurrogateTree"

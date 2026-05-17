@@ -28,8 +28,8 @@ constants:
   work_dir: null             # Arbeitsverzeichnis für alle Artefakte. null = RUBIN_WORK_DIR (Env) oder ./runs
   # Level steuert: Tuning-Trials, CV-Folds, Feature-Selektion, Evaluation
   # Level 1-2: DRTester-Plots für alle Modelle
-  # Level 3: DRTester nur für Champion + Challenger, sklift für alle
-  # Level 4: DRTester nur für Champion, sklift für alle
+  # Level 3: DRTester nur für Champion + Challenger, Uplift-Plots für alle
+  # Level 4: DRTester nur für Champion, Uplift-Plots für alle
 
 # --- DataPrep (optional) -------------------------------------
 data_prep:
@@ -49,7 +49,7 @@ data_prep:
   multiple_files_option: merge              # "merge" | "treatment_only"
   control_file_index: 0
   balance_treatments: false                  # Treatment-Raten pro Datei angleichen (Downsampling)
-  eval_file_index: null                      # Index der Datei für "Train Many, Evaluate One" (0-basiert)
+  eval_file_index: null                      # Index der Datei für "Train Many, Evaluate Some" (0-basiert)
   binary_target: true
   fill_na_method: median                    # "median" | "mean" | "zero" | "mode" | null
   deduplicate: false                        # true: Kunden auf 1 Eintrag pro ID reduzieren
@@ -69,7 +69,7 @@ data_files:
   eval_t_file: null                          # Separater Eval-Datensatz (Treatment)
   eval_y_file: null                          # Separater Eval-Datensatz (Outcome)
   eval_s_file: null                          # Separater Eval-Datensatz (Score, optional)
-  eval_mask_file: null                       # Boolean-Maske (.npy) für "Train Many, Evaluate One"
+  eval_mask_file: null                       # Boolean-Maske (.npy) für "Train Many, Evaluate Some"
   dtypes_file: data/processed/dtypes.json
 
 # --- Historischer Score ---------------------------------------
@@ -105,8 +105,7 @@ treatment:
 feature_selection:
   enabled: false
   methods: [catboost_importance, causal_forest]  # Union der Top-Features
-  top_pct: 15.0                              # Top-X% pro Methode behalten
-  max_features: null                         # Absolute Obergrenze nach Union
+  max_features: 77                           # Absolute Obergrenze nach Union (Default: 77)
   correlation_threshold: 0.9
 
 # --- Modellauswahl -------------------------------------------
@@ -136,26 +135,31 @@ base_learner:
   # auf orthogonalisierten Residuen). Überschreibbar per fixed_params.
   fixed_params: {}
 
-# --- CausalForestDML -----------------------------------------
+# --- CausalForest-Tuning (Optuna) ----------------------------
+# Optimiert Wald-Parameter für CausalForestDML und CausalForest via Optuna TPE.
 causal_forest:
   forest_fixed_params:
     n_jobs: -1
-  use_econml_tune: false
-  # tune_intensive wurde durch n_trials ersetzt (siehe causal_forest.n_trials)
-  tune_models: []                          # Welche GRF-Modelle tunen: ["CausalForestDML","CausalForest"]. Leer = alle.
-  econml_tune_params: auto
+  use_econml_tune: false                    # true = Optuna-basiertes CFT aktivieren (4 kausale Parameter: max_depth, min_weight_fraction_leaf, min_var_fraction_leaf, criterion)
+  tune_models: []                           # Welche GRF-Modelle tunen: ["CausalForestDML","CausalForest"]. Leer = alle.
+  n_trials: 50                              # Anzahl Optuna-Trials pro Modell
+  single_fold: false                        # true = nur 1 Fold pro Trial evaluieren (schneller, verrauschter)
+  tune_max_rows: null                       # Max. Zeilen für CFT (null = alle)
+  search_space: {}                          # User-Overrides für Float-Parameter-Suchraum (low/high)
+  # depth_choices: [3, 5, 7, 10, 15, None] # Kategorische Auswahl für max_depth (Default: alle 6)
+  # criterion_choices: [mse, het]           # Kategorische Auswahl für criterion (Default: beide)
 
 # --- Base-Learner-Tuning (Optuna) ----------------------------
 # Optimiert die Nuisance-Modelle (Outcome, Propensity).
 # Diese sind Klassifikatoren (Binary Outcome / Binary Treatment).
 tuning:
-  enabled: true
+  enabled: false
   n_trials: 50
   timeout_seconds: null
-  cv_splits: 5                            # Innere CV-Folds pro Tuning-Trial (Default=3, EconML-Default=2)
+  cv_splits: 5                            # Innere CV-Folds pro Tuning-Trial (Default=5, synchronisiert mit dml_crossfit_folds)
   single_fold: false                       # true = nur 1 Fold pro Trial evaluieren (schneller, verrauschter)
-  metric: log_loss                          # Klassifikation: log_loss (Default, misst Kalibrierung — wichtig für DML-Residualisierung), pr_auc, roc_auc, accuracy
-  metric_regression: neg_mse                 # Regression: neg_mse, neg_rmse, neg_mae, r2
+  metric: log_loss                          # Fest: log_loss für Klassifikation (misst Kalibrierung — wichtig für DML-Residualisierung). Zusätzlich wird Skill Score geloggt.
+  metric_regression: neg_mse                 # Fest: neg_mse für Regression. Zusätzlich wird R² geloggt.
   overfit_penalty: 0.0                       # Train-Val-Gap-Penalty (0=deaktiviert). Bestraft Nuisance-Overfitting. Empfohlen: 0.2–0.5
   overfit_tolerance: 0.15                    # Relativer Gap-Schwellwert (15% für BLT — DML-Orthogonalität kompensiert Nuisance-Overfitting)
   storage_path: null
@@ -248,7 +252,6 @@ final_model_tuning:
 # --- Explainability-Voreinstellungen -------------------------
 shap_values:
   calculate_shap_values: false
-  shap_calculation_models: []
   n_shap_values: 10000
   top_n_features: 20
   num_bins: 10

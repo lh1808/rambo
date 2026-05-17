@@ -16,9 +16,9 @@ flowchart TD
     B -->|X/T/Y/S.parquet| D[AnalysisPipeline]
 
     D --> D1[Feature-Selektion]
-    D1 -->|LGBM Gain + CausalForest Union| D2[Base-Learner-Tuning]
-    D2 -->|Optuna| D3[Final-Model-Tuning]
-    D3 -->|R-Score / DR-Score| D4[Training]
+    D1 -->|CatBoost/LGBM Importance + CausalForest Union| D2[Base-Learner-Tuning]
+    D2 -->|Optuna TPE| D3[Final-Model-Tuning + CF-Tuning]
+    D3 -->|R-Score (RScorer)| D4[Training]
     D4 --> D5[Evaluation]
     D5 -->|Qini, AUUC, Uplift@k, Policy Value| D6[Champion-Auswahl]
     D6 --> D7[Surrogate-Einzelbaum]
@@ -75,6 +75,7 @@ Die DataPrep-Konfiguration (`dataprep_config.yml`) wird automatisch nach MLflow 
 ### Schritt 2: Feature-Selektion (optional)
 Vierstufiger Prozess:
 1. **Importances berechnen** (auf ALLEN Features) — mehrere Methoden kombinierbar:
+   - **catboost_importance**: CatBoost auf Outcome (Y), PredictionValuesChange-Importance (Default)
    - **lgbm_importance**: LightGBM auf Outcome (Y), Gain-Importance
    - **causal_forest**: GRF CausalForest Feature-Importances (kausale Heterogenität)
 2. **Korrelationsfilter** (importance-gesteuert) — bei korrelierten Paaren (|r| > Schwellwert) wird das Feature mit der niedrigeren aggregierten Importance entfernt. Pearson zuerst, dann Spearman nur auf überlebenden Spalten.
@@ -85,19 +86,20 @@ Die LightGBM-Fits nutzen automatisch native kategoriale Splits (via `categorical
 
 ### Schritt 3: Base-Learner-Tuning (optional)
 
-Kategorische Features und der `partialmethod`-Patch: EconML konvertiert die Feature-Matrix `X` intern über sklearn's `check_array` zu einem numpy-Array. Dabei gehen pandas category-Dtypes verloren — LightGBM und CatBoost erhalten dann nur float64-Werte und nutzen ordinale statt kategoriale Splits (deutlich schwächere Modellierung bei nominalen Features). Der `patch_categorical_features()`-Context-Manager (`rubin/utils/categorical_patch.py`) löst das, indem er die `.fit()`-Methoden von `LGBMClassifier`, `LGBMRegressor`, `CatBoostClassifier` und `CatBoostRegressor` auf Klassen-Ebene mit `functools.partialmethod` patcht. Damit wird `categorical_feature=<indices>` (LightGBM) bzw. `cat_features=<indices>` (CatBoost) bei jedem `.fit()`-Aufruf automatisch übergeben — auch wenn EconML intern nur `model.fit(X_numpy, y)` aufruft. Die Spaltenindizes werden über `_detect_cat_indices()` aus den aktuellen category-/object-Spalten von X ermittelt. In der Pipeline gibt es zwei Patch-Kontexte: (1) Feature-Selektion — mit den Spaltenindizes vor FS, damit kategorische Features in der LightGBM-Importance nicht unterbewertet werden. (2) Tuning + Training + Evaluation + Surrogate + Refit — mit den Spaltenindizes nach FS. Der Patch wirkt auf Klassen-Ebene, d.h. alle Instanzen innerhalb des `with`-Blocks sind betroffen (inkl. Optuna-Trials, Cross-Prediction-Folds, DRTester-Nuisance, Surrogate-Bäume). Im `finally`-Block werden die Originale immer wiederhergestellt — kein globaler State-Leak.
+Optimiert Nuisance-Modelle (Outcome, Propensity, Regression) über Optuna TPE mit signatur-basiertem Task-Sharing. Jeder Task wird als eigenständige Optuna-Study mit fester Metrik (log_loss für Klassifikation, neg_mse für Regression) und optionaler Overfit-Penalty evaluiert. Zusätzlich werden Skill Scores (Verbesserung gegenüber naivem Baseline-Modell) berechnet und geloggt. Details in `docs/tuning_optuna.md`.
+
+**Kategorische Features und der `partialmethod`-Patch:** EconML konvertiert die Feature-Matrix `X` intern über sklearn's `check_array` zu einem numpy-Array. Dabei gehen pandas category-Dtypes verloren — LightGBM und CatBoost erhalten dann nur float64-Werte und nutzen ordinale statt kategoriale Splits (deutlich schwächere Modellierung bei nominalen Features). Der `patch_categorical_features()`-Context-Manager (`rubin/utils/categorical_patch.py`) löst das, indem er die `.fit()`-Methoden von `LGBMClassifier`, `LGBMRegressor`, `CatBoostClassifier` und `CatBoostRegressor` auf Klassen-Ebene mit `functools.partialmethod` patcht. Damit wird `categorical_feature=<indices>` (LightGBM) bzw. `cat_features=<indices>` (CatBoost) bei jedem `.fit()`-Aufruf automatisch übergeben — auch wenn EconML intern nur `model.fit(X_numpy, y)` aufruft. Die Spaltenindizes werden über `_detect_cat_indices()` aus den aktuellen category-/object-Spalten von X ermittelt. In der Pipeline gibt es zwei Patch-Kontexte: (1) Feature-Selektion — mit den Spaltenindizes vor FS, damit kategorische Features in der LightGBM-Importance nicht unterbewertet werden. (2) Tuning + Training + Evaluation + Surrogate + Refit — mit den Spaltenindizes nach FS. Der Patch wirkt auf Klassen-Ebene, d.h. alle Instanzen innerhalb des `with`-Blocks sind betroffen (inkl. Optuna-Trials, Cross-Prediction-Folds, DRTester-Nuisance, Surrogate-Bäume). Im `finally`-Block werden die Originale immer wiederhergestellt — kein globaler State-Leak.
 
 ### Schritt 4: Final-Model-Tuning & CausalForest-Tuning (optional)
 
-**Final-Model-Tuning (FMT):** Optimiert die Hyperparameter von model_final (CATE-Effektmodell) per Optuna. Beide FMT-Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit est.score(). Ohne FMT verwendet model_final ausschließlich LightGBM/CatBoost-Standardwerte.
+**Final-Model-Tuning (FMT):** Optimiert die Hyperparameter von model_final (CATE-Effektmodell) per Optuna. Beide FMT-Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit externem RScorer (unabhängige Nuisance). Ohne FMT verwendet model_final ausschließlich LightGBM/CatBoost-Standardwerte.
 
-CausalForestDML ist bewusst nicht Teil des FMT: Sein „model_final" ist der GRF-Forest selbst — keine LightGBM/CatBoost-Hyperparameter, die per Optuna tuned werden könnten. Die Wald-Parameter werden stattdessen über einen separaten Grid-Search optimiert.
+CausalForestDML ist bewusst nicht Teil des FMT: Sein „model_final" ist der GRF-Forest selbst — keine LightGBM/CatBoost-Hyperparameter, die per Optuna tuned werden könnten. Die Wald-Parameter werden stattdessen über CFT (CausalForestTuner, Optuna TPE) optimiert.
 
-**CausalForestDML tune():** EconMLs eingebauter Grid-Search über Wald-Parameter (min_weight_fraction_leaf, max_depth, min_var_fraction_leaf — 12 oder 48 Kombinationen). Verwendet alle Daten — EconML evaluiert intern via RScorer (R-Learner-Loss nach Nie & Wager 2017), der kreuzvalidierte DML-Nuisance-Residuen für die Bewertung nutzt.
+**CausalForest-Tuning (CFT):** Optimiert 4 kausale Parameter (max_depth, min_weight_fraction_leaf, min_var_fraction_leaf, criterion) für CausalForestDML und CausalForest via Optuna TPE (aligniert mit EconML tune()). Restliche Wald-Parameter auf EconML-Defaults fixiert. Trials laufen sequentiell (n_jobs=1), Forest intern nutzt alle Kerne.
 
-**CausalForest tune():** Eigener OOB Grid-Search mit demselben Hyperparameter-Grid. Jede Kombination wird auf allen Daten trainiert und über Out-of-Bag-Predictions per R-Loss bewertet. OOB ist die korrekte Evaluationsmethode für den reinen GRF (Athey/Wager), da keine separaten Nuisance-Modelle vorhanden sind — der RScorer wäre hier konzeptionell nicht passend.
-
-**CausalForest tune():** Eigener Grid-Search (min_samples_leaf, max_depth, max_samples, criterion — 24 Kombinationen, R-Loss). Nutzt denselben First-Fold-Split (Train + Val für Evaluation). CausalForest hat keine Nuisance-Modelle — der Grid-Search optimiert direkt die Forest-Parameter.
+- **CausalForestDML:** Nuisance wird einmalig gecacht (`cache_values=True`). Trials ändern Forest-Parameter via `setattr()` + `refit_final()` (kein `set_params()` — CausalForestDML ist kein sklearn BaseEstimator). Bei RCT: `model_t = DummyClassifier(strategy="prior")` im Cache.
+- **CausalForest:** Nuisance-Residuen einmalig vorberechnet. Pro Trial frischer `CausalForest(**params)` mit Params im Konstruktor.
 
 #### Fairness der Hyperparameter-Selektion
 
@@ -106,13 +108,16 @@ Alle Tuning-Schritte (BL-Tuning, FMT, CF tune) verwenden den First-Fold-Training
 Dieses Design stellt Fairness im Modellvergleich sicher:
 
 1. **Holdout-Prinzip:** ~20% der Daten (erster Fold Val) werden von keinem Tuning-Schritt gesehen. Beim Training kommen diese Daten erstmals in den äußeren CV-Folds zum Einsatz — die Hyperparameter wurden nicht auf ihnen optimiert.
-2. **FMT-Zielfunktion ≠ Evaluationsmetrik:** FMT optimiert die negierte native est.score()-Metrik (R-Loss für NonParamDML, DR-MSE für DRLearner), nicht QINI oder AUUC. Die FMT-Zielfunktion und die Modellvergleichs-Metrik sind verschieden — bessere FMT-Scores garantieren keine besseren QINI-Werte. Es gibt keinen Evaluations-Leak.
+2. **FMT-Zielfunktion ≠ Evaluationsmetrik:** FMT optimiert den R-Score (normalisiert gegen Intercept-Only-Baseline), nicht QINI oder AUUC. Die FMT-Zielfunktion und die Modellvergleichs-Metrik sind verschieden — bessere FMT-Scores garantieren keine besseren QINI-Werte. Es gibt keinen Evaluations-Leak.
 3. **Konsistente Datenbasis:** Alle Tuning-Schritte nutzen denselben stratifizierten Split (identischer Seed, T×Y-Stratifizierung). BL-Tuning, FMT und CF tune sehen exakt dieselben Trainingszeilen.
-4. **Kein struktureller Vorteil durch FMT:** Meta-Learner haben kein model_final → kein FMT nötig. CausalForestDML nutzt Forest-Grid-Search statt FMT. CausalForest hat weder Nuisance noch model_final. Der Vergleich ist fair, da FMT ein inhärentes Feature der DML-Architektur ist — nicht ein Evaluations-Vorteil.
+4. **Kein struktureller Vorteil durch FMT:** Meta-Learner haben kein model_final → kein FMT nötig. CausalForestDML nutzt eigenes CFT (Optuna-basiertes Wald-Parameter-Tuning) statt FMT. CausalForest hat weder Nuisance noch model_final. Der Vergleich ist fair, da FMT ein inhärentes Feature der DML-Architektur ist — nicht ein Evaluations-Vorteil.
+5. **Dual-Seed-System (Val-Set-Overfitting-Schutz):** Tuning-CV-Folds (`tuning_seed=18`) und Training/Evaluation-Folds (`SEED=42`) verwenden verschiedene Seeds. Dadurch werden die Hyperparameter auf anderen Fold-Grenzen evaluiert als beim Tuning, was Selection Bias verhindert. Dies ist ein recheneffizienter Ersatz für volle Nested CV (die K × n_trials zusätzliche Trials erfordern würde). Siehe `docs/tuning_optuna.md → Val-Set-Overfitting-Schutz` für Details.
 
 ### Schritt 5: Training
 
-Alle Modelle durchlaufen externe K-Fold Cross-Validation. Für jede Beobachtung wird eine CATE-Prediction aus einem Modell erzeugt, das diese Beobachtung nicht gesehen hat (Out-of-Fold).
+Alle Modelle durchlaufen externe K-Fold Cross-Validation. Für jede Beobachtung wird eine CATE-Prediction aus einem Modell erzeugt, das diese Beobachtung nicht gesehen hat (Out-of-Fold). Zusätzlich wird pro Fold auf dem gesamten Datensatz predictet (Fold-Aligned Predictions in `DataFrame.attrs["fold_aligned_preds"]`) für leakage-freies Surrogate-Training.
+
+Bei RCT (`study_type: "rct"`) werden alle Propensity-Rollen (model_t, model_propensity, propensity_model) durch `DummyClassifier(strategy="prior")` ersetzt — konstante Propensity P(T|X) = mean(T).
 
 DML/DR-Modelle (NonParamDML, ParamDML, CausalForestDML, DRLearner) nutzen zusätzlich internes Cross-Fitting für die Nuisance-Residualisierung innerhalb jedes äußeren Folds. Das interne Cross-Fitting erzeugt OOF-Nuisance-Residuals (Y_res, T_res), aber model_final trainiert auf allen Residuals des äußeren Trainings-Folds — ohne externe CV wären die CATE-Predictions daher nicht out-of-fold.
 
@@ -130,16 +135,18 @@ Die Evaluation läuft in drei Phasen:
 
 1. **Schnelle Metriken + CATE-Verteilung (alle Modelle):** Qini, AUUC, Uplift@10/20/50%, Policy Value — reines NumPy, <1s pro Modell. Grundlage für Champion-Selektion (nur trainierte Modelle, historischer Score ausgeschlossen). CATE-Verteilungs-Histogramme (Training + Cross-Validated) zeigen die Effektverteilung pro Modell.
 2. **DRTester-Diagnostik (Level-abhängig):** Calibration, Qini/TOC mit Bootstrap-CIs. Nuisance-Modelle nutzen leichtere Varianten (n_estimators≤100, cv=5) für schnelleres Fitting. Level 1–2: alle Modelle, Level 3: Champion + Challenger, Level 4: nur Champion. Jeder Sub-Test (BLP, Cal, Qini, TOC) läuft in einem eigenen try/except — wenn BLP crasht, werden Qini/TOC und Policy Values trotzdem berechnet.
-3. **Uplift-Plots (alle Modelle):** Qini-Kurve, Uplift-by-Percentile, Treatment-Balance — immer für alle Modelle, da schnell (~2-5s). Alle Plots sind native rubin-Implementierungen mit rubin-Farbpalette (kein sklift).
+3. **Uplift-Plots (alle Modelle):** Qini-Kurve, Uplift-by-Percentile, Treatment-Balance, Score-Redistribution (wenn historischer Score vorhanden), Custom Qini vs. Historisch — immer für alle Modelle, da schnell (~2-5s). Alle Plots sind native rubin-Implementierungen mit rubin-Farbpalette.
 
 Optional: Vergleich gegen historischen Score (Policy-Value-Comparison als letzter Schritt, nachdem alle Modell- und Historical-Policy-Values berechnet sind). Bei MT werden die DRTester-Nuisance-Fits pro Arm bei Level 3–4 parallel ausgeführt. Bei aktiver Eval-Maske (`eval_mask_file`) werden die Metriken und DRTester-Plots nur auf den markierten Zeilen berechnet, Evaluation wird nur auf den Mask-Zeilen berechnet, Training auf allen Daten (Train Many, Evaluate Some). Der pre-fitted DRTester (`fitted_tester_bt`) wird aus `_run_evaluation` an `run()` zurückgegeben und für den Surrogate-Block wiederverwendet.
 
 ### Schritt 7: Surrogate-Einzelbaum
-rubin trainiert einen Surrogate-Einzelbaum auf den **Train-Predictions (Full-Data-Refit) des Champions**, wenn `surrogate_tree.enabled: true`. Die Train-Predictions repräsentieren die vom Champion tatsächlich gelernte CATE-Funktion — der Surrogate lernt diese per Knowledge Distillation nach. Cross-Validation (K-Fold, identisch zur äußeren CV) erzeugt OOS-Predictions für faire Vergleichbarkeit mit dem Champion. Abschließend wird der Surrogate auf allen Daten nachtrainiert.
+rubin trainiert einen Surrogate-Einzelbaum wenn `surrogate_tree.enabled: true`. Der Surrogate nutzt **Fold-Aligned Predictions** für komplett leakage-freies Training:
+
+- **K-Fold CV (Evaluation):** Für Surrogate-Fold k wird Champion_k's Prediction als Target verwendet. Champion_k hat Fold k nie gesehen → kein Informationspfad von Val-Samples ins Training. Ensemble-Champion: Fold-Aligned aus Einzelmodellen gemittelt.
+- **Final-Fit (Produktion):** Trainiert auf Full-Data-Refit-Predictions des Champions (weniger Rauschen, keine Evaluation darauf).
+- **Volle Evaluation:** Metriken, DRTester (BLP, Calibration, Qini/TOC-CIs, Policy Values), Uplift-Plots, Score-Redistribution, Custom Qini — identisch zum Champion.
 
 Der Surrogate nutzt LightGBM oder CatBoost mit `n_estimators=1`. Bei Multi-Treatment wird pro Arm ein separater Baum erzeugt.
-
-**Target:** Die **Cross-Predicted CATEs** (`Predictions_`-Spalte) werden als Regressionsziel verwendet — jedes Sample hat einen CATE aus einem Modell, das es nie gesehen hat. Zusätzlich wird eine eigene KFold-CV auf dem Surrogate durchgeführt, damit auch die Surrogate-Metriken ehrlich sind. Für den finalen Export wird der Surrogate auf allen Daten neu trainiert.
 
 ### Schritt 8: Champion-Auswahl + Bundle-Export
 Bestes Modell anhand der konfigurierten Metrik (Standard: Qini). Optional manuell festlegbar. Bei `refit_champion_on_full_data: true` wird der Champion vor dem Export auf allen Daten refittet. Sonderfall Ensemble: Alle Einzelmodelle werden refittet, dann wird ein neues `EnsembleCateEstimator` mit den refitteten Modellen erstellt. Bundle-Export schreibt alle Production-Artefakte synchron.
@@ -220,7 +227,7 @@ rubin unterstützt neben Binary Treatment (T ∈ {0,1}) auch Multi-Treatment (T 
 | Modelle | Alle 8 (inkl. CausalForest) | DML-Familie + DRLearner (4) |
 | Evaluation | Qini, AUUC, Uplift@k, PV | Pro-Arm-Metriken + per-Arm PV + globaler Policy Value (IPW) |
 | Champion-Metrik | `qini` (empfohlen) | `policy_value` (empfohlen), alternativ `policy_value_T1`, `qini_T1` etc. |
-| Propensity-Tuning | Binäre AUC | `roc_auc_ovr` (Multiclass) |
+| Propensity-Tuning | log_loss (binär) | log_loss (Multiclass, automatisch) |
 | Production-Output | `cate_<M>` | `cate_<M>_T1…`, `optimal_treatment`, `confidence` |
 | Surrogate | 1 Baum | 1 Baum pro Arm |
 | Explainability | SHAP auf CATE(X) | SHAP auf max(τ_k(X)) |
@@ -237,16 +244,16 @@ Zwei getrennte Steuerungsparameter:
 - **`n_jobs`**: Steuert die Parallelisierung innerhalb eines Estimators (z.B. Baumbildung bei CausalForest, interne Cross-Fitting-Folds bei EconML).
 - **`parallel_jobs`**: Steuert die Kerne pro Base-Learner-Fit (CatBoost `thread_count`, LightGBM `n_jobs`).
 
-Die zentrale Regel: **Gesamtauslastung ≈ verfügbare Kerne**. Wenn mehrere Fits parallel laufen (BLT/FMT), bekommt jeder weniger Kerne. Wenn Fits sequentiell laufen (CFT, FS, Training von CausalForest), bekommt jeder alle Kerne.
+Die zentrale Regel: **Gesamtauslastung ≈ verfügbare Kerne**. Wenn mehrere Fits parallel laufen (BLT), bekommt jeder weniger Kerne. Wenn Fits sequentiell laufen (FMT, CFT, FS, Training von CausalForest), bekommt jeder alle Kerne.
 
 ### Parallelisierungs-Level (constants.parallel_level)
 
-| Level | BLT parallel_jobs | BLT Trials parallel | FMT parallel_jobs | FMT Trials parallel | CFT/CF | Training Folds |
-|-------|-------------------|---------------------|-------------------|---------------------|--------|----------------|
-| 1     | 1                 | 1                   | 1                 | 1                   | 1 Kern | sequentiell    |
-| 2     | -1 (alle)         | 1                   | -1 (alle)         | 1                   | alle   | sequentiell    |
-| 3     | cores/workers     | cores//4            | cores/workers     | cores//8            | alle   | parallel       |
-| 4     | cores/workers     | cores//4            | cores/workers     | cores//8            | alle   | parallel (max) |
+| Level | BLT parallel_jobs | BLT Trials parallel | FMT/CFT parallel_jobs | FMT/CFT Trials | Training Folds |
+|-------|-------------------|---------------------|-----------------------|----------------|----------------|
+| 1     | 1                 | 1                   | -1 (alle)             | 1 (sequentiell, cache_values) | sequentiell    |
+| 2     | -1 (alle)         | 1                   | -1 (alle)             | 1 (sequentiell, cache_values) | sequentiell    |
+| 3     | cores/workers     | cores//4            | -1 (alle)             | 1 (sequentiell, cache_values) | parallel       |
+| 4     | cores/workers     | cores//4            | -1 (alle)             | 1 (sequentiell, cache_values) | parallel (max) |
 
 ### CFT: CPU-Parallelisierung bei CFDML und GRF
 
@@ -266,7 +273,7 @@ CausalForestDML(n_jobs=-1, model_y=CatBoost(thread_count=-1)):
 **Standalone Nuisance-Fits** (GRF Residuen-Vorberechnung vor dem Optuna-Loop) laufen ebenfalls sequentiell mit `parallel_jobs=-1`.
 
 ```
-tune_causal_forest():
+CausalForestTuner.tune():
   ┌─ GRF Residuen-Vorberechnung (VOR Optuna) ─┐
   │  model_y.fit()  → parallel_jobs=-1  (alle CPUs)
   │  model_t.fit()  → parallel_jobs=-1  (alle CPUs)
@@ -294,6 +301,6 @@ Bei CausalForestDML und CausalForest wird `ctx.parallel_jobs` explizit auf `-1` 
 
 Feature-Importance-Methoden laufen immer sequentiell (auch bei Level 3/4), da CausalForest-GRF intern joblib-Prozesse spawnt. Jede Methode bekommt `n_jobs=-1` (alle Kerne). Bei `parallel_level=1` wird `n_jobs=1` erzwungen.
 
-### Warum FMT cores//8 statt cores//4 (wie BLT)
+### Warum FMT/CFT sequentiell (n_jobs=1)
 
-FMT-Trials sind ~13× schwerer als BLT-Trials: Jeder Trial fittet ein vollständiges DML/DR-Modell mit internem Cross-Fitting (K Folds × model_y + model_t + model_final + est.score()). Bei `cores//4` würden zu viele schwere Trials gleichzeitig laufen → RAM-Überlastung und CPU-Kontextwechsel.
+FMT und CFT nutzen `cache_values=True`: Die Nuisance-Modelle werden einmalig pro äußerem Fold gecacht, danach fitten Trials nur noch `model_final` via `refit_final()`. Da `refit_final()` den gecachten Estimator in-place modifiziert, ist parallele Trial-Ausführung nicht thread-safe. Die sequentielle Ausführung ist trotzdem schnell, weil die Nuisance-Phase (~80% der Laufzeit) komplett entfällt. Jeder `refit_final()`-Aufruf und der RScorer nutzen alle Kerne (`parallel_jobs=-1`).

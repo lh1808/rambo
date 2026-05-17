@@ -109,22 +109,19 @@ class TestLoadConfig:
         path = _write_config(tmp_path, minimal_raw)
         cfg = load_config(path)
         assert cfg.feature_selection.enabled is False
-        assert cfg.feature_selection.methods == ["lgbm_importance"]
-        assert cfg.feature_selection.top_pct == 15.0
-        assert cfg.feature_selection.max_features is None
+        assert cfg.feature_selection.methods == ["catboost_importance"]
+        assert cfg.feature_selection.max_features == 77
         assert cfg.feature_selection.correlation_threshold == 0.9
 
     def test_feature_selection_multiple_methods(self, tmp_path, minimal_raw):
         minimal_raw["feature_selection"] = {
             "enabled": True,
             "methods": ["lgbm_importance", "causal_forest"],
-            "top_pct": 20.0,
             "max_features": 50,
         }
         path = _write_config(tmp_path, minimal_raw)
         cfg = load_config(path)
         assert cfg.feature_selection.methods == ["lgbm_importance", "causal_forest"]
-        assert cfg.feature_selection.top_pct == 20.0
         assert cfg.feature_selection.max_features == 50
 
     def test_feature_selection_old_method_field_rejected(self, tmp_path, minimal_raw):

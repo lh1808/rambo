@@ -6,7 +6,10 @@ Die Registry kapselt,
 - wie ein Modell instanziiert wird,
 - wie Base Learner (LightGBM/CatBoost) konsistent gebaut werden.
 Die Konfiguration bleibt damit schlank; die Factory kümmert sich um die
-konkrete Modellinstanziierung."""
+konkrete Modellinstanziierung.
+Bei RCT (is_rct=True) werden Propensity-Rollen automatisch durch
+DummyClassifier(strategy="prior") ersetzt. CausalForest-Parameter
+werden via _sanitize_forest_params validiert (n_estimators ÷ 4)."""
 
 
 from dataclasses import dataclass, field
@@ -18,7 +21,7 @@ from sklearn.model_selection import StratifiedKFold
 from econml.metalearners import SLearner, TLearner, XLearner
 from econml._cate_estimator import BaseCateEstimator
 
-from rubin.tuning_optuna import build_base_learner
+from rubin.tuning.common import build_base_learner
 
 
 class CausalForestAdapter(BaseCateEstimator):
@@ -107,8 +110,8 @@ class CausalForestAdapter(BaseCateEstimator):
             R-Score = 1 - E[(Y_res - τ(X)·T_res)²] / base_loss
 
         Höher = besser. Misst, wie viel zusätzliche Varianz das CATE-Modell
-        gegenüber einem konstanten Effekt erklärt. Identisch mit der Metrik,
-        die CausalForestDML.tune() intern verwendet.
+        gegenüber einem konstanten Effekt erklärt. Identisch mit der R-Score-Metrik,
+        die im CFT (CausalForest-Tuning via Optuna) und FMT verwendet wird.
 
         Args:
             rscorer: Vorgefitteter RScorer. Wenn None, wird einer erstellt.
@@ -145,7 +148,7 @@ class CausalForestAdapter(BaseCateEstimator):
             rscorer.fit(Y_np, T_np, X=X_np)
 
         fixed_params = {
-            "n_estimators": self._kwargs.get("n_estimators", 200),
+            "n_estimators": self._kwargs.get("n_estimators", 100),
             "random_state": self._kwargs.get("random_state", 42),
             "n_jobs": self._kwargs.get("n_jobs", -1),
         }
@@ -203,6 +206,12 @@ class ModelContext:
     mc_iters: Optional[int] = None
     mc_agg: str = "mean"
 
+    # RCT-Modus: Bei randomisierten Experimenten wird für Propensity-Rollen
+    # (model_t, model_propensity) ein DummyClassifier(strategy="prior") verwendet,
+    # der P(T|X) = empirische Treatment-Rate als Konstante vorhersagt.
+    # BLT diagnostiziert vorab, dass Propensity-Skill ≈ 0 (bestätigt RCT).
+    is_rct: bool = False
+
     def params_for(self, role: str) -> Dict[str, Any]:
         # Zuerst rollen-spezifisch, sonst 'default', sonst leer.
         return dict(self.tuned_params.get(role) or self.tuned_params.get("default") or {})
@@ -229,8 +238,12 @@ class ModelRegistry:
 
 def default_registry() -> ModelRegistry:
     """Standard-Registry der verfügbaren kausalen Learner.
+
 Alle Base Learner werden konsistent über `ctx.base_learner_type` und `ctx.tuned_params`
-erzeugt."""
+erzeugt. Bei `ctx.is_rct=True` werden Propensity-Rollen (model_t, model_propensity,
+propensity_model) durch `DummyClassifier(strategy="prior")` ersetzt.
+CausalForest-Parameter werden via `_sanitize_forest_params` validiert
+(n_estimators muss durch subforest_size=4 teilbar sein)."""
     reg = ModelRegistry()
 
     def _base(ctx: ModelContext, role: str):
@@ -261,23 +274,30 @@ erzeugt."""
         #   cate_models        — Pseudo-Outcome-Regression (XLearner)
         #   overall_model      — SLearner: EconML ruft predict() auf, NICHT predict_proba
         #   models             — TLearner/XLearner: EconML ruft predict() auf
-        #   model_regression   — DRLearner: E[Y|X,T]-Modell. DRLearner hat KEIN
-        #                        discrete_outcome → ruft predict() direkt auf.
-        #                        Classifier → predict()={0,1} → DR-Pseudo-Outcomes kaputt!
-        #                        Regressor → predict()=E[Y|X] → korrekt.
         #
         # CLASSIFIER (EconML nutzt intern predict_proba):
         #   model_y            — NonParamDML: discrete_outcome=True → predict_proba
         #   model_t            — NonParamDML: discrete_treatment=True → predict_proba
         #   model_propensity   — DRLearner: Propensity-Score via predict_proba
         #   propensity_model   — XLearner: Propensity-Score via predict_proba
+        #   model_regression   — DRLearner: discrete_outcome=True → Classifier (predict_proba)
+        #                        BLT und Training nutzen beide Logloss für konsistente Hyperparameter.
         #
         regressor_roles = {
             "model_final", "cate_models",
             "overall_model", "models",       # Meta-Learner Outcome-Modelle
-            "model_regression",              # DRLearner Outcome-Modell
         }
         task = "regressor" if role in regressor_roles else "classifier"
+
+        # RCT-Modus: Propensity-Rollen erhalten DummyClassifier(strategy="prior"),
+        # der P(T|X) = empirische Treatment-Rate als Konstante vorhersagt.
+        # BLT diagnostiziert vorab, ob Propensity-Skill ≈ 0 (bestätigt RCT).
+        # Ohne dies overfittet das Propensity-Modell auf Rauschen → verzerrte DML-Residuen.
+        _propensity_roles = {"model_t", "model_propensity", "propensity_model"}
+        if ctx.is_rct and role in _propensity_roles:
+            from sklearn.dummy import DummyClassifier
+            return DummyClassifier(strategy="prior")
+
         return build_base_learner(ctx.base_learner_type, params, seed=ctx.seed, task=task, parallel_jobs=ctx.parallel_jobs)
 
     # DML family
@@ -286,7 +306,7 @@ erzeugt."""
         lambda ctx: NonParamDML(
             model_y=_base(ctx, "model_y"),
             model_t=_base(ctx, "model_t"),
-            # Das Final-Modell ist frei wählbar und wird optional über R-Loss/R-Score getunt.
+            # Das Final-Modell ist frei wählbar und wird optional über R-Score getunt.
             model_final=_base(ctx, "model_final"),
             discrete_treatment=True,
             discrete_outcome=True,
@@ -294,6 +314,7 @@ erzeugt."""
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
+            allow_missing=True,
         ),
     )
     # ParamDML nutzt EconMLs LinearDML, d. h. das Final-Modell nimmt eine lineare
@@ -310,23 +331,47 @@ erzeugt."""
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
+            allow_missing=True,  # Nur W — LinearDML final model kann kein NaN in X
         ),
     )
 
     # CausalForestDML kombiniert DML-Residualisierung (mit Nuisance-Modellen für Outcome und
     # Treatment) mit einem Causal Forest als letzter Stufe. Daher werden auch hier Base Learner
-    # (model_y, model_t) verwendet. Wald-Parameter haben bewusst konservative Defaults
-    # (statt EconML-Defaults), um Overfitting auf lokale Muster zu vermeiden.
+    # (model_y, model_t) verwendet. Wald-Parameter orientieren sich an EconML-Defaults.
+    # CFT (CausalForest-Tuning via Optuna) kann max_depth, min_weight_fraction_leaf,
+    # min_var_fraction_leaf und criterion weiter optimieren.
     _CFDML_DEFAULTS = {
-        "n_estimators": 200,
-        "max_depth": 5,
-        "min_samples_leaf": 200,
-        "min_samples_split": 500,
-        "max_features": 0.3,
-        "max_samples": 0.45,
-        "min_var_fraction_leaf": 0.01,
-        "min_impurity_decrease": 0.0,
+        "n_estimators": 500,                  # Production Default (Tuning nutzt 100)
+        "criterion": "mse",                   # EconML Default
+        "max_depth": None,                    # EconML Default: unbegrenzt — CFT kann optimieren
+        "min_samples_leaf": 5,                # EconML Default
+        "min_samples_split": 10,              # EconML Default
+        "min_weight_fraction_leaf": 0.0,      # EconML Default — CFT kann optimieren
+        "max_features": "auto",               # EconML Default: 'auto' = n_features (alle Features pro Split)
+        "max_samples": 0.45,                  # EconML Default
+        "min_var_fraction_leaf": None,         # EconML Default: None — CFT kann optimieren
+        "min_impurity_decrease": 0.0,          # EconML Default
     }
+    def _sanitize_forest_params(defaults: dict, tuned: dict) -> dict:
+        """Merged Forest-Params mit Validierung.
+
+        Entfernt Keys die im Konstruktor explizit gesetzt werden (model_y, model_t,
+        discrete_treatment, discrete_outcome, cv, random_state, n_jobs, inference,
+        mc_iters, mc_agg) → verhindert 'got multiple values for keyword argument'.
+        n_estimators muss durch subforest_size=4 teilbar sein.
+        """
+        merged = {**defaults, **tuned}
+        # Keys die im CausalForestDML/CausalForestAdapter-Konstruktor
+        # explizit gesetzt werden, dürfen nicht im **kwargs-Unpack sein.
+        for _ek in ("model_y", "model_t", "discrete_treatment", "discrete_outcome",
+                     "cv", "random_state", "n_jobs", "inference", "mc_iters", "mc_agg"):
+            merged.pop(_ek, None)
+        if "n_estimators" in merged:
+            ne = int(merged["n_estimators"])
+            if ne % 4 != 0:
+                merged["n_estimators"] = max(4, (ne // 4) * 4)
+        return merged
+
     reg.register(
         "CausalForestDML",
         lambda ctx: CausalForestDML(
@@ -338,8 +383,10 @@ erzeugt."""
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
-            **{k: {**_CFDML_DEFAULTS, **ctx.params_for("forest")}[k]
-               for k in {**_CFDML_DEFAULTS, **ctx.params_for("forest")}},
+            # KEIN allow_missing: GRF final model kann kein NaN in X (Split-Features),
+            # und rubin nutzt kein W. allow_missing=True würde NaN in X durchlassen
+            # und zu kryptischem GRF-Crash führen statt klarem Validierungsfehler.
+            **_sanitize_forest_params(_CFDML_DEFAULTS, ctx.params_for("forest")),
         ),
     )
 
@@ -350,12 +397,14 @@ erzeugt."""
             model_propensity=_base(ctx, "model_propensity"),
             model_regression=_base(ctx, "model_regression"),
             # Final-Modell für die CATE-Schätzung (Regression der DR-Pseudo-Outcomes auf X).
-            # Kann optional über R-Loss/R-Score getunt werden.
+            # Kann optional über R-Score getunt werden.
             model_final=_base(ctx, "model_final"),
+            discrete_outcome=True,
             cv=StratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
+            allow_missing=True,
         ),
     )
 
@@ -366,34 +415,34 @@ erzeugt."""
             models=_base(ctx, "models"),
             cate_models=_base(ctx, "cate_models"),
             propensity_model=_base(ctx, "propensity_model"),
+            allow_missing=True,
         ),
     )
-    reg.register("TLearner", lambda ctx: TLearner(models=_base(ctx, "models")))
-    reg.register("SLearner", lambda ctx: SLearner(overall_model=_base(ctx, "overall_model")))
+    reg.register("TLearner", lambda ctx: TLearner(models=_base(ctx, "models"), allow_missing=True))
+    reg.register("SLearner", lambda ctx: SLearner(overall_model=_base(ctx, "overall_model"), allow_missing=True))
 
     # GRF (reiner Causal Forest ohne DML-Residualisierung)
     # Kein Base Learner nötig — der Wald schätzt Treatment-Effekte direkt.
-    # Konservative Defaults (wie CausalForestDML), da ohne DML-Residualisierung
-    # der Wald anfälliger für Overfitting ist. GRF-Tuning kann diese überschreiben.
+    # Defaults orientieren sich an EconML (identisch mit _CF_FIXED_DEFAULTS in tuning/causal_forest.py).
+    # CFT kann max_depth, min_weight_fraction_leaf, min_var_fraction_leaf und criterion optimieren.
     _CF_DEFAULTS = {
-        "n_estimators": 200,
-        "criterion": "mse",
-        "max_depth": 5,
-        "min_samples_leaf": 200,
-        "min_samples_split": 500,
-        "max_features": 0.3,
-        "max_samples": 0.45,
-        "min_var_fraction_leaf": 0.01,
-        "min_impurity_decrease": 0.0,
+        "n_estimators": 500,                  # Production Default (Tuning nutzt 100)
+        "criterion": "mse",                   # EconML Default
+        "max_depth": None,                    # EconML Default: unbegrenzt
+        "min_samples_leaf": 5,                # EconML Default
+        "min_samples_split": 10,              # EconML Default
+        "min_weight_fraction_leaf": 0.0,      # EconML Default — CFT kann optimieren
+        "max_features": "auto",               # EconML Default: 'auto' = n_features
+        "max_samples": 0.45,                  # EconML Default
+        "min_var_fraction_leaf": None,         # EconML Default: None — CFT kann optimieren
+        "min_impurity_decrease": 0.0,          # EconML Default
     }
     reg.register(
         "CausalForest",
         lambda ctx: CausalForestAdapter(
             random_state=ctx.seed,
             n_jobs=ctx.parallel_jobs,
-            **{k: {**_CF_DEFAULTS, **ctx.params_for("grf")}[k]
-               for k in {**_CF_DEFAULTS, **ctx.params_for("grf")}
-               if k not in ("n_jobs", "random_state")},
+            **_sanitize_forest_params(_CF_DEFAULTS, ctx.params_for("grf")),
         ),
     )
 

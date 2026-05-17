@@ -37,7 +37,6 @@ data_processing:
 feature_selection:
   enabled: false
   methods: [catboost_importance]
-  top_pct: 15.0
   correlation_threshold: 0.9
 
 # --- Modellauswahl -------------------------------------------
@@ -64,7 +63,7 @@ base_learner:
 
 # --- Base-Learner-Tuning -------------------------------------
 tuning:
-  enabled: true
+  enabled: false
   n_trials: 50
   cv_splits: 5
   metric: log_loss
@@ -75,7 +74,6 @@ causal_forest:
     n_jobs: -1
   use_econml_tune: true
   tune_models: []  # leer = alle GRF-Modelle
-  econml_tune_params: auto
 
 # --- Final-Model-Tuning (CATE) -------------------------------
 # Optimiert das model_final für NonParamDML und DRLearner (OOF-CV mit est.score).

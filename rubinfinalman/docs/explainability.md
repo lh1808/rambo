@@ -14,6 +14,8 @@ Pro Methode werden die Top-N% Features behalten (default 15%), anschließend per
 
 Explainability ist in die **Analyse-Pipeline integriert**: Bei `shap_values.calculate_shap_values: true` werden SHAP-Werte und Importance-Plots automatisch für den Champion berechnet und als MLflow-Artefakte im selben Run geloggt. Zweistufiger Fallback: ① EconML SHAP-Plot-Satz → ② generischer SHAP-Plot-Satz (u.a. CausalForestDML). Die Plots werden außerdem in den HTML-Report eingebettet.
 
+**Farbpalette:** Alle SHAP-Plots (Beeswarm, CATE-Profile, Dependence-Bins) nutzen die SHAP-Standardfarben (positiv=#ff0051, negativ=#008bfb). Feature-Importance-Barplots nutzen weiterhin die rubin-Palette (rubinrot).
+
 Zusätzlich kann Explainability **als separater CLI-Runner** auf Bundle-Basis ausgeführt werden – z. B. für nachträgliche Ad-hoc-Analysen auf neuen Daten oder mit einem anderen Modell als dem Champion.
 
 ## Integrierte Explainability (Analyse-Pipeline)
@@ -33,9 +35,7 @@ shap_values:
 
 ```
 
-**`method`** (optional, default `"shap"`):
-
-Die Explainability wird nach dem Bundle-Export und vor dem HTML-Report ausgeführt. Artefakte in MLflow:
+Die Explainability wird nach dem Bundle-Export und vor dem HTML-Report ausgeführt. Die Methode wird automatisch gewählt: SHAP wird zuerst versucht; falls das `shap`-Paket nicht verfügbar ist, wird auf Surrogate-basierte Erklärungen zurückgefallen (siehe `shap_uplift.py → shap_available()`). Artefakte in MLflow:
 - SHAP-Plots (Summary mit Beeswarm/Mean/Max Impact, CATE-Profile, Dependence, Scatter) als PNG
 - Importance-CSV
 
@@ -90,4 +90,3 @@ abgeleitet, damit SHAP auf einer einzigen Zielgröße arbeitet:
 - **SHAP:** Verwendet `max(τ_1(X), …, τ_{K-1}(X))` als skalaren Output. Das zeigt, welche
   Features den maximalen erwarteten Treatment-Effekt beeinflussen – unabhängig davon, welcher
   Arm der beste ist.
-  (`||Δτ(X)||₂`), um den Gesamteinfluss eines Features auf die Effektschätzung zu messen.

@@ -92,31 +92,28 @@ final_model_tuning:
         high: 5
       l2_leaf_reg:
         type: float
-        low: 5.0
-        high: 100.0
-        log: true
+        low: 3.0
+        high: 30.0
       random_strength:
         type: float
         low: 1.0
-        high: 20.0
-        log: true
+        high: 15.0
       subsample:
         type: float
         low: 0.4
         high: 0.8
       rsm:
         type: float
-        low: 0.2
-        high: 0.6
+        low: 0.3
+        high: 0.7
       min_data_in_leaf:
         type: int
-        low: 50
-        high: 500
+        low: 20
+        high: 200
       model_size_reg:
         type: float
         low: 0.1
-        high: 50.0
-        log: true
+        high: 10.0
       leaf_estimation_iterations:
         type: int
         low: 1

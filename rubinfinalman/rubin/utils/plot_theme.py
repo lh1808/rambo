@@ -3,6 +3,10 @@
 Wird von allen Plotting-Modulen importiert, um ein konsistentes
 rubinrotes Erscheinungsbild zu gewährleisten.
 
+Ausnahme: SHAP-Plots (shap_uplift.py) nutzen die SHAP-Standardpalette
+(#ff0051/#008bfb) statt der rubin-Palette, damit native und Custom-Plots
+konsistent sind.
+
 Verwendung::
 
     from rubin.utils.plot_theme import apply_rubin_theme, RUBIN_COLORS
@@ -69,7 +73,7 @@ def apply_rubin_theme() -> None:
         "axes.titlecolor": RUBIN_COLORS["ruby_dark"],
 
         # Grid
-        "axes.grid": True,
+        "axes.grid": False,
         "grid.color": RUBIN_COLORS["grid"],
         "grid.linewidth": 0.6,
         "grid.alpha": 0.8,
@@ -128,7 +132,7 @@ _DEFAULT_COLOR_MAP = {
     "#7f7f7f": RUBIN_COLORS["slate"],       # tab:gray → Slate
     "#bcbd22": RUBIN_COLORS["gold"],        # tab:olive → Gold
     "#17becf": RUBIN_COLORS["slate_light"], # tab:cyan → Slate Light
-    # CSS named colors (sklift, seaborn)
+    # CSS named colors (seaborn, matplotlib)
     "blue":    RUBIN_COLORS["ruby"],
     "red":     RUBIN_COLORS["ruby_light"],
     "green":   RUBIN_COLORS["ruby_dark"],
@@ -191,7 +195,7 @@ def recolor_figure(
 
     Arbeitet auf Artist-Ebene (Lines, Patches, Collections, ErrorBars) –
     kein Pixel-Processing nötig. Kann direkt nach dem Erzeugen eines Plots
-    aus externen Bibliotheken (EconML, scikit-uplift) aufgerufen werden.
+    aus externen Bibliotheken (EconML) aufgerufen werden.
 
     Parameters
     ----------

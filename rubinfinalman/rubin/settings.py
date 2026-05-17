@@ -219,10 +219,10 @@ class FeatureSelectionConfig(BaseModel):
         default_factory=lambda: ["catboost_importance"]
     )
 
-    # Maximale Anzahl Features nach Feature-Selektion (Default: 60).
+    # Maximale Anzahl Features nach Feature-Selektion (Default: 77).
     # Bei mehreren Methoden: jede Methode liefert max_features / Anzahl_Methoden
     # Features (aufgerundet). Die Union aller Methoden wird auf max_features gekappt.
-    max_features: int = 100
+    max_features: int = 77
 
     # Korrelation: ab welchem Betrag (|corr|) eine Spalte als redundant gilt.
     correlation_threshold: float = 0.9
@@ -235,7 +235,7 @@ class ModelsConfig(BaseModel):
     # Gleichgewichtetes Ensemble aller trainierten Modelle.
     # Die Cross-Predictions werden gemittelt; das Ensemble nimmt
     # an der Champion-Selektion teil.
-    ensemble: bool = False
+    ensemble: bool = True
 
 
 class BaseLearnerConfig(BaseModel):
@@ -253,16 +253,23 @@ class CausalForestSearchSpaceParam(BaseModel):
 
 
 class CausalForestConfig(BaseModel):
+    """Konfiguration für CausalForest-Tuning (CFT).
+
+    CFT optimiert 4 kausale Parameter (max_depth, min_weight_fraction_leaf,
+    min_var_fraction_leaf, criterion) für CausalForestDML und CausalForest.
+    Alle anderen Wald-Parameter werden auf EconML-Defaults fixiert.
+    Bei RCT wird model_t als DummyClassifier im Nuisance-Cache verwendet."""
     model_config = _STRICT
 
-    forest_fixed_params: Dict[str, Any] = Field(default_factory=dict)
-    use_econml_tune: bool = False
-    tune_models: List[str] = Field(default_factory=list)
-    econml_tune_params: Any = "auto"
-    tune_max_rows: Optional[int] = None
-    n_trials: int = 50
-    single_fold: bool = False
-    search_space: Dict[str, CausalForestSearchSpaceParam] = Field(default_factory=dict)
+    forest_fixed_params: Dict[str, Any] = Field(default_factory=dict)  # Fixe Forest-Params (überschreiben Defaults)
+    use_econml_tune: bool = False  # EconML's built-in tune() statt Optuna (Legacy)
+    tune_models: List[str] = Field(default_factory=list)  # Welche Modelle tunen (z.B. ["CausalForestDML"])
+    tune_max_rows: Optional[int] = None  # Max. Zeilen für Tuning (RAM-Kontrolle)
+    n_trials: int = 50  # Optuna-Trials für CFT
+    single_fold: bool = False  # Single-Fold statt K-Fold (5× schneller, weniger robust)
+    search_space: Dict[str, CausalForestSearchSpaceParam] = Field(default_factory=dict)  # Low/High Overrides
+    depth_choices: Optional[List] = None  # Kategorische Auswahl für max_depth (z.B. [3, 5, 7, 10, 15, "None"])
+    criterion_choices: Optional[List[str]] = None  # Kategorische Auswahl für criterion (z.B. ["mse", "het"])
 
 
 class SearchSpaceParameterConfig(BaseModel):
@@ -344,15 +351,15 @@ class ShapConfig(BaseModel):
     # Steuert, ob SHAP-Werte während der Analyse
     # berechnet werden. Wird vom Explainability-Schritt in der Pipeline ausgewertet.
     calculate_shap_values: bool = False
-    shap_calculation_models: List[str] = Field(default_factory=list)
 
     # Aktiv genutzt von der Analyse-Pipeline und run_explain.py:
     n_shap_values: int = 10_000
     top_n_features: int = 20
     num_bins: int = 10
 
-    # Methode für Explainability. "shap" versucht SHAP zuerst (mit automatischem
-    # Falls SHAP nicht läuft (z.B. bei
+    # Methode für Explainability: SHAP wird automatisch versucht; falls das
+    # shap-Paket nicht verfügbar ist, wird auf Surrogate-basierte Erklärungen
+    # zurückgefallen (siehe explainability/shap_uplift.py → shap_available()).
 
 
 class OptionalOutputConfig(BaseModel):
@@ -464,6 +471,9 @@ class AnalysisConfig(BaseModel):
     model_config = _STRICT
 
     source_config_path: Optional[str] = None
+    # "rct": Randomisiertes Experiment → BLT Propensity-Diagnose (Skill ≈ 0),
+    #   Training mit DummyClassifier (P(T|X) = const) für alle Propensity-Rollen.
+    # "observational": Beobachtungsdaten → volles Propensity-Tuning + -Training.
     study_type: Literal["rct", "observational"] = "rct"
 
     mlflow: MLflowConfig = Field(default_factory=MLflowConfig)

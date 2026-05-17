@@ -6,10 +6,10 @@ Dieses Modul bündelt zwei Ebenen:
 Uplift-Funktion ``f(X) = CATE(X)``;
 2. einen vollständigen Plot-Satz (Beeswarm, Mean Impact, Max Impact,
 CATE-Profile, SHAP-Dependence, SHAP-Scatter).
-Diese Plots setzen voraus, dass das zugrunde liegende Modell
-``shap_values(X=...)`` unterstützt und ein EconML-kompatibles SHAP-Ergebnis
-liefert. Falls das nicht der Fall ist, kann weiterhin die generische
-SHAP-Berechnung verwendet werden."""
+
+Farbpalette: Alle Plots nutzen die SHAP-Standardfarben (positiv=#ff0051,
+negativ=#008bfb) statt der rubin-Palette, damit native SHAP-Plots und
+Custom-Plots (CATE-Profile, Dependence-Bins) konsistent aussehen."""
 
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
@@ -24,7 +24,7 @@ _logging.getLogger("matplotlib.category").setLevel(_logging.WARNING + 1)
 import warnings
 warnings.filterwarnings("ignore", message=".*NumPy global RNG was seeded.*", category=FutureWarning)
 
-from rubin.utils.plot_theme import apply_rubin_theme, RUBIN_COLORS, COLOR_MODEL
+from rubin.utils.plot_theme import apply_rubin_theme
 apply_rubin_theme()
 
 
@@ -161,8 +161,23 @@ def _is_categorical(series: pd.Series) -> bool:
 
 
 def _plot_binned_mean(ax: plt.Axes, feature_values: pd.Series, values: np.ndarray, title: str, y_label: str, num_bins: int) -> None:
-    """Plottet segmentierte Mittelwerte für numerische oder kategoriale Features."""
+    """Plottet segmentierte Mittelwerte für numerische oder kategoriale Features.
+
+    Verwendet die SHAP-Farbpalette (positiv=#ff0051, negativ=#008bfb) statt
+    der rubin-Palette, damit alle SHAP-bezogenen Plots konsistent aussehen.
+    """
+    # SHAP-Standardfarben (identisch mit shap.plots Defaults)
+    SHAP_POS = "#ff0051"   # SHAP positive (magenta-red)
+    SHAP_NEG = "#008bfb"   # SHAP negative (blue)
+    SHAP_POS_EDGE = "#d4003f"
+    SHAP_NEG_EDGE = "#0070d0"
+
     df = pd.DataFrame({"feature_value": feature_values, "value": np.asarray(values).reshape(-1)})
+
+    def _bar_colors(vals):
+        """Positive Werte rot, negative blau (SHAP-Konvention)."""
+        return [SHAP_POS if v >= 0 else SHAP_NEG for v in vals], \
+               [SHAP_POS_EDGE if v >= 0 else SHAP_NEG_EDGE for v in vals]
 
     if _is_categorical(df["feature_value"]):
         agg = (
@@ -170,12 +185,13 @@ def _plot_binned_mean(ax: plt.Axes, feature_values: pd.Series, values: np.ndarra
             .mean()
             .sort_values(ascending=False)
         )
-        ax.bar(agg.index.astype(str), agg.values, color=COLOR_MODEL, edgecolor=RUBIN_COLORS["ruby_dark"], linewidth=0.5)
+        colors, edges = _bar_colors(agg.values)
+        ax.bar(agg.index.astype(str), agg.values, color=colors, edgecolor=edges, linewidth=0.5)
         ax.tick_params(axis="x", rotation=45)
     else:
         series = pd.to_numeric(df["feature_value"], errors="coerce")
         if series.notna().sum() <= 1:
-            ax.text(0.5, 0.5, "Zu wenige gültige Werte", ha="center", va="center", color=RUBIN_COLORS["slate"])
+            ax.text(0.5, 0.5, "Zu wenige gültige Werte", ha="center", va="center", color="#57606a")
             ax.set_title(title)
             ax.set_ylabel(y_label)
             return
@@ -185,8 +201,10 @@ def _plot_binned_mean(ax: plt.Axes, feature_values: pd.Series, values: np.ndarra
         df["feature_value"] = series.loc[series.notna()].to_numpy()
         df["bin"] = pd.cut(df["feature_value"], bins=bins, include_lowest=True, duplicates="drop")
         agg = df.groupby("bin", observed=False)["value"].mean().reset_index()
+        bar_vals = agg["value"].to_numpy()
+        colors, edges = _bar_colors(bar_vals)
         centers = agg["bin"].apply(lambda x: float(x.left + (x.right - x.left) / 2.0))
-        ax.bar(centers.astype(str), agg["value"].to_numpy(), color=COLOR_MODEL, edgecolor=RUBIN_COLORS["ruby_dark"], linewidth=0.5)
+        ax.bar(centers.astype(str), bar_vals, color=colors, edgecolor=edges, linewidth=0.5)
         ax.tick_params(axis="x", rotation=45)
 
     ax.set_title(title)

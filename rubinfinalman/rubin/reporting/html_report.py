@@ -77,6 +77,7 @@ class ReportCollector:
     tuning_scores: Dict[str, float] = field(default_factory=dict)
     tuning_skill_scores: Dict[str, float] = field(default_factory=dict)
     fmt_info: Dict[str, Any] = field(default_factory=dict)
+    cft_info: Dict[str, Any] = field(default_factory=dict)
     model_metrics: Dict[str, Dict[str, float]] = field(default_factory=dict)
     model_plots: Dict[str, Dict[str, str]] = field(default_factory=dict)
     champion_name: str = ""
@@ -98,6 +99,7 @@ class ReportCollector:
     # Best hyperparameters found
     best_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     fmt_best_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    cft_best_params: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # Combined Loss Diagnostic (Bach et al., 2024)
 
     def add_config(self, cfg) -> None:
@@ -106,6 +108,7 @@ class ReportCollector:
             "experiment_name": cfg.mlflow.experiment_name,
             "study_type": getattr(cfg, "study_type", "rct"),
             "seed": cfg.constants.random_seed,
+            "tuning_seed": cfg.constants.tuning_seed,
             "parallel_level": cfg.constants.parallel_level,
             "base_learner": cfg.base_learner.type,
             "validate_on": cfg.data_processing.validate_on,
@@ -121,7 +124,7 @@ class ReportCollector:
             "tuning_skill_metric": "Skill Score (Klassifikation) / R² (Regression)",
             "tuning_single_fold": getattr(cfg.tuning, "single_fold", False),
             "tuning_overfit_penalty": getattr(cfg.tuning, "overfit_penalty", 0.0),
-            "tuning_overfit_tolerance": getattr(cfg.tuning, "overfit_tolerance", 0.05),
+            "tuning_overfit_tolerance": getattr(cfg.tuning, "overfit_tolerance", 0.15),
             "final_tuning_enabled": cfg.final_model_tuning.enabled,
             "final_tuning_trials": cfg.final_model_tuning.n_trials if cfg.final_model_tuning.enabled else 0,
             "final_tuning_models": getattr(cfg.final_model_tuning, "models", None),
@@ -250,6 +253,14 @@ class ReportCollector:
         """Speichert die besten Hyperparameter für ein FMT-Modell."""
         self.fmt_best_params[model] = params
 
+    def add_cft_info(self, info: Dict[str, Any]) -> None:
+        """Speichert CFT-Ergebnisse (best_score, best_params, n_trials, model_type)."""
+        self.cft_info = info
+
+    def add_cft_best_params(self, model: str, params: Dict[str, Any]) -> None:
+        """Speichert die besten Wald-Parameter für ein CFT-Modell."""
+        self.cft_best_params[model] = params
+
 
 # ---------------------------------------------------------------------------
 # Explanations
@@ -260,9 +271,10 @@ _PLOT_EXPLANATIONS = {
     "cal_plot": ("Calibration Plot", "Prüft, ob die vorhergesagten Treatment-Effekte kalibriert sind. Punkte nahe der Diagonale = gute Kalibrierung."),
     "qini_plot": ("Qini Plot (DRTester)", "Kumulierter Uplift bei absteigender Sortierung nach CATE. Je weiter über Random, desto besser."),
     "toc_plot": ("TOC Plot", "Durchschnittlicher Treatment-Effekt für die Top-k% der am höchsten bewerteten Kunden."),
-    "sklift_qini": ("Qini-Kurve", "Qini-Darstellung: Q(k) = Y_t − Y_c · N_t/N_c. Abstand zur Random-Linie = Qini-Koeffizient."),
-    "sklift_percentile": ("Uplift by Percentile", "Durchschnittlicher Uplift pro Score-Dezil. Positive Balken links, null/negativ rechts = gute Sortierung."),
+    "uplift_qini": ("Qini-Kurve", "Qini-Darstellung: Q(k) = Y_t − Y_c · N_t/N_c. Abstand zur Random-Linie = Qini-Koeffizient."),
+    "uplift_percentile": ("Uplift by Percentile", "Durchschnittlicher Uplift pro Score-Dezil. Positive Balken links, null/negativ rechts = gute Sortierung."),
     "treatment_balance": ("Treatment Balance", "Treatment/Control-Verteilung über Score-Dezile. Starke Abweichungen → Propensity-Probleme."),
+    "score_redistribution": ("Score-Redistribution", "Zeigt pro Dezil des CATE-Scores, welcher Anteil der Samples aus welchem Dezil des historischen Scores stammt. Starke Diagonale = hohe Übereinstimmung."),
 }
 _PLOT_PREFIX_EXPLANATIONS = {
     "qini_vs_": ("Qini-Vergleich", "Gegenüberstellung der Qini-Kurven: Modell vs. Referenzscore. Abstand = Mehrwert des kausalen Modells."),
@@ -406,6 +418,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         ("Äußere CV", f'{cs.get("cv_splits", 5)} Folds'),
         ("Innere CV", f'{cs.get("dml_crossfit_folds", 5)} Folds'),
         ("Seed", cs.get("seed", "–")),
+        ("Tuning-Seed", cs.get("tuning_seed", "–")),
         ("Parallel", f'Level {cs.get("parallel_level", 2)}'),
     ] + ([("MC-Iterationen", cs.get("mc_iters"))] if cs.get("mc_iters") else []):
         v_str = str(val)
@@ -439,7 +452,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         fm = cs.get("final_tuning_models")
         steps.append(f'FMT ({", ".join(fm) if fm else "alle"})')
     if cs.get("causal_forest_tune"):
-        steps.append("CF tune()")
+        steps.append("CFT (Optuna)")
     if cs.get("surrogate_enabled"):
         steps.append("Surrogate")
     if cs.get("bundle_enabled"):
@@ -545,7 +558,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         h += '<div class="cd"><div class="cd-l">Hist. Score</div><div class="cd-v">vorhanden</div></div>'
     h += '</div>'
     if collector.ate_barplot:
-        h += f'<div style="margin:16px 0"><img src="data:image/png;base64,{collector.ate_barplot}" alt="Outcome Rate by Treatment Group" style="max-width:420px;border-radius:8px;border:1px solid #e0d6d7" loading="lazy"></div>'
+        h += f'<div style="margin:16px 28px;text-align:center"><img src="data:image/png;base64,{collector.ate_barplot}" alt="Outcome Rate by Treatment Group" style="max-width:420px;border-radius:8px;border:1px solid var(--border)" loading="lazy"></div>'
     if ds.get("treatment_distribution"):
         total_n = ds.get("n_rows", 1)
         h += '<h3>Treatment-Verteilung' + (' (Train)' if is_external else '') + '</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
@@ -672,7 +685,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         h = '<p class="expl">Vierstufiger Prozess: ① Importances auf allen Features berechnen → ② Korrelationsfilter (importance-gesteuert: das wichtigere Feature im Paar bleibt) → ③ Importance-Umverteilung (die Importance des entfernten Features wird auf den Partner addiert) → ④ Top-X%-Threshold auf verbleibenden Features mit korrigierten Scores.</p><div class="cg">'
         methods_html = "".join(f'<span class="cd-pill">{escape(m)}</span>' for m in cs.get("feature_selection_methods", []))
         h += f'<div class="cd"><div class="cd-l">Methoden</div><div class="cd-v pills">{methods_html}</div></div>'
-        h += f'<div class="cd"><div class="cd-l">Max. Features</div><div class="cd-v">{cs.get("feature_selection_max_features","60")}</div></div>'
+        h += f'<div class="cd"><div class="cd-l">Max. Features</div><div class="cd-v">{cs.get("feature_selection_max_features","77")}</div></div>'
         corr_thresh = cs.get("feature_selection_corr_threshold")
         if corr_thresh and float(corr_thresh) > 0:
             h += f'<div class="cd"><div class="cd-l">Korrelations-Schwelle</div><div class="cd-v">|r| &gt; {corr_thresh}</div></div>'
@@ -684,7 +697,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         n_after_corr = fs.get("n_after_correlation")
         if n_corr > 0:
             h += f'<div class="cd"><div class="cd-l">① Korrelation</div><div class="cd-v">{n_corr} entfernt'
-            h += '<div style="font-size:10px;color:var(--gold);margin-top:2px;font-weight:600">importance-gesteuert</div>'
+            h += '<div style="font-size:10px;color:var(--gold-text);margin-top:2px;font-weight:600">importance-gesteuert</div>'
             if n_after_corr is not None:
                 h += f'<div style="font-size:11px;color:var(--text-l);margin-top:2px">{fs.get("n_before","?")} → {n_after_corr}</div>'
             h += '</div></div>'
@@ -692,7 +705,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += '<div class="cd"><div class="cd-l">Umverteilung</div><div class="cd-v sm">Importance der entfernten Features auf Partner addiert</div></div>'
         if n_imp > 0:
             h += f'<div class="cd"><div class="cd-l">② Importance</div><div class="cd-v">{n_imp} entfernt'
-            h += '<div style="font-size:10px;color:var(--gold);margin-top:2px;font-weight:600">korrigierte Scores</div>'
+            h += '<div style="font-size:10px;color:var(--gold-text);margin-top:2px;font-weight:600">korrigierte Scores</div>'
             if n_after_corr is not None:
                 h += f'<div style="font-size:11px;color:var(--text-l);margin-top:2px">{n_after_corr} → {fs.get("n_after","?")}</div>'
             h += '</div></div>'
@@ -734,7 +747,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += '<div class="cd"><div class="cd-l">Single-Fold</div><div class="cd-v sm">aktiv (1 Fold/Trial)</div></div>'
         _op = cs.get("tuning_overfit_penalty", 0.0)
         if _op and _op > 0:
-            _ot = cs.get("tuning_overfit_tolerance", 0.05)
+            _ot = cs.get("tuning_overfit_tolerance", 0.15)
             h += f'<div class="cd"><div class="cd-l">Overfit-Penalty</div><div class="cd-v">{_op} (Tol. {_ot})</div></div>'
         h += '</div>'
 
@@ -760,7 +773,10 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         _is_both = (cs.get("base_learner", "") or "").lower() == "both"
         if _is_both:
             h += '<h3>Best Scores pro Task</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Task</th><th>Learner</th><th>Best Score</th><th>Skill / R²</th></tr></thead><tbody>'
-            for task, score in sorted(collector.tuning_scores.items()):
+            _plan_task_order = [t.get("task_key", "") for t in collector.tuning_plan] if collector.tuning_plan else []
+            _ordered_tasks_b = [(t, collector.tuning_scores[t]) for t in _plan_task_order if t in collector.tuning_scores]
+            _ordered_tasks_b += [(t, s) for t, s in sorted(collector.tuning_scores.items()) if t not in _plan_task_order]
+            for task, score in _ordered_tasks_b:
                 # _learner_type aus best_params extrahieren
                 _lt = (collector.best_params.get(task) or {}).get("_learner_type", "—")
                 _lt_disp = {"lgbm": "LightGBM", "catboost": "CatBoost"}.get(_lt, _lt)
@@ -770,7 +786,10 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += '</tbody></table></div>'
         else:
             h += '<h3>Best Scores pro Task</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Task</th><th>Best Score</th><th>Skill / R²</th></tr></thead><tbody>'
-            for task, score in sorted(collector.tuning_scores.items()):
+            _plan_task_order = [t.get("task_key", "") for t in collector.tuning_plan] if collector.tuning_plan else []
+            _ordered_tasks = [(t, collector.tuning_scores[t]) for t in _plan_task_order if t in collector.tuning_scores]
+            _ordered_tasks += [(t, s) for t, s in sorted(collector.tuning_scores.items()) if t not in _plan_task_order]
+            for task, score in _ordered_tasks:
                 _sk = collector.tuning_skill_scores.get(task)
                 _sk_html = f'{_sk:.4f}' if _sk is not None else '—'
                 h += f'<tr><td><code>{escape(task)}</code></td><td>{score:.6f}</td><td>{_sk_html}</td></tr>'
@@ -779,7 +798,10 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         # Best hyperparameters (if provided)
         if collector.best_params:
             h += '<details class="detail-box"><summary>Gefundene Hyperparameter</summary><div class="detail-content">'
-            for task_key, params in sorted(collector.best_params.items()):
+            _plan_task_order_p = [t.get("task_key", "") for t in collector.tuning_plan] if collector.tuning_plan else []
+            _ordered_bp = [(t, collector.best_params[t]) for t in _plan_task_order_p if t in collector.best_params]
+            _ordered_bp += [(t, p) for t, p in sorted(collector.best_params.items()) if t not in _plan_task_order_p]
+            for task_key, params in _ordered_bp:
                 _lt = params.get("_learner_type") if isinstance(params, dict) else None
                 _lt_badge = ""
                 if _lt:
@@ -809,7 +831,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         fmt_outer_cv = cs.get("cv_splits", 5)
         _fmt_op = cs.get("final_tuning_overfit_penalty", 0.0)
 
-        h = '<p class="expl">Optimiert das CATE-Effektmodell (model_final) via Optuna. Beide Modelle (NonParamDML, DRLearner) werden mit äußerer OOF-CV bewertet: model_final wird auf Train gefittet und auf Out-of-Fold-Val per est.score() evaluiert. Dies verhindert optimistische Score-Schätzungen. Der Score ist die negierte native est.score()-Metrik (NonParamDML: R-Loss, DRLearner: DR-MSE). Higher=better.</p>'
+        h = '<p class="expl">Optimiert das CATE-Effektmodell (model_final) via Optuna mit cache_values: Nuisance-Modelle werden einmalig pro äußerem Fold gecacht, Trials fitten nur noch model_final via refit_final(). Bewertung per EconML RScorer (unabhängige Nuisance, 2-Fold T×Y).</p>'
 
         # Summary cards
         h += '<div class="cg">'
@@ -819,7 +841,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += f'<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v pills">{fm_pills}</div></div>'
         else:
             h += '<div class="cd"><div class="cd-l">Modelle</div><div class="cd-v sm">alle FMT-fähigen</div></div>'
-        h += '<div class="cd"><div class="cd-l">Methode</div><div class="cd-v">OOF-CV (est.score)</div></div>'
+        h += '<div class="cd"><div class="cd-l">Methode</div><div class="cd-v sm">cache_values + refit_final</div></div>'
         if _fmt_op and _fmt_op > 0:
             h += f'<div class="cd"><div class="cd-l">Overfit-Penalty</div><div class="cd-v">{_fmt_op} (Tol. {cs.get("final_tuning_overfit_tolerance", 0.05)})</div></div>'
         h += f'<div class="cd"><div class="cd-l">Internes CV</div><div class="cd-v">{fmt_internal_cv}</div></div>'
@@ -844,25 +866,28 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             for r in collector.fmt_plan:
                 if r.get("note"):
                     h += f'<p style="font-size:12.5px;color:var(--text-l);margin:2px 28px 8px;line-height:1.5"><strong>{escape(r.get("model",""))}</strong>: {escape(r.get("note",""))}</p>'
-            h += f'<p style="font-size:13px;margin:8px 28px;font-family:var(--mono);color:var(--text-l)">Gesamt: <strong style="color:var(--gold)">{total_fmt_fits:,} Fits</strong></p>'
+            h += f'<p style="font-size:13px;margin:8px 28px;font-family:var(--mono);color:var(--text-l)">Gesamt: <strong style="color:var(--gold-text)">{total_fmt_fits:,} Fits</strong></p>'
         elif not collector.fmt_plan:
             # Fallback: show basic info without plan
             fits_per_dml = fmt_internal_cv * 2 + 1
             dr_folds = 1 if fmt_sf else fmt_outer_cv
-            h += f'<p class="expl">Beide Modelle nutzen OOF-CV: {dr_folds} äußere Fold(s) × {fits_per_dml} Fits/Fold (est.fit + est.score, cv={fmt_internal_cv}).</p>'
+            h += f'<p class="expl">Nuisance einmalig gecacht (Pre-Fit: {dr_folds} × {fits_per_dml} Fits). Pro Trial: {dr_folds} × refit_final(). cv={fmt_internal_cv}.</p>'
 
-        # Best FMT-Scores
+        # Best FMT-Scores (Reihenfolge wie Plan-Tabelle)
         if fmt.get("best_scores"):
-            # Separate raw Scores from adjusted scores
             raw_scores = {k: v for k, v in fmt["best_scores"].items() if "__adjusted" not in k}
             pen_scores = {k.replace("__adjusted", ""): v for k, v in fmt["best_scores"].items() if "__adjusted" in k}
+            # Reihenfolge: Plan-Modelle zuerst, dann Rest (falls vorhanden)
+            _plan_order = [r.get("model", "") for r in collector.fmt_plan] if collector.fmt_plan else []
+            _ordered_models = [m for m in _plan_order if m in raw_scores] + [m for m in raw_scores if m not in _plan_order]
             h += '<h3>Best FMT-Scores</h3>'
-            h += '<p class="expl">R-Loss / DR-MSE: Residual-MSE des kausalen Modells. Niedriger = bessere CATE-Schätzung. Nur relativ vergleichbar (kein normierter Score).</p>'
-            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>R-Loss / DR-MSE</th>'
+            h += '<p class="expl">R-Score via externem RScorer (unabhängige Nuisance, 2-Fold T×Y). R-Score &gt; 0 = echte Heterogenität, ≈ 0 = Intercept-Only, &lt; 0 = Overfitting.</p>'
+            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>R-Score</th>'
             if pen_scores:
-                h += '<th>Penalisiert (λ·log(1+CV))</th>'
+                h += '<th>Penalisiert</th>'
             h += '</tr></thead><tbody>'
-            for model, score in raw_scores.items():
+            for model in _ordered_models:
+                score = raw_scores[model]
                 h += f'<tr><td><strong>{escape(model)}</strong></td><td>{score:.6f}</td>'
                 if pen_scores:
                     pen = pen_scores.get(model)
@@ -873,7 +898,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         # Best hyperparameters
         if collector.fmt_best_params:
             h += '<details class="detail-box"><summary>Gefundene Hyperparameter (Final-Modell)</summary><div class="detail-content">'
-            for model, params in sorted(collector.fmt_best_params.items()):
+            # Reihenfolge wie Plan-Tabelle
+            _plan_order_p = [r.get("model", "") for r in collector.fmt_plan] if collector.fmt_plan else []
+            _ordered_params = [(m, collector.fmt_best_params[m]) for m in _plan_order_p if m in collector.fmt_best_params]
+            _ordered_params += [(m, p) for m, p in collector.fmt_best_params.items() if m not in _plan_order_p]
+            for model, params in _ordered_params:
                 # Bei "both"-Modus gewählten Learner prominent anzeigen
                 _lt = params.get("_learner_type")
                 _lt_badge = ""
@@ -891,6 +920,52 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
             h += '</div></details>'
 
         _sec("fmt", "Final-Model-Tuning", h)
+
+    # ── 5b. CausalForest-Tuning (CFT) ──
+    cft = collector.cft_info
+    if cft:
+        h = ''
+        _cft_model = cft.get("model_type", "CausalForestDML")
+        _cft_mode = cft.get("mode", "cache_values + refit_final")
+        _cft_nt = cft.get("n_trials", 0)
+        _cft_nc = cft.get("n_trials_completed", 0)
+        _cft_sf = cft.get("single_fold", False)
+
+        h += '<p class="expl">Optimiert 4 kausale Wald-Parameter via Optuna: max_depth, min_weight_fraction_leaf, min_var_fraction_leaf (EconML tune()-Suchraum) + criterion (mse/het). '
+        h += f'Bewertung per RScorer (unabhängige Nuisance, 2-Fold T×Y). '
+        h += f'n_estimators=100 beim Tuning, 500 bei Production. '
+        h += 'R-Score &gt; 0 = echte Heterogenität, ≈ 0 = Intercept-Only, &lt; 0 = Overfitting.</p>'
+
+        # Summary cards (gleiche Struktur wie FMT)
+        h += '<div class="cg">'
+        h += f'<div class="cd"><div class="cd-l">Trials / Modell</div><div class="cd-v">{_cft_nc} / {_cft_nt}</div></div>'
+        h += f'<div class="cd"><div class="cd-l">Modell</div><div class="cd-v">{escape(_cft_model)}</div></div>'
+        h += f'<div class="cd"><div class="cd-l">Modus</div><div class="cd-v sm">{escape(_cft_mode)}</div></div>'
+        _sf_lbl = "Single-Fold" if _cft_sf else "Multi-Fold"
+        h += f'<div class="cd"><div class="cd-l">Fold-Strategie</div><div class="cd-v">{_sf_lbl}</div></div>'
+        h += '</div>'
+
+        # Best R-Score
+        _cft_score = cft.get("best_score")
+        if _cft_score is not None:
+            h += '<h3>Best CFT-Score</h3>'
+            h += '<p class="expl">R-Score via externem RScorer (unabhängige Nuisance, 2-Fold T×Y). R-Score &gt; 0 = echte Heterogenität, ≈ 0 = Intercept-Only, &lt; 0 = Overfitting.</p>'
+            h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th><th>R-Score</th></tr></thead><tbody>'
+            h += f'<tr><td><strong>{escape(_cft_model)}</strong></td><td>{_cft_score:.6f}</td></tr>'
+            h += '</tbody></table></div>'
+
+        # Best hyperparameters
+        if collector.cft_best_params:
+            h += '<details class="detail-box"><summary>Gefundene Wald-Parameter</summary><div class="detail-content">'
+            for model, params in collector.cft_best_params.items():
+                h += f'<h4 style="margin-top:10px"><strong>{escape(model)}</strong></h4>'
+                h += '<div class="tbl-scroll" style="margin:4px 0 10px"><table class="dt"><thead><tr><th>Parameter</th><th>Wert</th></tr></thead><tbody>'
+                for pk, pv in sorted(params.items()):
+                    h += f'<tr><td><code>{escape(pk)}</code></td><td>{escape(str(pv))}</td></tr>'
+                h += '</tbody></table></div>'
+            h += '</div></details>'
+
+        _sec("cft", "CausalForest-Tuning", h)
 
     # ── 6. Modellvergleich ──
     if collector.model_metrics:
@@ -1085,7 +1160,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <style>
 @font-face{font-family:'DM Sans';src:local('DM Sans'),local('DMSans')}
 @font-face{font-family:'JetBrains Mono';src:local('JetBrains Mono'),local('JetBrainsMono')}
-:root{--ruby:#9B111E;--ruby-l:#C4343F;--ruby-d:#6B0D15;--ruby-pale:#FDF2F3;--ruby-bg:#faf7f8;--gold:#D4A853;--green:#1a7f37;--text:#24292f;--text-l:#57606a;--text-f:#999;--border:#e0d6d7;--card:#fff;--code-bg:#f8f0f0;--sh:0 1px 4px rgba(155,17,30,.06),0 4px 20px rgba(155,17,30,.04);--sh-lg:0 4px 24px rgba(107,13,21,.1),0 1px 6px rgba(0,0,0,.04);--r:10px;--font:'DM Sans',system-ui,-apple-system,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace}
+:root{--ruby:#9B111E;--ruby-l:#C4343F;--ruby-d:#6B0D15;--ruby-pale:#FDF2F3;--ruby-bg:#faf7f8;--gold:#D4A853;--gold-text:#8A6D1B;--green:#1a7f37;--text:#24292f;--text-l:#57606a;--text-f:#707070;--border:#e0d6d7;--card:#fff;--code-bg:#f8f0f0;--sh:0 1px 4px rgba(155,17,30,.06),0 4px 20px rgba(155,17,30,.04);--sh-lg:0 4px 24px rgba(107,13,21,.1),0 1px 6px rgba(0,0,0,.04);--r:10px;--font:'DM Sans',system-ui,-apple-system,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace}
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);background:var(--ruby-bg)}
@@ -1114,7 +1189,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .summary-items{display:flex;flex-wrap:wrap;gap:8px 24px}
 .si{color:rgba(255,255,255,.7);font-size:13.5px}
 .si strong{color:#fff;font-weight:700}
-.rs{margin-bottom:20px;background:var(--card);border-radius:var(--r);padding:0;box-shadow:var(--sh);overflow:hidden}
+.rs{margin-bottom:24px;background:var(--card);border-radius:var(--r);padding:0;box-shadow:var(--sh);overflow:hidden}
 .rs-head{display:flex;align-items:center;gap:12px;padding:18px 28px 14px;border-bottom:1px solid var(--border)}
 .rs-num{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:var(--ruby);color:#fff;font-size:13px;font-weight:700;flex-shrink:0}
 .rs h2{font-size:19px;color:var(--ruby-d);font-weight:700;margin:0}
@@ -1122,8 +1197,8 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .rs h4{font-size:13.5px;color:var(--ruby);margin:10px 0 4px;font-weight:600}
 .expl{background:var(--ruby-pale);border-left:3px solid var(--ruby-l);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13.5px;color:var(--text-l);line-height:1.5;margin:14px 28px}
 .expl strong{color:var(--ruby-d)}
-.cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin:14px 28px}
-.cd{background:var(--ruby-pale);border-radius:8px;padding:14px 16px;text-align:center;border:1px solid transparent;transition:border-color .15s}
+.cg{display:flex;flex-wrap:wrap;gap:10px;margin:14px 28px;justify-content:center}
+.cd{flex:1 1 190px;max-width:240px;background:var(--ruby-pale);border-radius:8px;padding:14px 16px;text-align:center;border:1px solid var(--border);transition:border-color .15s}
 .cd:hover{border-color:var(--ruby-l)}
 .cd.hl{background:var(--ruby);border-color:var(--ruby)}
 .cd.hl .cd-l{color:rgba(255,255,255,.7)}
@@ -1149,7 +1224,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .badge-c{background:var(--ruby);color:#fff;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700}
 .champ-callout{background:var(--card);border-radius:var(--r);padding:0;margin-bottom:20px;box-shadow:var(--sh);overflow:hidden;border-left:4px solid var(--gold)}
 .champ-callout-inner{padding:18px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
-.champ-callout-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold);background:rgba(212,168,83,0.12);padding:3px 10px;border-radius:6px}
+.champ-callout-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold-text);background:rgba(212,168,83,0.12);padding:3px 10px;border-radius:6px}
 .champ-callout-name{font-size:22px;font-weight:700;color:var(--ruby-d)}
 .champ-callout-score{font-size:15px;font-weight:600;color:var(--text);font-family:var(--mono)}
 .champ-diff{font-size:12.5px;color:var(--green);font-weight:600;margin-left:auto}
@@ -1160,7 +1235,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .rank-bar{display:flex;align-items:center;gap:10px;font-size:13px}
 .rank-bar.champ{font-weight:700}
 .rank-pos{width:28px;text-align:center;font-size:15px;flex-shrink:0}
-.rank-name{width:140px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rank-name{width:160px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rank-track{flex:1;height:10px;background:var(--ruby-pale);border-radius:5px;overflow:hidden}
 .rank-fill{height:100%;background:linear-gradient(90deg,var(--ruby),var(--ruby-l));border-radius:5px}
 .rank-bar.champ .rank-fill{background:linear-gradient(90deg,var(--gold),#e8c36a)}
@@ -1170,8 +1245,8 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .bar-bg{display:inline-block;width:120px;height:8px;background:var(--ruby-pale);border-radius:4px;vertical-align:middle;margin-right:8px}
 .bar-fill{height:100%;background:linear-gradient(90deg,var(--ruby),var(--ruby-l));border-radius:4px}
 .bar-pct{font-size:12px;color:var(--text-l);font-family:var(--mono)}
-.plot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px;margin:14px 28px}
-.plot-card{background:var(--ruby-bg);border:1px solid var(--border);border-radius:var(--r);padding:16px;transition:box-shadow .2s}
+.plot-grid{display:flex;flex-wrap:wrap;gap:14px;margin:14px 28px;justify-content:center}
+.plot-card{flex:1 1 380px;max-width:560px;background:var(--ruby-bg);border:1px solid var(--border);border-radius:var(--r);padding:16px;transition:box-shadow .2s}
 .plot-card:hover{box-shadow:var(--sh-lg)}
 .plot-card img{max-width:100%;height:auto;border-radius:6px;margin-top:6px;display:block;cursor:pointer;transition:opacity .15s}
 .plot-card img:hover{opacity:.85}
@@ -1195,8 +1270,10 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .footer{text-align:center;color:var(--text-f);font-size:12px;margin-top:40px;padding:20px}
 .back-top{position:fixed;bottom:24px;right:24px;width:40px;height:40px;border-radius:20px;background:var(--ruby);color:#fff;border:none;cursor:pointer;font-size:18px;box-shadow:0 2px 12px rgba(107,13,21,.3);opacity:0;transition:opacity .2s;z-index:50}
 .back-top.vis{opacity:1}
-@media(max-width:900px){.sidebar{display:none}.main{padding:20px 16px}.topbar{padding:0 16px}.topbar .sub{display:none}.plot-grid{grid-template-columns:1fr}.cg{margin:14px 16px}.tags{margin:8px 16px}.expl{margin:14px 16px}.dt{width:calc(100% - 32px);margin:8px 16px}.rs h3{margin:18px 16px 8px}.detail-box{margin:12px 16px}.plot-grid{margin:14px 16px}.tbl-scroll{margin:8px 16px}}
-@media print{.topbar,.sidebar,.back-top{display:none!important}.layout{display:block;margin-top:0}.main{max-width:100%;padding:0}.rs{break-inside:avoid;box-shadow:none;border:1px solid #ddd;margin-bottom:12px}.summary-bar{background:var(--ruby-pale)!important;color:var(--text)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.si{color:var(--text)!important}.si strong{color:var(--ruby-d)!important}.plot-card{break-inside:avoid}.plot-card img{max-height:300px;object-fit:contain}body{background:#fff}@page{margin:1.5cm}}
+:focus-visible{outline:2px solid var(--ruby);outline-offset:2px;border-radius:4px}
+.sidebar a:focus-visible{outline-offset:-2px}
+@media(max-width:900px){.sidebar{display:none}.main{padding:20px 16px}.topbar{padding:0 16px}.topbar .sub{display:none}.plot-grid{margin:14px 16px}.plot-card{flex:1 1 100%;max-width:none}.cg{margin:14px 16px}.cd{flex:1 1 calc(50% - 5px);max-width:none}.tags{margin:8px 16px}.expl{margin:14px 16px}.dt{width:calc(100% - 32px);margin:8px 16px}.rs h3{margin:18px 16px 8px}.detail-box{margin:12px 16px}.tbl-scroll{margin:8px 16px}}
+@media print{.topbar,.sidebar,.back-top{display:none!important}.layout{display:block;margin-top:0}.main{max-width:100%;padding:0}.rs{break-inside:avoid;box-shadow:none;border:1px solid #ddd;margin-bottom:12px}.summary-bar{background:var(--ruby-pale)!important;color:var(--text)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.si{color:var(--text)!important}.si strong{color:var(--ruby-d)!important}.plot-card{break-inside:avoid}.plot-card img{max-height:300px;object-fit:contain}.tbl-scroll{break-inside:avoid}.dt{break-inside:avoid}.cg{break-inside:avoid}.rank-bars{break-inside:avoid}body{background:#fff}@page{margin:1.5cm}}
 </style>
 </head>
 <body>
@@ -1210,8 +1287,8 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 <div class="footer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="50 -5 120 125" width="20" height="20" style="vertical-align:middle;margin-right:6px;opacity:0.5"><polygon points="110,0 148,16 162,56 148,96 110,112 72,96 58,56 72,16" fill="rgba(155,17,30,0.08)" stroke="#9B111E" stroke-width="2"/><circle cx="88" cy="56" r="5" fill="#9B111E"/><line x1="93" y1="51" x2="136" y2="26" stroke="#9B111E" stroke-width="2.2"/><polygon points="139,22 134,29 144,29" fill="#9B111E"/><line x1="93" y1="61" x2="136" y2="86" stroke="#c4343f" stroke-width="1.6" stroke-dasharray="5 3"/><polygon points="139,90 134,83 144,83" fill="#c4343f"/></svg>rubin – Causal ML Framework &bull; Report generiert am {{TIMESTAMP}}</div>
 </main>
 </div>
-<button class="back-top" id="bt" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
-<div class="lightbox" id="lb"><button class="lb-close" onclick="lbClose()">&times;</button><div class="lb-title" id="lb-title"></div><div class="lb-wrap" id="lb-wrap"><img id="lb-img" src="" alt=""></div><div class="lb-hint" id="lb-hint">Scrollen zum Zoomen · Doppelklick zum Zurücksetzen</div></div>
+<button class="back-top" id="bt" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Nach oben scrollen">↑</button>
+<div class="lightbox" id="lb"><button class="lb-close" onclick="lbClose()" aria-label="Lightbox schließen">&times;</button><div class="lb-title" id="lb-title"></div><div class="lb-wrap" id="lb-wrap"><img id="lb-img" src="" alt="Vergrößertes Plot-Bild"></div><div class="lb-hint" id="lb-hint">Scrollen zum Zoomen · Doppelklick zum Zurücksetzen</div></div>
 <script>
 const lnk=document.querySelectorAll('.sidebar a'),secs=[];
 lnk.forEach(a=>{const el=document.getElementById(a.dataset.section);if(el)secs.push({el,a})});

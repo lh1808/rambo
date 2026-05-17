@@ -38,7 +38,7 @@ Die Treatment Balance Curve zeigt den Anteil der Treatment-Gruppe pro CATE-Dezil
 
 ### Phase 3: Uplift-Plots (alle Modelle)
 
-Qini-Kurve, Uplift-by-Percentile, Treatment-Balance — immer für **alle** Modelle, da schnell (~2-5s). Alle Plots sind native rubin-Implementierungen mit rubin-Farbpalette.
+Qini-Kurve, Uplift-by-Percentile, Treatment-Balance — immer für **alle** Modelle, da schnell (~2-5s). Alle Plots sind native rubin-Implementierungen mit rubin-Farbpalette. Zusätzlich pro Modell (wenn historischer Score vorhanden): Score-Redistribution-Plot und Custom Qini vs. Historischer Score.
 
 ## DRTester (EconML)
 
@@ -58,19 +58,20 @@ Die Nuisance-Modelle werden **einmal** gefittet und für alle kausalen Modelle w
 
 ## Uplift-Plots (native Implementierung)
 
-Die Pipeline erzeugt drei Uplift-Plots für alle Modelle:
+Die Pipeline erzeugt vier Uplift-Plots für alle Modelle:
 
-- **Qini-Kurve** — `_native_qini_curve()`: Q(k) = Y_t(k) − Y_c(k) · N_t(k) / N_c(k), mit Random-Baseline und Qini-Koeffizient im Titel.
-- **Uplift-by-Percentile** — `_native_uplift_by_percentile()`: 2-Panel-Barplot (Uplift oben, Treatment/Control Response Rates unten), inkl. Fehlerbalken (SE) und Weighted Average Uplift.
+- **Qini-Kurve** — `_native_qini_curve()`: Q(k) = Y_t(k) − Y_c(k) · N_t(k) / N_c(k), mit Random-Baseline, optionaler Perfect-Kurve und Qini-AUC-Score im Titel. X-Achse: "Number targeted" (absolut).
+- **Uplift-by-Percentile** — `_native_uplift_by_percentile()`: 2-Panel-Barplot (Uplift oben, Treatment/Control Response Rates unten), inkl. Fehlerbalken (Std) und Weighted Average Uplift. Unterstützt `strategy='overall'`/`'by_group'` und `kind='bar'`/`'line'`.
 - **Treatment-Balance** — `_native_treatment_balance()`: Sliding-Window Treatment-Rate über nach pred. Uplift sortierten Daten.
+- **ATE-Barplot** — `generate_ate_barplot()`: Zeigt Response Rates pro Treatment-Gruppe mit SE-Fehlerbalken und n= pro Gruppe. Bei BT: ATE-Pfeil zwischen Control/Treatment. Bei MT: Δ-Labels (Treatment vs. Control) pro Arm. Im Report unter "Datengrundlage" vor Treatment-Verteilung.
 
 Alle Plots verwenden direkt die rubin-Farbpalette (Ruby, Gold, Slate). Kein `recolor_figure()` nötig.
 
-Diese Plots waren ursprünglich in scikit-uplift (sklift) implementiert. sklift 0.5.1 hat einen bekannten numpy >=1.24 Kompatibilitäts-Bug (GitHub Issue #213, seit Mai 2024 offen) und wurde seit 2022 nicht mehr aktualisiert. Die nativen Implementierungen sind funktional identisch und unabhängig von externen Plot-Bibliotheken.
+Native rubin-Implementierungen (Qini-Kurve, Uplift-by-Percentile, Treatment-Balance), unabhängig von externen Plot-Bibliotheken.
 
 Jeder Plot durchläuft diesen Lebenszyklus:
 
-1. Erzeugung in `generate_sklift_plots()` (Funktionsname beibehalten für API-Kompatibilität)
+1. Erzeugung in `generate_uplift_plots()` 
 2. `self._report.add_plot()` konvertiert zu Base64 für den HTML-Report
 3. `mlflow.log_figure()` loggt als PNG-Artefakt
 4. `plt.close(fig)` gibt den Speicher frei
@@ -237,7 +238,7 @@ Step 5: Evaluation & Metriken
 │                                           ...)
 │                                           → BLP, Cal, Qini, TOC + Policy Values
 │
-├── Phase 3: Uplift-Plots ─────────────── generate_sklift_plots(
+├── Phase 3: Uplift-Plots ─────────────── generate_uplift_plots(
 │   (alle Modelle)                          preds[model]["Predictions_*"],
 │                                           T, Y)
 │                                           → Qini-Kurve, Uplift-by-Percentile, Balance
@@ -248,16 +249,33 @@ Step 5: Evaluation & Metriken
 │                                         → plot_custom_qini_curve()
 │
 ▼
-Step 6: Surrogate-Tree
+Step 6: Surrogate-Tree (Fold-Aligned, komplett leakage-frei)
 │
-│  surrogate_df["Predictions_SurrogateTree_*"] = tree.predict(X)
-│  surrogate_df["Train_SurrogateTree_*"]       = tree.predict(X)
+│  K-Fold CV (Evaluation):
+│    Nutzt fold_aligned_preds aus Cross-Prediction:
+│    for fold_k, (tr_idx, va_idx) in fold_splits:
+│      target = champion_k.predict(X_all)[tr_idx]  ← Champion_k hat Fold k NIE gesehen
+│      tree.fit(X[tr_idx], target)
+│      surrogate_preds[va_idx] = tree.predict(X[va_idx])  ← OOS
+│
+│  Final-Fit (Produktion):
+│    target = champion_df["Train_<Champion>"]  ← Full-Data-Refit
+│    final_tree.fit(X, target)                 ← Für Bundle/Scoring
+│
+│  surrogate_df["Predictions_SurrogateTree"] = surrogate_preds   (OOS, leakage-frei)
+│  surrogate_df["Train_SurrogateTree"]       = final_tree.predict(X) (in-sample, Produktion)
 │
 ├── Surrogate-Metriken ────────────────── uplift_curve(score=surrogate_df["Predictions_*"])
 ├── Surrogate-DRTester ────────────────── evaluate_cate_with_plots(fitted_tester=...,
 │                                           cate_preds_val=surrogate_df["Predictions_*"])
-├── Surrogate-sklift ──────────────────── generate_sklift_plots(surrogate_preds, T, Y)
+├── Surrogate-Uplift-Plots ──────────────── generate_uplift_plots(surrogate_preds, T, Y)
+├── Score-Redistribution ────────────────── plot_score_redistribution(surrogate_preds, S)
+├── Custom Qini vs Historisch ──────────── plot_custom_qini_curve(surrogate vs hist)
 ```
+
+**Leakage-Prävention (Fold-Aligned Predictions):** Während der Cross-Prediction des Champions werden K Fold-Modelle trainiert. Jedes Champion_k hat Fold k nicht gesehen. Champion_k predictet auf dem gesamten Datensatz. Für Surrogate-Fold k wird Champion_k's Prediction als Training-Target verwendet. Es existiert KEIN Informationspfad von den Val-Samples (Fold k) ins Surrogate-Training, da Champion_k ohne Fold k trainiert wurde. Dies ist strenger als Standard-OOF-Stacking, bei dem die OOF-Predictions der Trainings-Samples von Champions stammen, die den Val-Fold gesehen haben (indirektes Leakage).
+
+**Ensemble als Champion:** Fold-Aligned Predictions werden aus den Einzelmodellen gemittelt (mean pro Fold). Da jeder Einzelmodell-Champion_k Fold k nie gesehen hat, ist auch der Durchschnitt leakage-frei.
 
 Wichtige Garantie: Weder `_evaluate_bt`, `_evaluate_mt`, `_evaluate_historical_score` noch die Surrogate-Evaluation rufen `.fit()` oder `.predict()` auf kausalen Modellen auf. Sie nutzen ausschließlich die in Step 4 bzw. Step 6 gespeicherten Spalten.
 

@@ -10,9 +10,6 @@ Es verwaltet Python, conda-forge- und PyPI-Pakete einheitlich und erzeugt ein
 reproduzierbares Lockfile (`pixi.lock`).
 
 ```bash
-# Pixi installieren (einmalig)
-curl -fsSL https://pixi.sh/install.sh | bash
-
 # Dev-Environment aufbauen (Tests + Linting)
 cd rubin_repo
 pixi install -e dev
@@ -74,7 +71,7 @@ rubin/
     html_report.py            ← HTML-Report-Generator (analysis_report.html)
   model_registry.py
   model_management.py
-  tuning_optuna.py
+  tuning/                    # Paket: common, base_learner, final_model, causal_forest
   training.py
   preprocessing.py
   feature_selection.py
@@ -84,6 +81,8 @@ rubin/
     categorical_patch.py       ← EconML-Kompatibilität: kategorische Features
     data_utils.py
     io_utils.py
+    plot_theme.py              ← Rubin-Farbpalette (Ruby, Gold, Slate)
+    run_names.py               ← MLflow Run-Name-Generator
     schema_utils.py
     uplift_metrics.py
 configs/
@@ -105,14 +104,14 @@ run_promote.py
 2. Nutze `ModelContext`, um Base-Learner-Typ, Fixparameter und getunte Rollenparameter zu beziehen.
 3. Registriere das Modell im `ModelRegistry`.
 4. Ergänze in `rubin/settings.py` den Modellnamen in `SUPPORTED_MODEL_NAMES`, damit Konfigurationen strikt validiert bleiben.
-5. Prüfe, ob für das Modell task-basiertes Tuning benötigt wird. Falls ja, ergänze die Rollensignaturen in `rubin/tuning_optuna.py`.
+5. Prüfe, ob für das Modell task-basiertes Tuning benötigt wird. Falls ja, ergänze die Rollensignaturen in `rubin/tuning/ (Paket)`.
 6. **Multi-Treatment-Kompatibilität:** Falls das neue Modell Multi-Treatment nicht unterstützt, ergänze den Modellnamen in `_BT_ONLY_MODELS` in `rubin/settings.py`. `_predict_effect()` erwartet, dass kompatible Modelle bei MT ein 2D-Array (n, K-1) zurückgeben. Bei BT genügt (n,) oder (n, 1).
 
 Beispiel-Skizze:
 
 ```python
 from rubin.model_registry import ModelRegistry, ModelContext
-from rubin.tuning_optuna import build_base_learner
+from rubin.tuning.common import build_base_learner
 
 def make_my_learner(ctx: ModelContext):
     base = build_base_learner(
@@ -138,7 +137,7 @@ models:
 ## 2) Neuen Base-Learner ergänzen
 
 ### Orte
-- `rubin/tuning_optuna.py`
+- `rubin/tuning/ (Paket)`
 - `rubin/model_registry.py` nutzt denselben Builder indirekt über `build_base_learner(...)`
 
 ### Schritte
@@ -149,7 +148,7 @@ models:
 
 ## 3) Neue Metriken ergänzen
 
-Metriken liegen in `rubin/utils/uplift_metrics.py`.
+Metriken liegen in `rubin/evaluation/uplift_metrics.py`.
 
 Konventionen:
 - Funktionen sind möglichst side-effect-frei
@@ -180,13 +179,30 @@ Sowohl beim Base-Learner-Tuning als auch beim Final-Model-Tuning kann eine Train
 
 ### Final-Model-Tuning (FMT)
 
-Beide FMT-Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit `est.score()`: model_final wird auf Train gefittet und auf komplett Out-of-Fold-Val bewertet. Dies verhindert optimistische Score-Schätzungen. NonParamDML wird über est.score() = R-Loss bewertet, DRLearner über est.score() = DR-MSE. Beide nutzen native EconML-Metriken für Alignment mit dem internen Trainings-Loss. Overfit-Penalty ist skalen-sicher (relative Tolerance).
+Beide FMT-Modelle (NonParamDML, DRLearner) nutzen äußere OOF-CV mit dem EconML `RScorer` (unabhängige Nuisance, 2-Fold T×Y-stratifiziertes Cross-Fitting auf Val-Daten). Der RScorer bewertet jeden Trial via `scorer.score(est)`, das intern `est.effect(X_val)` aufruft und den R-Score berechnet. Vorteile: kein Overfitting-Leak (Nuisance unabhängig vom Estimator), einheitliche Metrik über alle Learner, Konsistenz mit EconML `tune()`. Overfit-Penalty ist skalen-sicher (relative Tolerance).
 
-### CausalForest-Tuning
+### CausalForest-Tuning (CFT)
 
-CausalForestDML nutzt EconML's `.tune()` mit internem RScorer (R-Learner-Loss nach Nie & Wager 2017, nutzt kreuzvalidierte DML-Nuisance-Residuen). CausalForest nutzt einen eigenen Grid-Search über Wald-Parameter (12 oder 48 Kombinationen) mit RScorer-Evaluation (identisch mit CausalForestDML). Beide verwenden dasselbe Hyperparameter-Grid (= EconML Default) und alle Daten (100%). Nicht-getunte Parameter verwenden EconML-Defaults.
+CausalForestDML und CausalForest werden via Optuna TPE über 4 kausale Parameter getunt (max_depth, min_weight_fraction_leaf, min_var_fraction_leaf, criterion). CausalForestDML: Nuisance wird einmalig gecacht (`cache_values=True`), Trials ändern Forest-Parameter via `setattr()` + `refit_final()` (CausalForestDML hat kein `set_params()`). CausalForest: Pro Trial frischer Estimator mit Params im Konstruktor. Bei RCT: DummyClassifier für model_t im Cache. Siehe `docs/tuning_optuna.md → CausalForest-Tuning (Optuna)` für Details.
 
 ### Surrogate-Einzelbaum
 
-Der Surrogate trainiert auf den **Train-Predictions** des Champions (Full-Data-Refit), um die gelernte CATE-Funktion bestmöglich nachzulernen. Cross-Validation erzeugt OOS-Predictions für faire Vergleichbarkeit mit dem Champion. Abschließend wird der Surrogate auf allen Daten nachtrainiert.
+Der Surrogate-Einzelbaum nutzt **Fold-Aligned Predictions** — ein komplett leakage-freies Verfahren:
+
+1. **K-Fold CV (Evaluation, komplett leakage-frei):** Während der Cross-Prediction des Champions werden K Modelle trainiert (eins pro Fold). Jedes Champion_k wurde auf allen Daten OHNE Fold k trainiert. Champion_k predictet auf dem gesamten Datensatz. Für Surrogate-Fold k (Val) wird Champion_k's Prediction auf den Train-Folds als Target verwendet — Champion_k hat Fold k NIE gesehen → kein Informationspfad von Val-Samples ins Training-Target.
+
+2. **Final-Fit (Produktion):** Der Surrogate wird auf den **Full-Data-Refit-Predictions** (`Train_<Champion>`) des Champions trainiert. Dieses Modell wird für das Produktions-Scoring im Bundle verwendet, nicht für die Evaluation.
+
+**Leakage-Beweis (Fold k = Val):**
+```
+Fold k Daten → Champion_k Training?   NEIN (exkludiert)  ✓
+Fold k       → Training-Target?       NEIN (nur Champion_k-Preds)  ✓
+Fold k       → Surrogate Training?    NEIN (Val, nicht Train)  ✓
+```
+
+**Ensemble als Champion:** Wenn der Champion das Ensemble ist, werden die Fold-Aligned Predictions aus den Einzelmodellen gemittelt. Jedes Einzelmodell hat eigene `fold_aligned_preds[k]` — der Durchschnitt pro Fold ist ebenfalls leakage-frei, weil jeder Champion_k Fold k nie gesehen hat.
+
+**Fallback:** Wenn Fold-Aligned Predictions nicht verfügbar sind (z.B. bei älteren Pipeline-Runs oder wenn weniger als 2 Modelle fold_aligned_preds haben), wird auf OOF-Predictions zurückgegriffen (indirektes Leakage, aber akzeptabel).
+
+**Kosten:** Ein zusätzlicher `predict(X_all)` pro Fold während der Cross-Prediction (~1-2 Sekunden pro Fold). Kein einziger zusätzlicher Fit-Call.
 

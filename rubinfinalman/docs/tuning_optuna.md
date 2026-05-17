@@ -1,5 +1,11 @@
 # Optuna-Tuning der Base Learner
 
+> **Modul-Struktur:** Die Implementierung lebt in `rubin/tuning/`:
+> - `common.py` — Builder, Search-Space, Suggest-Helpers, Fold-Utilities
+> - `base_learner.py` — `BaseLearnerTuner` (BLT)
+> - `final_model.py` — `FinalModelTuner` (FMT)
+> - `causal_forest.py` — `CausalForestTuner` (CFT)
+
 ## Ziel
 Optimiert werden ausschließlich die **Base Learner** (LightGBM/CatBoost), die innerhalb der kausalen Verfahren verwendet werden.
 Das hat zwei Vorteile:
@@ -10,11 +16,11 @@ Das hat zwei Vorteile:
 ## Wie wird getunt?
 - Optuna schlägt Hyperparameter vor.
 - Es wird eine CV (Cross Validation) mit `cv_splits` durchgeführt (Default: 5). Dieser Wert steuert die innere Tuning-CV und ist getrennt von `cross_validation_splits` (äußere Evaluation, Default: 5). Alle inneren CVs (`tuning.cv_splits`, `final_model_tuning.cv_splits`, `dml_crossfit_folds`) sind auf denselben Wert synchronisiert und werden in der UI über ein einzelnes Feld gesteuert.
-- Als Metrik wird für **Classifier-Tasks** (Nuisance: `model_y`, `model_t`, Propensity) fest `log_loss` (negierter Log-Loss) verwendet. Log-Loss misst die Kalibrierung der Wahrscheinlichkeitsvorhersagen — was für die DML-Residualisierung `Y − E[Y|X]` essentiell ist. Für **Regressor-Tasks** (Meta-Learner Outcome: `overall_model`, `models`, `model_regression`) wird automatisch **neg. MSE** als Metrik genutzt.
+- Als Metrik wird für **Classifier-Tasks** (Nuisance: `model_y`, `model_t`, Propensity, sowie `model_regression` bei DRLearner mit `discrete_outcome=True`) fest `log_loss` (negierter Log-Loss) verwendet. Log-Loss misst die Kalibrierung der Wahrscheinlichkeitsvorhersagen — was für die DML-Residualisierung `Y − E[Y|X]` essentiell ist. Für **Regressor-Tasks** (Meta-Learner Outcome: `overall_model`, `models`, `cate_models`, `model_final`) wird automatisch **neg. MSE** als Metrik genutzt.
 - Zusätzlich wird für jeden BLT-Task ein **Skill Score** berechnet und geloggt, der die Interpretierbarkeit verbessert:
   - **Klassifikation:** `Skill = 1 − log_loss / baseline_log_loss`, wobei die Baseline ein naives Modell ist, das immer die Klassenverteilung vorhersagt (0.0 = nicht besser als Zufall, 1.0 = perfekt).
   - **Regression:** `R² = 1 − MSE / Var(Y)` (0.0 = nicht besser als Mittelwert-Modell, 1.0 = perfekt).
-  - **FMT/CFT:** Hier wird der rohe R-Loss (Residual-MSE) geloggt. Dieser ist nur für den relativen Vergleich zwischen Trials sinnvoll, nicht für absolute Interpretation. Ein normierter Skill Score (wie bei BLT) würde den `RScorer` erfordern, der zu rechenintensiv für den Tuning-Loop ist.
+  - **FMT/CFT:** R-Score via externem EconML `RScorer` (unabhängige Nuisance, 2-Fold T×Y Cross-Fitting). R-Score ≈ 0 = nicht besser als konstantes Effektmodell, R-Score > 0 = echte Heterogenität, R-Score < 0 = Overfitting. Der RScorer berechnet Base-MSE und Normalisierung intern.
 - Bei **Multi-Treatment** wird für die Propensity-Modelle automatisch Multiclass-Log-Loss verwendet, da das Propensity-Modell dann eine Multiclass-Klassifikation durchführt (K Treatment-Gruppen). LightGBM und CatBoost erkennen Multiclass automatisch aus den Trainingsdaten.
 
 ### Warum Log-Loss als Default?
@@ -25,7 +31,7 @@ Im DML-Framework werden Nuisance-Modelle verwendet, um Residualen `Y − E[Y|X]`
 
 Für LightGBM wird standardmäßig `boosting_type="gbdt"` (Gradient Boosted Decision Trees) verwendet. GBDT ist der stabile Standard-Modus mit vorhersagbarer Laufzeit und guter Performance. Die Regularisierung gegen Overfitting auf rauschlastigen CATE-Targets (orthogonalisierte Residuen, Pseudo-Outcomes) erfolgt über den Optuna-Suchraum: `reg_alpha`, `reg_lambda`, `min_child_samples`, `min_split_gain`, `path_smooth` und `max_bin`.
 
-### Beide-Modus (`base_learner.type: "both"`, Default)
+### Beide-Modus (`base_learner.type: "both"`)
 
 Bei `base_learner.type: "both"` wird der Learner-Typ zur zusätzlichen Hyperparameter-Dimension. Optuna zieht pro Trial zuerst kategorisch zwischen `"lgbm"` und `"catboost"`, und zieht dann den jeweiligen Hyperparameter-Suchraum. TPE (Tree-structured Parzen Estimator) lernt aus den Trial-Ergebnissen, welcher Learner für den jeweiligen Task besser abschneidet, und konzentriert die weitere Suche entsprechend.
 
@@ -64,7 +70,9 @@ Bei `constants.parallel_level` 3 oder 4 werden mehrere Optuna-Trials gleichzeiti
 - **Level 1–2:** 1 Trial sequentiell, alle Kerne an den einzelnen Fit
 - **Level 3–4:** `cpus // 4` parallele Trials (z. B. 16 bei 64 Kernen), je 4 Kerne
 
-Dies gilt sowohl für das Base-Learner-Tuning als auch für das Final-Model-Tuning.
+Dies gilt für das **Base-Learner-Tuning**. FMT und CFT laufen seit der cache_values-Optimierung
+**sequentiell** (n_jobs=1) — Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final
+via `refit_final()` mit allen Kernen (parallel_jobs=-1).
 
 ### Trade-off: Speed vs. TPE-Qualität
 
@@ -84,7 +92,7 @@ Bei 30+ Trials ist der Qualitätsverlust gering — TPE mit 4 Runden à 8 Trials
 
 ### Trade-off: Speed vs. RAM
 
-Jeder parallele Trial hält eigene Modellinstanzen und Daten-Slices im Speicher. Bei FinalModelTuning mit DRLearner ist der Effekt besonders spürbar: 8 parallele Trials × DRLearner(cv=2) = 8 gleichzeitige EconML-Fits mit internem Cross-Fitting. Der RAM-Verbrauch steigt proportional zur Anzahl paralleler Trials.
+Jeder parallele BLT-Trial hält eigene Modellinstanzen und Daten-Slices im Speicher. FMT und CFT laufen sequentiell (n_jobs=1), halten aber die gecachten Nuisance-Estimatoren für die gesamte Study-Dauer im RAM (K äußere Folds × je cv innere Nuisance-Modelle). Der RAM-Verbrauch steigt proportional zur Anzahl äußerer Folds und Nuisance-Modellgröße.
 
 | Level | RAM (Tuning) | RAM (Training) | Kernel-Risiko |
 |-------|-------------|----------------|---------------|
@@ -132,19 +140,52 @@ SLearner und TLearner werden trotzdem normal trainiert — sie nutzen dann `base
 
 ## Propensity-Tuning bei RCT
 
-Bei `study_type: "rct"` wird das Propensity-Tuning automatisch auf **20 Trials** reduziert (statt der vollen Trial-Anzahl). Die Begründung: Bei einem RCT ist P(T=1|X) = const — das Propensity-Modell sollte das Treatment nicht aus den Features vorhersagen können.
+Bei `study_type: "rct"` verfolgt rubin eine **zweistufige Strategie** für die Propensity-Modellierung:
 
-Das reduzierte Tuning dient als **Diagnose-Check**: Wenn das Propensity-Modell trotzdem eine AUC deutlich über 0.5 erreicht, erscheint eine Warnung im Log:
+### Stufe 1: BLT-Diagnose (20 Trials)
+
+Das Propensity-Tuning wird automatisch auf **20 Trials** reduziert. Ziel ist nicht Optimierung, sondern ein **Diagnose-Check**: Bei einem echten RCT ist P(T=1|X) = const — das Propensity-Modell sollte das Treatment nicht aus den Features vorhersagen können (Skill ≈ 0).
 
 ```
-RCT-Warnung: Propensity-Modell erreicht -0.42 (erwartet ~-0.69 bei zufälligem Treatment).
-Prüfe ob Treatment tatsächlich randomisiert ist oder ob Post-Treatment-Variablen im Datensatz sind.
+# Erwartetes Ergebnis bei korrektem RCT:
+RCT-Diagnose bestätigt: Propensity-Skill = 0.0000 ≈ 0.
+Training verwendet konstante Propensity P(T|X) = mean(T) = 0.505.
+```
+
+Wenn der Propensity-Skill > 0.01 ist, erscheint eine Warnung:
+
+```
+⚠ RCT-Diagnose: Propensity-Skill = 0.0234 > 0.01.
+Das Propensity-Modell kann Treatment besser als Zufall vorhersagen —
+die Daten sind möglicherweise NICHT randomisiert.
 ```
 
 Mögliche Ursachen:
 - Post-Treatment-Variablen im Feature-Set (z.B. Variablen, die erst nach der Treatment-Zuweisung gemessen wurden)
 - Unvollständige Randomisierung (Stratifizierung nach Kovariaten, Block-Randomisierung mit kleinen Blöcken)
 - Leakage: Eine Feature-Spalte enthält implizit die Treatment-Information
+
+### Stufe 2: Konstante Propensity beim Training (DummyClassifier)
+
+Unabhängig vom BLT-Ergebnis wird bei `study_type: "rct"` für das **Training** aller Modelle ein `DummyClassifier(strategy="prior")` aus scikit-learn anstelle des BLT-getunten CatBoost-Modells verwendet. Dieser gibt für alle Samples die empirische Treatment-Rate als konstante Propensity zurück:
+
+```
+P(T=1|X) = mean(T) ≈ 0.5  (für alle X, X-unabhängig)
+```
+
+**Betroffene Rollen und Modelle:**
+
+| Modell | Rolle | Effekt |
+|--------|-------|--------|
+| NonParamDML | `model_t` | T_res = T − mean(T), keine Korrelation mit X |
+| CausalForestDML | `model_t` | Saubere DML-Residualisierung |
+| ParamDML | `model_t` | Saubere DML-Residualisierung |
+| DRLearner | `model_propensity` | 1/P(T|X) = const → keine verzerrten DR-Gewichte |
+| XLearner | `propensity_model` | Gleichmäßige CATC/CATT-Gewichtung |
+
+**Begründung:** Bei einem RCT ist die Treatment-Zuweisung per Definition unabhängig von X. Jedes Propensity-Modell, das Features nutzt, kann nur Rauschen lernen → overfittete P(T|X) verzerrt die DML-Residuen und DR-Gewichte. Der DummyClassifier ist theoretisch exakt und verhindert dieses Overfitting.
+
+**Konsistente Anwendung:** Der DummyClassifier wird nicht nur beim Training, sondern auch in den Nuisance-Caching-Phasen von FMT und CFT verwendet, sodass alle Stufen der Pipeline dieselbe konstante Propensity nutzen.
 
 ---
 
@@ -153,8 +194,8 @@ Mögliche Ursachen:
 Einige Verfahren besitzen zusätzlich ein **Final-Modell**, das die heterogenen Effekte lernt
 (z. B. `NonParamDML`, `DRLearner`). Dieses Final-Modell ist typischerweise ein Regressor
 (LightGBM/CatBoost). Die DML-Nuisance-Modelle (`model_y`, `model_t`, `model_propensity`) sind
-Klassifikatoren, während die Meta-Learner Outcome-Modelle (`overall_model`, `models`,
-`model_regression`) ebenfalls Regressoren sind.
+Klassifikatoren, ebenso `model_regression` (DRLearner, seit `discrete_outcome=True`).
+Die Meta-Learner Outcome-Modelle (`overall_model`, `models`, `cate_models`) bleiben Regressoren.
 
 Damit das Final-Modell nicht mit den Nuisance-Modellen vermischt wird, gibt es eine separate
 Konfigsektion:
@@ -165,7 +206,6 @@ final_model_tuning:
   n_trials: 100
   models: [NonParamDML]
   single_fold: false
-  max_tuning_rows: 200000
   fixed_params: {}
 ```
 
@@ -187,7 +227,7 @@ Statt alle FMT-fähigen Modelle zu tunen, kann mit `models` gezielt festgelegt w
 
 Das ist nützlich, weil die Kosten pro Trial zwischen den Modellen stark unterschiedlich sind:
 
-- **Beide Modelle** verwenden äußere CV: K × est.fit(train) + est.score(val) pro Trial
+- **Beide Modelle** verwenden äußere CV mit cache_values: Nuisance einmalig gecacht, pro Trial K × refit_final() + est.score(val)
 
 Man kann z.B. nur NonParamDML tunen und DRLearner mit bewährten festen Parametern laufen lassen.
 
@@ -197,41 +237,80 @@ Analog zum Base-Learner-Tuning kann mit `single_fold: true` die äußere CV auf 
 
 ### Overfit-Penalty (`overfit_penalty`, `overfit_tolerance`)
 
-Beide FMT-Modelle (NonParamDML und DRLearner) nutzen **äußere Cross-Validation**: model_final wird auf Train gefittet und auf komplett Out-of-Fold-Val bewertet (`est.score()`). Dies verhindert optimistische Score-Schätzungen, die entstehen, wenn model_final auf denselben Daten evaluiert wird, auf denen es trainiert wurde.
+Beide FMT-Modelle (NonParamDML und DRLearner) nutzen **äußere Cross-Validation**: model_final wird auf Train gefittet und auf komplett Out-of-Fold-Val bewertet via `scorer.score(est)`. Der RScorer fittet unabhängige Nuisance-Modelle auf den Val-Daten → kein Overfitting-Leak.
 
-**Score-Konvention:** Beide FMT-Modelle werden über ihre **nativen EconML est.score()-Methoden** bewertet:
+**Score-Konvention:** Beide FMT-Modelle werden über den EconML **RScorer** bewertet — mit unabhängiger Nuisance (2-Fold T×Y-stratifiziertes Cross-Fitting auf Val-Daten) und R-Score als Metrik:
 
-- **NonParamDML:** `est.score()` = R-Loss (Nie & Wager): `E[(Y_res − τ·T_res)²]`
-- **DRLearner:** `est.score()` = DR-MSE: doubly-robust Pseudo-Outcome-MSE
+- **NonParamDML + DRLearner:** Einheitlicher R-Score via `scorer.score(est)`. Der RScorer berechnet intern: R-Score = 1 − MSE(CATE) / MSE(Intercept-Only). Beide Modelle sind direkt vergleichbar (gleiche Nuisance, gleiche Metrik).
 
-Beide Metriken sind kausal valide, nutzen aber unterschiedliche Ansätze.
+Der R-Score verhindert, dass Optuna zu konservativen Konfigurationen (Intercept-Only) konvergiert.
 Der Vorteil nativer Metriken: Kein Train-Eval-Mismatch (das Modell wird mit
 derselben Metrik evaluiert, auf die es intern optimiert).
 
 Da Optuna `direction="maximize"` verwendet, werden beide Scores negiert (`-MSE`).
 
 Die Overfit-Penalty ist **skalen-sicher** durch relative Tolerance: `tolerance=0.05` bedeutet "5% relativer
-Gap wird toleriert". Damit funktioniert die Penalty identisch für R-Loss (~0.001) und
+Gap wird toleriert". Damit funktioniert die Penalty identisch für R-Score (~0-1) und
 DR-MSE (~0.01) ohne manuelle Skaleneinstellung.
 
 Der reine OOF-Score kann dennoch Modelle bevorzugen, die Rauschen statt echte Heterogenität lernen — insbesondere bei kleinen Treatment-Effekten oder wenigen Beobachtungen. Die Overfit-Penalty adressiert das, indem sie den Train-Val-Gap misst:
 
 ```
-adjusted = val_score - penalty × max(0, gap - tolerance)
+scale = max(|val_score|, 0.1)
+relative_gap = (train_score - val_score) / scale
+adjusted = val_score - penalty × scale × max(0, relative_gap - tolerance)
 ```
 
-wobei `gap = train_score - val_score`. Ein großer Gap bedeutet: model_final performt auf Train viel besser als auf Val → Overfitting auf Trainingsrauschen.
+wobei die Tolerance als relativer Anteil wirkt (z.B. 0.05 = 5% Gap toleriert). Die Formel ist skalen-sicher über alle Metriken. Der Minimum-Floor `0.1` verhindert, dass bei val_score ≈ 0 (z.B. R-Score nahe Null bei schwachem CATE-Signal) ein moderater absoluter Gap als riesiger relativer Gap interpretiert wird.
 
-**Empfohlene Werte:**
-| Szenario | penalty | tolerance |
-|---|---|---|
-| Standard (Default) | 0.0 | 0.15 |
-| Moderate Regularisierung | 0.2–0.3 | 0.05 |
-| Starke Regularisierung (kleine Effekte, wenige Daten) | 0.5–0.8 | 0.03 |
+**BLT- und FMT-spezifische Werte (identische Formel, unterschiedliche Presets):**
+
+| Stufe | BLT (Nuisance) | FMT (CATE) | Begründung |
+|---|---|---|---|
+| **Aus** (Default) | p=0, t=0.15 | p=0, t=0.05 | Reiner Val-Score, keine Penalty |
+| **Moderat** | p=0.2, t=0.15 | p=0.3, t=0.05 | Balance zwischen Performance und Stabilität |
+| **Stark** | p=0.4, t=0.08 | p=0.6, t=0.03 | Für kleine Stichproben oder instabile Vorlaufe |
+
+BLT ist toleranter (15% Gap): DML-Orthogonalität kompensiert moderates Nuisance-Overfitting. FMT ist strenger (5% Gap): CATE-Signal ist schwächer als Outcome-Signal, Overfitting ist schneller problematisch.
 
 ### Feste Parameter (`fixed_params`)
 
 Wenn FMT deaktiviert ist oder ein Modell nicht in `models` steht, werden die `fixed_params` direkt als Hyperparameter für `model_final` verwendet. Das ermöglicht eine bewusste Kombination: Tuning für ein Modell, feste Parameter für ein anderes.
+
+### Nuisance-Caching (`cache_values`)
+
+FMT nutzt EconML's `cache_values=True` zur drastischen Laufzeitreduktion. Die äußeren CV-Folds verwenden
+denselben `tuning_seed` für alle Trials — die Fold-Zuordnung (tr/va) ist also über alle Trials identisch.
+Nur `model_final` ändert sich pro Trial. Daher werden die Nuisance-Modelle (model_y, model_t für NonParamDML;
+model_propensity, model_regression für DRLearner) **einmalig pro äußerem Fold** gefittet und gecacht.
+
+**Ablauf:**
+
+1. **Pre-Fit (einmalig):** Pro äußerem Fold wird ein vollständiger Estimator mit `cache_values=True` gefittet.
+   EconML speichert die Out-of-Fold-Residuals (Y_res, T_res) und die gefitteten Nuisance-Modelle.
+2. **Pro Trial:** Nur `model_final` wird getauscht (`est.model_final = new_model`) und via `est.refit_final()`
+   auf den gecachten Residuals neu gefittet. Die Nuisance-Phase entfällt komplett.
+3. **Bewertung:** `est.score(Y_val, T_val, X_val)` nutzt die gespeicherten Nuisance-Modelle für Predictions
+   auf dem Val-Set — kein Nuisance-Training, nur schnelle Vorhersage.
+
+**Laufzeiteffekt (Beispiel: 5 äußere Folds × 5 innere Folds × 50 Trials):**
+
+| Phase | Ohne Cache | Mit Cache |
+|---|---|---|
+| Nuisance-Fits | 50 × 5 × 10 = 2.500 | 5 × 10 = **50** (einmalig) |
+| model_final Fits | 50 × 5 = 250 | 5 + 50 × 5 = **255** (5 initial + 250 refit) |
+| **Gesamt** | **2.750** | **305** |
+
+Die sequentielle Trial-Ausführung (`n_jobs=1`) ist trotzdem schneller als parallele Trials ohne Cache,
+weil die Nuisance-Phase (~80% der Laufzeit) komplett entfällt.
+
+Das gleiche Prinzip gilt für **CFT** (CausalForestDML): Die Nuisance-Modelle werden einmalig gecacht,
+dann pro Trial nur die GRF-Forest-Parameter via `setattr()` + `est.refit_final()` geändert
+(`set_params()` existiert nicht bei CausalForestDML).
+
+**RCT-Modus:** Bei `study_type: "rct"` wird model_t (NonParamDML/CausalForestDML) bzw. model_propensity
+(DRLearner) im Nuisance-Cache als `DummyClassifier(strategy="prior")` eingesetzt — konstante
+Propensity P(T|X) = mean(T), verhindert Overfitting auf Rauschen.
 
 ## Search Space in der Config
 
@@ -284,18 +363,18 @@ final_model_tuning:
       learning_rate: {type: "float", low: 0.005, high: 0.12, log: true}
       num_leaves: {type: "int", low: 7, high: 63}
       max_depth: {type: "int", low: 2, high: 6}
-      min_child_samples: {type: "int", low: 20, high: 500}
+      min_child_samples: {type: "int", low: 20, high: 200}
       max_bin: {type: "int", low: 10, high: 63}
-      subsample: {type: "float", low: 0.5, high: 0.9}
-      colsample_bytree: {type: "float", low: 0.5, high: 0.9}
-      min_split_gain: {type: "float", low: 0.0, high: 5.0}
-      reg_alpha: {type: "float", low: 0.00000001, high: 50.0, log: true}
-      reg_lambda: {type: "float", low: 0.00000001, high: 50.0, log: true}
-      min_child_weight: {type: "float", low: 0.001, high: 20.0, log: true}
-      path_smooth: {type: "float", low: 0.0, high: 10.0}
+      subsample: {type: "float", low: 0.4, high: 0.85}
+      colsample_bytree: {type: "float", low: 0.3, high: 0.7}
+      min_split_gain: {type: "float", low: 0.0, high: 0.5}
+      reg_alpha: {type: "float", low: 0.000001, high: 10.0}
+      reg_lambda: {type: "float", low: 0.000001, high: 10.0}
+      min_child_weight: {type: "float", low: 0.5, high: 20.0}
+      path_smooth: {type: "float", low: 0.0, high: 5.0}
 ```
 
-Die FMT-Suchräume sind etwas konservativer als die BL-Suchräume, aber breiter als in früheren Versionen: `min_child_samples` 20–500, `num_leaves` 7–63, `n_estimators` 100–400. Bei LightGBM wird automatisch `subsample_freq=1` injiziert, wenn `subsample` im Suchraum ist — das erzwingt Bagging in jedem Boosting-Schritt.
+Die FMT-Suchräume erlauben bewusst **weniger Regularisierung** als die BL-Suchräume: `reg_alpha` max 10 (BLT: 20), `reg_lambda` max 10 (BLT: 20), `min_child_samples` max 200 (BLT: 200), `path_smooth` max 5 (BLT: 10). Hintergrund: Das CATE-Signal ist schwächer als das Nuisance-Signal. Bei zu hohen Regularisierungs-Obergrenzen konvergiert Optuna auf maximale Regularisierung (Intercept-Kollaps), weil eine Konstante R-Score ≈ 0 erreicht und jeder Heterogenitäts-Versuch R-Score < 0 liefert. Bei LightGBM wird automatisch `subsample_freq=1` injiziert, wenn `subsample` im Suchraum ist — das erzwingt Bagging in jedem Boosting-Schritt.
 
 Unterstützte Parametertypen:
 
@@ -339,12 +418,12 @@ Typische geteilte Aufgaben im Repo:
 
 Modelle mit gleicher statistischer Aufgabe, aber unterschiedlicher effektiver Trainingsmenge in Produktion werden über den `sample_scope` getrennt:
 
-- **`all`**: Modelle, die innerhalb von DML/DR-internem Cross-Fitting (cv=2) trainiert werden → sehen ~40% der Gesamtdaten in Produktion (80% äußerer Fold × 50% innerer Fold).
+- **`all`**: Modelle, die innerhalb von DML/DR-internem Cross-Fitting (cv=5) trainiert werden → sehen ~64% der Gesamtdaten in Produktion (80% äußerer Fold × 80% innerer Fold).
 - **`all_direct`**: Meta-Learner-Modelle, die direkt auf dem äußeren Fold trainiert werden (kein internes CV) → sehen ~80% der Gesamtdaten.
 
 Betroffene Trennungen:
-- **outcome_regression**: DRLearner.model_regression (`all`, 40% N) ↔ SLearner.overall_model (`all_direct`, 80% N) — separate Tasks.
-- **propensity**: DML/DR-Propensity (`all`, 40% N) ↔ XLearner.propensity_model (`all_direct`, 80% N) — separate Tasks.
+- **outcome**: DRLearner.model_regression (`all`, ~64% N, Classifier seit discrete_outcome=True) ↔ SLearner.overall_model (`all_direct`, ~80% N) — separate Tasks.
+- **propensity**: DML/DR-Propensity (`all`, ~64% N) ↔ XLearner.propensity_model (`all_direct`, ~80% N) — separate Tasks.
 
 Ohne diese Trennung würden Modelle mit sehr unterschiedlichen Trainingsmengen dasselbe Tuning teilen, was zu sub-optimalen Hyperparametern führt.
 
@@ -372,10 +451,12 @@ Nuisance-Modelle mit gleicher Signatur teilen sich automatisch ein Tuning, um Re
 Die Overfit-Penalty bestraft Hyperparameter-Konfigurationen mit großem Train-Val-Gap:
 
 ```
-scale = |val_score|
+scale = max(|val_score|, 0.1)
 relative_gap = (train_score - val_score) / scale
 adjusted = val_score - penalty × scale × max(0, relative_gap - tolerance)
 ```
+
+**Hinweis zur Interaktion mit dem externen RScorer:** Seit der Umstellung auf den externen RScorer (unabhängige Nuisance, 2-Fold T×Y Cross-Fitting) hat der Val-Score bereits drei Ebenen des Overfitting-Schutzes: (1) unabhängige Nuisance (kein Leak), (2) R-Score < 0 = natürliche Overfitting-Erkennung, (3) K-Fold-Mittelung. Der Train-Val-Gap ist mit dem RScorer ein **saubereres Signal** (nur model_final-Overfitting, keine Nuisance-Artefakte), aber **kleiner** als mit dem alten est.score()-Ansatz. Die Penalty ist daher weniger kritisch als früher — EconML's eigenes `tune()` verwendet keine Penalty. Bleibt als optionales Safety-Net erhalten (Default: 0 = deaktiviert).
 
 ### Penalty-Timing (Pruning vs. Bewertung)
 
@@ -403,7 +484,7 @@ penalty(mean(val_1..K), mean(train_1..K))     ← NEU: stabil
 | **FMT** | p=0.3, t=0.05 | p=0.6, t=0.03 | 0.05 (5%) | CATE-Signal schwächer — stärkere Regularisierung nötig |
 
 Die Penalty ist **skalen-sicher** durch relative Tolerance. Damit funktioniert sie
-identisch für log_loss (~0.3-0.7), R-Loss (~0.001) und DR-MSE (~0.01).
+identisch für log_loss (~0.3-0.7) und R-Score (~0-1).
 
 ## Sonderfall: `CausalForestDML`
 
@@ -412,60 +493,31 @@ identisch für log_loss (~0.3-0.7), R-Loss (~0.001) und DR-MSE (~0.01).
 1) **DML‑Residualisierung** mit Nuisance‑Modellen (`model_y`, `model_t`)  
 2) **Causal Forest** als letzte Stufe
 
-Optuna‑Tuning in rubin bezieht sich weiterhin auf die **Base Learner** der Nuisance‑Modelle.
-Das heißt: Wenn `tuning.enabled=true`, werden (optional pro Rolle) Hyperparameter für
-`model_y` und `model_t` optimiert.
+**BLT** optimiert die Base Learner der Nuisance-Modelle (model_y, model_t) — identisch zu NonParamDML.
+**CFT** optimiert die Wald-Parameter der Forest-Stufe per Optuna TPE — siehe [CausalForest-Tuning (Optuna)](#causalforest-tuning-optuna) weiter unten.
 
-Für die Wald‑Parameter der letzten Stufe nutzt rubin optional die eingebaute EconML‑Methode
-`CausalForestDML.tune(...)`. Diese evaluiert jede Parameterkombination intern via **RScorer** (R-Learner-Loss,
-Nie & Wager 2017). Der RScorer fittet kreuzvalidierte Nuisance-Residuen (`Y_resid`, `T_resid`)
-und misst, wie viel zusätzliche Outcome-Varianz durch heterogene Treatment-Effekte erklärt
-wird, verglichen mit einem konstanten Effektmodell. Der RScorer passt zur DML-Architektur,
-weil er dieselben Nuisance-Modelle (`model_y`, `model_t`) für die Residualisierung verwendet,
-die auch beim finalen Fit zum Einsatz kommen.
+### Forest-Defaults
 
-Die Steuerung erfolgt über `causal_forest.use_econml_tune` und `causal_forest.n_trials (50 Normal, 100 Intensiv)`.
+Die Defaults entsprechen den EconML-Defaults. CFT kann diese weiter optimieren:
+
+| Parameter | Default | EconML | Begründung |
+|-----------|---------|--------|------------|
+| `max_depth` | `None` | `None` | Unbegrenzt — CFT findet die optimale Tiefe |
+| `min_samples_leaf` | `5` | `5` | EconML Default |
+| `min_samples_split` | `10` | `10` | EconML Default |
+| `max_features` | `"auto"` | `"auto"` | Alle Features pro Split (= `n_features`) |
+| `max_samples` | `0.45` | `0.45` | **Max. 0.5** bei `inference=True` (EconML-Constraint) |
+| `min_var_fraction_leaf` | `None` | `None` | Keine Extra-Restriktion |
+
+> **Hinweis:** `max_samples` ist auf EconML-Default 0.45 fixiert (nicht im Suchraum). Bei `inference=True` (Default) maximal 0.5 erlaubt.
 
 ## Sonderfall: `CausalForest` (Reiner GRF)
 
-`CausalForest` nutzt einen eigenen Optuna (kein Optuna): Jede Parameterkombination wird
-auf allen Daten trainiert und per **Out-of-Bag-Predictions** (R-Loss) bewertet. Die besten
-Parameter werden eingefroren und für alle weiteren Folds wiederverwendet.
+`CausalForest` (`econml.grf.CausalForest`) hat keine DML-Residualisierung und keine Nuisance-Modelle.
+Er schätzt den Treatment-Effekt direkt mit Honest Estimation.
 
-**Evaluation via RScorer:** Wie CausalForestDML nutzt auch CausalForest den RScorer
-(Nie & Wager, 2021) zur Bewertung: R-Score = 1 - R-Loss / base_loss (higher=better).
-Der RScorer fittet eigene Nuisance-Modelle (RandomForest) und berechnet den normalisierten
-R-Score — identisch mit der Metrik, die CausalForestDML.tune() intern verwendet.
-Die Nuisance-Modelle werden einmal gefittet, dann wird jede Grid-Kombi bewertet.
-
-**Konsistenz der Grids:** Beide Modelle verwenden dasselbe Hyperparameter-Grid
-(identisch mit `CausalForestDML.tune(params='auto')`). Beide nutzen alle Daten (100%).
-Der einzige Unterschied ist die Evaluationsmethode (RScorer vs. OOB), was durch die
-unterschiedliche Architektur bedingt ist.
-
-### Search-Grid
-
-**Normal (12 Kombinationen = EconML Default):**
-
-| Parameter | Werte | Bedeutung |
-|---|---|---|
-| min_weight_fraction_leaf | 0.0001, 0.01 | Mindestanteil Gesamtgewicht pro Blatt (Regularisierung) |
-| max_depth | 3, 5, None | Baumtiefe (None = unbegrenzt) |
-| min_var_fraction_leaf | 0.001, 0.01 | Mindest-Treatment-Varianz pro Blatt (Identifikations-Schutz) |
-
-Identisch mit `CausalForestDML.tune(params='auto')` — das ist das von EconML empfohlene Standard-Grid.
-
-**Intensiv (48 Kombinationen):**
-
-| Parameter | Werte | Erweiterung |
-|---|---|---|
-| min_weight_fraction_leaf | 0.0001, 0.01 | — |
-| max_depth | 3, 5, 8, None | +8 |
-| min_var_fraction_leaf | None, 0.001, 0.01 | +None (kein Constraint) |
-| criterion | mse, het | +het (Heterogenitäts-Score) |
-
-Nicht-getunte Parameter (n_estimators, honest, min_samples_leaf, max_samples, subforest_size etc.) verwenden EconML-Defaults.
-Die UI zeigt das aktive Search-Grid an, wenn tune() aktiviert ist.
+**BLT** ist für CausalForest nicht relevant (keine Base Learner).
+**CFT** optimiert die Wald-Parameter per Optuna TPE. Nuisance-Residuen werden einmalig vorberechnet (mit BLT-getunten CatBoost/LightGBM Modellen), dann pro Trial nur der Forest evaluiert — siehe [CausalForest-Tuning (Optuna)](#causalforest-tuning-optuna).
 
 
 ## Persistente Optuna-Studies (SQLite)
@@ -525,13 +577,13 @@ Der TPE-Sampler ist mit vier Optimierungen konfiguriert:
 - **`multivariate=True`:** Modelliert Abhängigkeiten zwischen Parametern (z. B. learning_rate ↔ n_estimators). Ohne dies sampelt TPE jeden Parameter unabhängig, was gute Kombinationen langsamer findet.
 - **`group=True`:** Partitioniert die Trial-Historie nach Parameter-Set. Relevant für `base_learner.type: "both"` — dort wählt Optuna pro Trial kategorisch zwischen `lgbm` und `catboost`, was zu unterschiedlichen Parameter-Sets pro Trial führt. Ohne `group` fällt TPE bei den "dynamischen" Parametern (z. B. CatBoost-spezifisch `l2_leaf_reg`, `random_strength`) auf `RandomSampler` zurück und produziert Warnungen wie *"sampled independently using RandomSampler instead of TPESampler"*. Mit `group=True` lernt TPE separate KDE-Modelle für jeden Zweig, was die Tuning-Qualität bei "both" signifikant verbessert. Eingeführt in Optuna 2.8; bei älteren Versionen fällt rubin automatisch auf `multivariate=True` ohne group zurück.
 - **`constant_liar=True`:** Bei parallelen Trials (n_jobs > 1) weist TPE laufenden Trials einen Schätzwert zu, damit nicht dieselben Regionen doppelt gesampelt werden.
-- **Adaptive `n_startup_trials`:** BL: `min(10, n_trials // 5)`, FMT: `min(7, n_trials // 4)`. Bei wenigen Trials (z. B. 50) wird die Random-Phase verkürzt, damit TPE mehr informierte Trials durchführt.
+- **Adaptive `n_startup_trials`:** BL: `max(n_jobs, min(10, max(3, n_trials // 5)))`, FMT: `min(7, max(2, n_trials // 4))`, CFT: `max(5, n_trials // 5)`. Bei wenigen Trials (z. B. 50) wird die Random-Phase verkürzt, damit TPE mehr informierte Trials durchführt.
 
 ### Fold-basiertes Pruning (MedianPruner)
 
 Jede Optuna-Study verwendet einen `MedianPruner(n_warmup_steps=1)`. Pro Objective meldet jeder Trial sein Zwischenergebnis nach jedem CV-Fold (`trial.report(mean_score, fold_i)`). Der MedianPruner vergleicht dieses Zwischenergebnis mit dem Median aller bisherigen Trials: Trials, die nach 2 Folds deutlich unter dem Median liegen, werden frühzeitig abgebrochen (`trial.should_prune()`). Das spart typischerweise 30–50% der Rechenzeit bei 5-Fold-CV, da schlechte Parameterkombinationen nicht alle 5 Folds durchlaufen müssen.
 
-Pruning ist für alle 6 Objective-Typen implementiert: `_objective_all_classification`, `_objective_grouped_outcome`, `_objective_all_regression`, `_objective_grouped_regression`, `_objective_xlearner_cate` sowie die FMT-DRLearner-Folds.
+Pruning ist für alle Objective-Typen implementiert: `_objective_all_classification`, `_objective_all_regression`, `_objective_grouped_regression`, `_objective_xlearner_cate` sowie die FMT- und CFT-Objectives.
 
 ### Fehlerresilienz
 
@@ -543,11 +595,14 @@ Pruning ist für alle 6 Objective-Typen implementiert: `_objective_all_classific
 
 ## Kategorische Features in EconML
 
-EconML konvertiert X intern zu numpy-Arrays (via `sklearn.check_array`), wodurch pandas `category`-Dtypes verloren gehen. Ohne Gegenmaßnahme nutzt LightGBM/CatBoost **ordinale Splits** auf nominalen Features statt nativer kategorialer Splits — deutlich schwächere Modellierung.
+EconML konvertiert X intern zu numpy-Arrays (via `sklearn.check_array`), wodurch pandas `category`-Dtypes verloren gehen. Ohne Gegenmaßnahme nutzt LightGBM/CatBoost **ordinale Splits** auf nominalen Features statt nativer kategorialer Splits — deutlich schwächere Modellierung. CatBoost crasht zusätzlich, weil es float-Werte bei `cat_features` ablehnt.
 
-rubin löst dieses Problem automatisch: Vor dem Tuning und Training werden die `.fit()`-Methoden von LGBMClassifier, LGBMRegressor, CatBoostClassifier und CatBoostRegressor via `functools.partialmethod` gepatcht. Die Spaltenindizes der kategorialen Features werden vorab berechnet und bei jedem `.fit()`-Aufruf als `categorical_feature` (LightGBM) bzw. `cat_features` (CatBoost) übergeben — auch wenn EconML intern nur `model.fit(X_numpy, y)` aufruft.
+rubin löst dieses Problem automatisch über den Context-Manager `patch_categorical_features` (`rubin/utils/categorical_patch.py`). Die Spaltenindizes der kategorialen Features werden vorab aus den `category`-/`object`-Spalten von X ermittelt. Die Patching-Strategie unterscheidet sich je nach Library:
 
-Der Patch wird als Context-Manager (`patch_categorical_features`) um den gesamten ML-Kern gelegt (Tuning, Training, Evaluation, Surrogate, Bundle-Export) und danach automatisch entfernt.
+- **LightGBM**: Nur `fit()` wird via `functools.partialmethod` gepatcht — `categorical_feature=<indices>` wird bei jedem `.fit()`-Aufruf injiziert. `predict()` braucht kein Patching (LGBM akzeptiert float-Kategorien nativ).
+- **CatBoost**: `fit()`, `predict()`, `predict_proba()` und `score()` werden **alle** über custom Wrapper gepatcht. Zusätzlich zur `cat_features`-Injektion wird X von numpy-float zu einem DataFrame mit int32-Kategorien konvertiert (CatBoost verweigert float-Spalten bei `cat_features`). `score()` muss separat gepatcht werden, da CatBoost intern `_predict()` aufruft und damit den öffentlichen `predict()`-Wrapper umgeht.
+
+Der Patch wird als Context-Manager um den gesamten ML-Kern gelegt (Tuning, Training, Evaluation, Surrogate, Bundle-Export). In der Pipeline gibt es zwei separate Kontexte: (1) Feature-Selektion (Spaltenindizes vor FS) und (2) Tuning + Training + Evaluation (Spaltenindizes nach FS). Im `finally`-Block werden alle originalen Methoden immer wiederhergestellt (kein globaler State-Leak).
 
 ---
 
@@ -566,7 +621,9 @@ Die getunten Nuisance-Parameter (aus dem Base-Learner-Tuning für `model_y`/`mod
 **Mechanismus:** Pro BLT-Trial wird zusätzlich zum Val-Score auch der Train-Score berechnet. Die Differenz (Gap = Train-Score - Val-Score) misst direkt das Overfit-Ausmaß. Große Gaps werden bestraft:
 
 ```
-adjusted_score = val_score - penalty × max(0, gap - tolerance)
+scale = max(|val_score|, 0.1)
+relative_gap = (train_score - val_score) / scale
+adjusted_score = val_score - penalty × scale × max(0, relative_gap - tolerance)
 ```
 
 **Vorteile gegenüber Residual-Varianz-basierter Regularisierung:**
@@ -581,17 +638,20 @@ tuning:
   overfit_tolerance: 0.15 # Relativer Gap-Schwellwert (15% für BLT)
 ```
 
-**Empfohlene Werte:**
-| Szenario | penalty | tolerance |
-|---|---|---|
-| Standard (Default) | 0.0 | 0.15 |
-| Moderate Regularisierung | 0.2–0.3 | 0.05 |
-| Starke Regularisierung (kleine Daten, viele Features) | 0.5–0.8 | 0.03 |
+**BLT-Presets (Nuisance-Regularisierung):**
+
+| Preset | penalty | tolerance | Verhalten |
+|---|---|---|---|
+| **Aus** (Default) | 0.0 | 0.15 | Reiner Val-Score, keine Penalty |
+| **Moderat** | 0.2 | 0.15 | 15% Gap toleriert — DML-Orthogonalität kompensiert |
+| **Stark** | 0.4 | 0.08 | 8% Gap toleriert — konservativ bei kleinen Datensätzen |
+
+Die FMT-Presets (CATE-Regularisierung) sind strenger: Moderat p=0.3/t=0.05, Stark p=0.6/t=0.03. Siehe Abschnitt „Overfit-Penalty (BLT + FMT)" für die vollständige Tabelle.
 
 **Interaktion mit anderen Settings:**
 - Bei `single_fold: true` ist die Penalty besonders wertvoll, weil die Trial-Bewertung ohnehin verrauschter ist.
-- Bei `cv_splits: 5` ist der Gap natürlich kleiner (mehr Trainingsdaten pro Fold → weniger Overfitting). Die Tolerance sollte in diesem Fall eher bei 0.03–0.05 liegen.
-- Die Penalty wird auf **alle** BLT-Objectives angewendet: Klassifikation (Outcome, Propensity), Regression (SLearner, DRLearner model_regression) und gruppierte Regression (TLearner, XLearner).
+- Bei `cv_splits: 5` (Default) ist der Gap natürlich kleiner als bei weniger Folds (mehr Trainingsdaten pro Fold → weniger Overfitting).
+- Die Penalty wird auf **alle** BLT-Objectives angewendet: Klassifikation (Outcome, Propensity), Regression (SLearner, TLearner, XLearner) und gruppierte Regression (TLearner, XLearner).
 
 ## Tuning-Metriken-Gesamtübersicht
 
@@ -600,28 +660,42 @@ tuning:
 | BLT | Nuisance (alle) | log_loss (Default) | + (lower=better) | negiert | Skill Score ✓ | Relativ ✓ |
 | BLT | Nuisance (Regression) | neg_mse (Default) | + (lower=better) | negiert | R² ✓ | Relativ ✓ |
 | BLT | XLearner CATE | _score_regressor | varies | varies | R² ✓ | Relativ ✓ |
-| FMT | NonParamDML | est.score() = R-Loss | + (lower=better) | negiert | — (nur relativ) | Relativ ✓ |
-| FMT | DRLearner | est.score() = DR-MSE | + (lower=better) | negiert | — (nur relativ) | Relativ ✓ |
-| GRF | CausalForestDML | est.score() = R-Loss | + (lower=better) | negiert | — (nur relativ) | Nicht nötig (OOB) |
-| GRF | CausalForest | R-Loss (manuell) | + (lower=better) | negiert | — (nur relativ) | Nicht nötig (OOB) |
+| FMT | NonParamDML | R-Score (via RScorer) | higher=better | direkt | R-Score ✓ | Relativ ✓ |
+| FMT | DRLearner | R-Score (via RScorer) | higher=better | direkt | R-Score ✓ | Relativ ✓ |
+| GRF | CausalForestDML | R-Score (via RScorer) | higher=better | direkt | R-Score ✓ | Relativ ✓ |
+| GRF | CausalForest | R-Score (via RScorer + Adapter) | higher=better | direkt | R-Score ✓ | Relativ ✓ |
 
-**Wichtig:** Bei FMT/CFT ist `est.score()` der **rohe R-Loss** (MSE der Residual-auf-Residual-Regression), **nicht R²**. Der R-Loss ist nur für den Vergleich zwischen Trials derselben Study sinnvoll, nicht für absolute Interpretation. Ein normierter Score (wie bei BLT) würde den `RScorer` erfordern, der eine zusätzliche Baseline-Berechnung durchführt — das wäre zu teuer im Tuning-Loop.
+**R-Score via externer RScorer (Nie & Wager, 2021; Schuler et al., 2018):** FMT und CFT verwenden den EconML `RScorer` für die Bewertung. Der RScorer fittet **eigene, unabhängige** Nuisance-Modelle (model_y, model_t) mit 2-Fold T×Y-stratifiziertem Cross-Fitting auf den Validierungsdaten. Dann bewertet er den CATE-Estimator über `scorer.score(est)`, das intern `est.const_marginal_effect(X_val)` aufruft und den R-Score berechnet: R-Score = 1 − MSE(heterogen) / MSE(konstant). Vorteile: (1) Nuisance-Unabhängigkeit (kein Overfitting-Leak), (2) Einheitliche Metrik über alle Learner (NonParamDML, DRLearner, CFDML, GRF via CausalForestAdapter), (3) Konsistenz mit EconML's eigenem `tune()`-Ansatz. Scorer werden über Modelle gecacht (FMT: zwischen NonParamDML und DRLearner; CFT: zwischen CFDML und GRF).
 
-### Warum unterschiedliche Metriken?
+### Warum R-Score statt rohem MSE?
 
-- **NonParamDML:** `est.score()` gibt nativ R-Loss zurück — die optimale Tuning-Metrik,
-  weil model_final auch intern auf R-Loss trainiert wird (Residual-auf-Residual-Regression).
-- **DRLearner:** `est.score()` gibt DR-MSE zurück — passend, weil model_final intern
-  auf DR-Pseudo-Outcomes trainiert wird. R-Loss wäre hier ein Train-Eval-Mismatch.
-- **GRF:** RScorer = normalisierter R-Loss. Identische Metrik wie NonParamDML.score(),
-  nur auf [0,1] skaliert (analog R²). Nuisance-Modelle = BLT-getunte Base-Learner.
+- **Problem:** Ein roher MSE bestraft Heterogenität überproportional.
+  Ein Intercept-Only-Modell (τ(X) = const) hat niedrigeren OOS-MSE als ein heterogenes
+  Modell mit Varianz → Optuna konvergiert zur konservativen Ecke (Intercept-Kollaps).
+- **Lösung:** R-Score = 1 − MSE(heterogen) / MSE(konstant). Normalisiert gegen die
+  Intercept-Baseline. Intercept-Only → R-Score ≈ 0, echte Heterogenität → > 0.
+- **Alle Learner:** Scoring via externem EconML `RScorer` mit unabhängiger Nuisance (2-Fold T×Y-stratifiziertes Cross-Fitting auf Val-Daten). Der RScorer berechnet Base-MSE und R-Score intern. Vorteile: Nuisance-Unabhängigkeit, einheitliche Metrik, Konsistenz mit EconML `tune()`.
+- **CausalForest (GRF):** Via `CausalForestAdapter` (erbt von `BaseCateEstimator`) RScorer-kompatibel. `scorer.score(adapter)` ruft `adapter.effect(X_val)` → `cf.predict(X_val)` auf.
+- Referenz: Nie & Wager (2021), Schuler et al. (2018), EconML RScorer-Konzept.
+
+### Ranking-Erhaltung
+
+Der R-Score ist eine **monotone Transformation** des rohen MSE: `R-Score = 1 − MSE / base_mse`, wobei `base_mse` für alle Trials desselben Folds konstant ist. Dadurch ist die Ranking-Ordnung der Trials **identisch** zum rohen MSE — der Trial mit dem niedrigsten MSE hat auch den höchsten R-Score. Die Normalisierung ändert nur die Skala, nicht die Reihenfolge. Optuna's TPE-Sampler profitiert von der normierten Skala (≈ 0 bis 1 statt beliebiger absoluter MSE-Werte).
+
+### Kongeniality-Bias
+
+Schuler et al. (2018) beobachten, dass Metriken wie R-Loss und DR-Loss dazu tendieren, den "kongenial" zugehörigen Learner zu bevorzugen (R-Loss → R-Learner, DR-Loss → DR-Learner). Durch die Umstellung auf den einheitlichen externen RScorer nutzen jetzt **alle Learner dieselbe R-Score-Metrik** (nicht mehr je Learner eine native Metrik). Dies ermöglicht direkte Vergleichbarkeit der Scores zwischen NonParamDML, DRLearner, CausalForestDML und CausalForest — ein Kongeniality-Bias ist damit ausgeschlossen.
+
+### Base-MSE-Approximation (historisch)
+
+Die vorherige Implementierung verwendete `DummyRegressor("mean") + refit_final()` für die Base-MSE-Berechnung. Seit der Umstellung auf den externen RScorer wird die Base-MSE intern vom RScorer berechnet (exakt, ohne DummyRegressor-Approximation). Die alten Helper-Funktionen (`_compute_base_mse_via_dummy`, `_compute_base_mse_from_residuals`) bleiben als Utilities im Code, werden aber nicht mehr in den aktiven Scoring-Pfaden verwendet.
 
 ### Nuisance-Modell-Konsistenz
 
 Alle kausalen Modelle verwenden dieselben BLT-getunten Nuisance-Modelle (model_y, model_t):
 - NonParamDML/DRLearner: Direkt via Modellkonstruktion
-- CausalForestDML: Via EconML tune() (eigenes CV)
-- CausalForest RScorer: Via Pipeline-Übergabe (build_base_learner + BLT-Params)
+- CausalForestDML: Via Modellkonstruktion (model_y, model_t mit BLT-Params)
+- CausalForest: Via Pipeline-Übergabe (build_base_learner + BLT-Params für Residuen-Vorberechnung)
 
 ### CV-Zuordnung
 
@@ -681,6 +755,20 @@ Die CV-Folds werden per `StratifiedKFold(shuffle=True, random_state=seed)` erzeu
 
 Wenn `tuning_seed == SEED`, loggt die Pipeline eine Warnung und die Web-UI zeigt einen gelben Hinweis. In diesem Fall sind die Tuning- und CP-Folds identisch und der Schutz ist deaktiviert.
 
+### Theoretische Einordnung
+
+Der Dual-Seed-Ansatz ist ein Kompromiss zwischen drei Strategien:
+
+| Strategie | Val-Set-Overfitting | Rechenkosten | Beschreibung |
+|-----------|---------------------|-------------|--------------|
+| Gleicher Seed | ✗ Ja (Selection Bias) | 1× | Tuning und Evaluation auf identischen Folds → optimistischer Score |
+| **Dual-Seed (rubin)** | **✓ Stark reduziert** | **1×** | **Tuning-Folds ≠ Eval-Folds → unbiased OOF-Score** |
+| Volle Nested CV | ✓ Eliminiert | K× teurer | Tuning wird pro Outer-Fold wiederholt (K × n_trials Trials) |
+
+Volle Nested CV (sklearn: `cross_val_score(GridSearchCV(..., cv=inner_cv), ..., cv=outer_cv)`) ist der Goldstandard, aber bei kausalen ML-Modellen (EconML-Estimatoren mit internem Cross-Fitting, 50+ Optuna-Trials, 3 Tuning-Wellen) rechenökonomisch nicht umsetzbar — der Mehraufwand beträgt K × (BLT + FMT + CFT Trials).
+
+Der Dual-Seed-Ansatz erzielt ~95% des Schutzes bei 0% Mehrkosten: Die getunten Parameter werden auf komplett anderen Fold-Grenzen evaluiert als beim Tuning. Die einzige verbleibende Korrelation ist, dass dieselben Datenpunkte in beiden Split-Schemata vorkommen (unvermeidbar ohne Holdout-Set). In der Praxis ist die Überlappung zwischen Tuning-Val-Folds und CP-Val-Folds bei 5-Fold-CV ~20% (Zufallsniveau), was die Selection Bias auf ein vernachlässigbares Niveau reduziert.
+
 ### Produktions-Datenregime (Train-Subsample)
 
 DML/DR-Nuisance-Modelle (scope="all") sehen in Produktion nur (K-1)/K der äußeren Fold-Daten durch internes Cross-Fitting. BLT simuliert das, indem die Trainingsmenge pro Fold um den Faktor `(K-1)/K` subsampelt wird.
@@ -721,18 +809,29 @@ Bei kausalen Cross-Predictions schätzt jedes Modell den Treatment-Effekt `E[Y(1
 
 ## CausalForest-Tuning (Optuna)
 
+> **Klasse:** `CausalForestTuner` in `rubin/tuning/causal_forest.py`. Der RScorer-Cache wird als Instanz-State gehalten, sodass Scorer zwischen CausalForestDML- und CausalForest-Calls wiederverwendet werden.
+
 ### CausalForestDML
-CausalForestDML wird via Optuna über 8 Wald-Parameter getunt (n_estimators, max_depth, min_samples_leaf, min_samples_split, max_features, max_samples, min_var_fraction_leaf, min_impurity_decrease). Jeder Trial wird auf äußeren CV-Folds (tuning_cv_seed, StratifiedKFold T×Y) via `est.score()` (R-Loss, Nie & Wager 2021) bewertet. R-Loss = E[(Y_res − τ·T_res)²] — misst die Güte der CATE-Schätzung nach Robinson-Residualisierung. Nuisance-Modelle (model_y, model_t) nutzen die BLT-getunten Hyperparameter.
+CausalForestDML wird via Optuna über 4 kausale Parameter getunt: `max_depth` (kategorisch: 3, 5, 7, 10, 15, None), `min_weight_fraction_leaf` (log-skaliert: 0.0001–0.05), `min_var_fraction_leaf` (log-skaliert: 0.0005–0.05), `criterion` (kategorisch: mse, het). Alle anderen Wald-Parameter werden auf EconML-Defaults fixiert (`n_estimators=100`, `min_samples_leaf=5`, `max_samples=0.45`, `max_features=auto`, `min_impurity_decrease=0.0`). Diese Reduktion von 9 auf 4 Parameter verhindert degenerierte Konfigurationen und verbessert die TPE-Effizienz.
+
+Die kategorischen Auswahlen sind per YAML (`depth_choices`, `criterion_choices`) und in der App (Chip-Selektoren) konfigurierbar. Die Float-Ranges sind per `search_space` (low/high) und in der App (Slider) konfigurierbar. `forest_fixed_params` aus der YAML-Config werden als Basis-Overrides vor den Optuna-Suggestions angewendet.
+
+Die Nuisance-Modelle (model_y, model_t) werden einmalig pro äußerem Fold gecacht (`cache_values=True`). Bei RCT wird model_t als `DummyClassifier(strategy="prior")` im Cache verwendet (konstante Propensity).
+
+Pro Trial werden nur die Forest-Parameter via `setattr()` geändert und der Forest via `refit_final()` neu gefittet — `set_params()` existiert NICHT bei CausalForestDML (kein sklearn BaseEstimator). EconML's `_gen_model_final()` liest die aktuellen Attribute und baut bei jedem `refit_final()` einen frischen CausalForest.
+
+Bewertung via RScorer (unabhängige Nuisance, 2-Fold T×Y-stratifiziertes Cross-Fitting auf Val-Daten, Nie & Wager 2021) auf äußeren CV-Folds (tuning_cv_seed, StratifiedKFold T×Y). Tuning mit `n_estimators=100` (EconML tune()-Konvention), Production mit 500 (konfigurierbar via `forest_fixed_params`).
 
 ### CausalForest (GRF)
-Der reine CausalForest (econml.grf) hat keine eigene `score()`-Methode. Stattdessen wird der R-Loss manuell berechnet: Nuisance-Modelle (BLT-getunte CatBoost/LightGBM) werden einmalig pro Fold vorberechnet, dann für jeden Trial die Residuen Y_res = Y − E[Y|X] und T_res = T − E[T|X] zur Bewertung genutzt. 9 Wald-Parameter (inkl. criterion: mse/het).
+Der reine CausalForest (econml.grf) wird über den `CausalForestAdapter` (erbt von `BaseCateEstimator`, hat `effect()`) mit dem RScorer bewertet: Pro Fold wird ein RScorer mit unabhängiger Nuisance erstellt. Pro Trial wird ein `CausalForestAdapter(**trial_params)` gefittet und via `scorer.score(adapter)` bewertet. 4 Parameter: `max_depth`, `min_weight_fraction_leaf`, `min_var_fraction_leaf` + `criterion` (mse/het). Fixe Defaults für alle anderen Parameter. Tuning mit `n_estimators=100`, Production mit 500.
 
 ### Gemeinsame Eigenschaften
 - **Stratifizierung:** T×Y (identisch mit BLT/FMT)
 - **Seed:** tuning_cv_seed (identisch mit BLT/FMT)
 - **Single-Fold:** Nur 1. Fold evaluiert (wie BLT/FMT)
-- **n_jobs=1:** Verhindert joblib-Deadlocks bei CatBoost/LightGBM Nuisance
-- **gc.collect()** nach jedem Fold
+- **n_jobs=1 (Trials):** Trials sequentiell, Forest intern n_jobs=-1 (alle CPUs)
+- **n_estimators=100:** EconML-Default, fixiert (nicht im Suchraum). Muss durch subforest_size=4 teilbar sein (Safety-Net in `_sanitize_forest_params`).
+- **gc.collect()** nach Cache-Aufbau und am Ende
 
 ## Feature-Selektion
 
@@ -766,3 +865,46 @@ Mit `max_ctr_complexity=1` werden **keine Kombinationen** generiert. Die individ
 - FMT Tuning (via EconML model_y/model_t)
 - CF Tuning (CausalForestDML Nuisance)
 - Training + Champion-Refit
+
+---
+
+## Optuna TPE-Sampler Optimierungen
+
+Folgende Optimierungen sind in allen drei Tuning-Stufen (BLT, FMT, CFT) konsistent aktiviert:
+
+### Lineare statt logarithmische Suche
+
+Alle Hyperparameter werden **linear** gesampelt (`log=False`). Einzige Ausnahme: `learning_rate` (exponentieller Effekt → `log=True`). Bei linearem Sampling verteilt TPE die Trials gleichmäßig über den Suchraum, statt sich auf das untere Ende zu konzentrieren. Dies ist besonders wichtig für regularisierende Parameter wie `min_samples_leaf`, deren Optimum bei imbalanced Daten am oberen Rand liegen kann.
+
+### `consider_endpoints=True`
+
+TPE exploriert explizit die Grenzen des Suchraums. Ohne diese Option werden Randwerte systematisch unterexploriert. Relevant für Parameter, deren Optimum am Rand liegen kann (z.B. `min_samples_leaf` bei stark imbalanced Daten).
+
+### `n_startup_trials` ≤ 50% der Trials
+
+`n_startup_trials` (Anzahl zufälliger Trials vor TPE-Exploration) wird auf maximal die Hälfte der effektiven Trials pro Task gekappt. Ohne diese Kappung sind bei Propensity-Tasks mit 20 Trials alle 20 Trials zufällig — TPE wird nie aktiviert.
+
+### `n_warmup_steps=2`
+
+Der MedianPruner wartet 2 CV-Folds ab, bevor er Trials pruned (statt 1). Ein einzelner Fold ist zu verrauscht für eine zuverlässige Pruning-Entscheidung.
+
+---
+
+## Speicher-Optimierungen (BLT)
+
+### `del model` in allen Objectives
+
+Nach jedem CV-Fold wird das trainierte CatBoost/LightGBM-Modell explizit gelöscht (`del model`), um den nativen C++-Speicher sofort freizugeben. Ohne `del` hält Python die Referenz bis zum nächsten Garbage-Collection-Zyklus.
+
+### `malloc_trim(0)` zwischen BLT-Tasks
+
+Nach jedem BLT-Task wird `ctypes.CDLL("libc.so.6").malloc_trim(0)` aufgerufen. Dies zwingt glibc, freigegebenen C/C++-Speicher (CatBoost, LightGBM) ans Betriebssystem zurückzugeben. Ohne `malloc_trim` hält glibc den Speicher in seinem internen Pool — nach 100+ CatBoost-Trials pro Task akkumuliert das erheblich.
+
+### `n_estimators` muss durch `subforest_size` (Default=4) teilbar sein
+
+EconML's CausalForest und CausalForestDML nutzen Bootstrap-of-Little-Bags (BLB) für Inferenz (`inference=True`). Dafür werden die Bäume in Subforests der Größe `subforest_size=4` gruppiert. `n_estimators` muss exakt durch `subforest_size` teilbar sein, sonst wirft EconML einen `ValueError`.
+
+rubin erzwingt dies automatisch:
+- **CFT-Objective:** `n_estimators` ist auf EconML-Default 100 fixiert (nicht mehr im Suchraum). Die 4 getunten Parameter sind: `max_depth` (kategorisch), `min_weight_fraction_leaf` (log-float), `min_var_fraction_leaf` (log-float), `criterion` (kategorisch)
+- **UI-Slider:** `step=4`, Range `[100, 500]` — nur gültige Werte auswählbar
+- **Defaults:** `_CFDML_DEFAULTS` und `_CF_DEFAULTS` verwenden `n_estimators=100` (÷4=25)
