@@ -1,15 +1,27 @@
-18:02:54 INFO [rubin.analysis] RCT-Diagnose bestätigt: Propensity-Skill = -0.0000 ≈ 0. Training verwendet konstante Propensity P(T|X) = mean(T) = 0.667.
-18:03:12 INFO [rubin.categorical] CatBoost categorical patch (predict): 24 Spalten float→int konvertiert.
-18:12:08 INFO [rubin.tuning] FMT 'NonParamDML': Nuisance gecacht für 5 äußere Folds (je 5 innere × model_y + model_t). Trials fitten nur noch model_final via refit_final(). model_t = DummyClassifier (RCT: konstante Propensity).
-18:12:08 INFO [rubin.tuning] FMT 'NonParamDML': Scorer='qini' — Pruning deaktiviert (QiniScorer benötigt alle Folds).
-18:12:08 INFO [rubin.tuning] FMT 'NonParamDML': Starte 50 Trials (cache_values, OOF-Qini, 5-Fold).
-18:57:31 INFO [rubin.tuning] FMT 'NonParamDML': 50/50 Trials abgeschlossen (0 fehlgeschlagen, 0 gepruned, parallel=1).
-18:57:32 INFO [rubin.tuning] FMT 'NonParamDML': Study + Cache freigegeben, gc.collect() durchgeführt.
-19:11:24 INFO [rubin.tuning] FMT 'DRLearner': Nuisance gecacht für 5 äußere Folds (je 5 innere × model_propensity + model_regression). Trials fitten nur noch model_final via refit_final(). model_propensity = DummyClassifier (RCT: konstante Propensity).
-19:11:24 INFO [rubin.tuning] FMT 'DRLearner': Scorer='qini' — Pruning deaktiviert (QiniScorer benötigt alle Folds).
-19:11:24 INFO [rubin.tuning] FMT 'DRLearner': Starte 50 Trials (cache_values, OOF-Qini, 5-Fold).
-19:53:12 INFO [rubin.tuning] FMT 'DRLearner': 50/50 Trials abgeschlossen (0 fehlgeschlagen, 0 gepruned, parallel=1).
-19:53:13 INFO [rubin.tuning] FMT 'DRLearner': Study + Cache freigegeben, gc.collect() durchgeführt.
-19:53:13 INFO [rubin.analysis] Final-Model-Tuning: 2 Modelle abgeschlossen.
-19:53:13 INFO [rubin.analysis] FMT 'NonParamDML': OOF-R-Score → 0.000114532
-19:53:13 INFO [rubin.analysis] FMT 'DRLearner': OOF-R-Score → 0.000131113
+# ─────────────────────────────────────────────────────────────────────────────
+# pre-commit-Gate für rubin
+#
+# Zweck: Bugs der Klasse "undefined name" (NameError) und Syntaxfehler werden
+#        BEIM COMMIT abgefangen, bevor sie ins Repo gelangen — genau die Klasse,
+#        die in der Vergangenheit zu stillen Laufzeitfehlern geführt hat
+#        (fehlender Import, falscher Variablenname, f-string-Backslash auf <3.12).
+#
+# Einrichtung (einmalig pro Klon):
+#     pixi run hooks-install        # oder:  pre-commit install
+#
+# Manuell über alle Dateien:
+#     pixi run gate                 # oder:  pre-commit run --all-files
+#
+# Hinweis Firmennetz: Es wird bewusst KEIN externes Hook-Repo geladen
+# (kein astral-sh/ruff-pre-commit). Der Hook nutzt das ruff aus der
+# pixi-/venv-Umgebung (language: system) → kein CDN/GitHub-Zugriff nötig.
+# ─────────────────────────────────────────────────────────────────────────────
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-undefined-names
+        name: ruff – undefined names & syntax (F821)
+        entry: ruff check --force-exclude --select F821 --target-version py310
+        language: system
+        types_or: [python, pyi]
+        require_serial: false
