@@ -1,0 +1,270 @@
+# Changelog
+
+## [Unreleased]
+
+### Hinzugefügt
+
+- **Fit-Budget im Report ehrlich gemacht:** Die BLT-Karte „Modell-Fits gesamt" hieß irreführend „gesamt", zählte aber nur Nuisance-Einzelfits des Base-Learner-Tunings → umbenannt zu „BLT-Fits (nur Nuisance-Tuning)". Neu: eine „Fit-Budget gesamt (Schätzung)"-Box, die zusätzlich die tatsächlichen Top-Level-Modell-Fits des Trainings (Cross-Prediction: `N × (K + 1)` bzw. extern `N × 1`) plus Bundle-Refits ausweist und darauf hinweist, dass jeder DML-Fit intern ~`mc × dml_crossfit_folds × 2 + 1` Sub-Fits auslöst (Einzel- und Top-Level-Fits sind nicht summierbar). Außerdem zeigt die CFT-Sektion jetzt — analog zu FMT — eine Fit-Schätzung (`Folds × (Pre-Fit + Scorer) + Trials × refit_final`). Kommentar in `training.py` ergänzt, warum `m_full` (Full-Data-Fit für die `Train_`-Spalte) bewusst gelöscht und das exportierte Modell am Ende neu gefittet wird (Memory-vs-Compute-Tradeoff).
+
+- **drtester_plots Split:** `drtester_plots.py` (1385L) aufgeteilt in 3 Module: `drtester_core.py` (DRTester-Klassen + Nuisance), `evaluation_plots.py` (CATE/Uplift-Plots), `score_plots.py` (Qini-Vergleiche + Score-Redistribution). Backward-kompatibler Re-Export-Shim.
+- **server.py Blueprint-Split:** `server.py` (1327L) aufgeteilt in App-Factory + `app/state.py` (Shared State) + 6 Blueprint-Module in `app/routes/` (frontend, health, data, config, analysis, results). Keine Datei über 412 Zeilen.
+- **UI Datei-Split:** `rubin_ui_src.jsx` (3975L) aufgeteilt in 14 JSX-Quelldateien in `app/src/`. Auto-Build via `build_ui.py`. Konstanten mehrzeilig formatiert.
+- **Overfit-Penalty skaleninvariant:** Floor von 0.1 auf 1e-8 geändert. Penalty funktioniert jetzt identisch für R-Score (~0.3) und Qini (~0.0001). Train-Qini-Berechnung in QiniScorer-Pfad (FMT + CFT): `effect(X_train)` pro Fold, In-Sample-Qini vs OOF-Qini Gap-Penalty. `CausalForestConfig` um `overfit_penalty` + `overfit_tolerance` erweitert.
+- **QiniScorer für FMT + CFT:** Neue Scorer-Option `scorer: qini` als Alternative zum EconML RScorer. Default bei RCT via `scorer: auto`. Optimiert Ranking-Qualität (OOF-Qini) statt pointwise CATE-MSE. Kein Pruning, kein RScorer-Cache. Robust bei schwachem Signal (Mahajan et al. 2023). Config: `final_model_tuning.scorer` / `causal_forest.scorer` (auto | qini | rscore).
+- **Tuning-Modul-Split:** `tuning_optuna.py` (2412 Zeilen) → `rubin/tuning/` Paket mit 4 Modulen: `common.py` (Builder, Search-Space, Utilities), `base_learner.py` (BaseLearnerTuner), `final_model.py` (FinalModelTuner), `causal_forest.py` (CausalForestTuner). Keine Backward-Compat-Shim — alle Imports direkt auf neue Pfade.
+- **CausalForestTuner Klasse:** `tune_causal_forest()` Standalone-Funktion → `CausalForestTuner` Klasse mit internem RScorer-Cache (`self._scorer_cache`). Bei `scorer: rscore` werden Scorer zwischen CausalForestDML- und CausalForest-Calls wiederverwendet. Bei `scorer: qini` wird kein Cache benötigt.
+- **Overfit-Penalty Scale Floor:** `scale = max(|val_score|, 0.1)` statt `max(|val_score|, 1e-10)`. Verhindert disproportionale Penalty bei val_score ≈ 0 (z.B. R-Score nahe Null bei schwachem CATE-Signal).
+- **`store_fold_aligned_data()` / `get_fold_aligned_data()` Helpers:** Abstraktion über `DataFrame.attrs` mit Modul-Cache-Fallback + Warnung bei attrs-Verlust.
+- **`_predict_effect` Squeeze Safety:** Blanket `squeeze()` → gezielter Trailing-Dim-Squeeze. Schützt MT-K-1-Dimension bei `(n, K-1)` Shapes.
+- **`max_features` Default: 50 → 77** in Settings, Feature Selection, HTML Report, 3 Configs, JSX/HTML (17 Stellen, 8 Dateien).
+- **TunedSet/TuningTask Docstrings** ergänzt.
+
+### Gefixt
+
+- **Optuna-Deprecation `consider_endpoints` entfernt.** Der TPESampler wurde mit `consider_endpoints=True` konstruiert; dieser Parameter ist seit Optuna 4.9.0 deprecated (Entfernung für 6.0.0 geplant) und löste bei jedem Study-Aufbau eine `FutureWarning` aus. An allen sechs Sampler-Stellen (BaseLearnerTuner, FinalModelTuner je 2 Fallback-Pfade, CausalForestTuner Qini-/RScore-Pfad) entfernt; Optuna nutzt jetzt den Standard (`consider_endpoints=False`). Wäre der Parameter bis 6.0.0 stehen geblieben, hätte der `try/except`-Fallback ihn dort als `TypeError` abgefangen und auf einen deutlich schwächeren Sampler (ohne `multivariate`/`group`/`constant_liar`) zurückgegriffen. **Hinweis:** Dies ändert die TPE-Sampling-Sequenz minimal (Endpunkt-Heuristik der Parzen-Varianz) und damit die explorierten Hyperparameter — eine Exploration-/Konventionsänderung, keine Korrektur. Docstrings/Kommentare in `base_learner.py` und `common.py` entsprechend angepasst. (Die separaten `ExperimentalWarning`s zu `multivariate`/`group`/`constant_liar` bleiben — sie sind bewusst genutzte, stabile Features, keine Deprecation.)
+- **UI-Fit-Schätzung an XLearner-Pseudo-Caching angepasst.** Nachdem die XLearner-Pseudo-Outcomes nur noch einmalig (statt pro Trial) berechnet werden, zählten die Fit-Schätzer die Pseudo-Outcome-Nuisance (`innerCv×2 + bis zu 2 Fallback`) weiterhin pro Trial. Korrigiert in der App-Seitenleiste (`14_app.jsx`: `tr × (tc×K) + (innerCv×2+2)` statt `tr × ((tc×K) + (innerCv×2+2))`) und in der Tuning-Plan-Vorschau (`10_page_models.jsx`: Pseudo-Effekt-Task zählt pro Trial nur noch `nCv×K` CATE-Fits, die Nuisance einmalig als `pseudoNuisanceOnce`; Label und Erklärtext angepasst). Beispiel (50 Trials, cv=5): Pseudo-Task-Schätzung 1100 → 512 Fits, beide Schätzer konsistent. Bundle via `build_ui.py` neu erzeugt. Die grobe Report-Schätzung (`n_studies × n_trials × cv`) ist davon unberührt, da sie den Pseudo-Nuisance-Term ohnehin nie pro Trial enthielt.
+- **Überflüssiges MLflow-Artefakt `uplift_curve__<historical_score>.csv` entfernt.** Die rohe Uplift-Kurven-CSV des historischen Scores wurde geloggt, aber nirgends zurückgelesen (kein Consumer), ihre Kennzahlen (`qini`, `auuc`, `uplift10/20/50`, `policy_value`) waren bereits als MLflow-Metriken vorhanden und die Kurve in den Vergleichs-Plots visualisiert. Zudem war sie asymmetrisch — die eigentlichen kausalen Modelle erhielten keine analoge Roh-CSV (nur PNG-Plots + Metriken). Die komplette Auswertung des historischen Scores bleibt unverändert; nur der ungelesene Roh-Dump entfällt.
+- **KRITISCH: CausalForestDML verlor im RCT-Modus die konstante Propensity nach CFT-Tuning.** Der CFT-Rebuild konstruierte einen frischen `ModelContext` (`_ctx_new`) **ohne** `is_rct` (Default `False`) — und ohne den `forest_fixed_params`-Merge und `parallel_jobs=-1`. Folge: Lief ein CausalForestDML im RCT-Modus durch das CausalForest-Tuning (`use_econml_tune=true`), wurde das ausgelieferte Modell mit **geschätzter** statt konstanter Propensity (`DummyClassifier`) gebaut — obwohl das Tuning selbst mit konstanter Propensity lief (Tune/Train-Mismatch) und der Log „RCT-Modus → konstante Propensity" das Gegenteil behauptete. Fix: Der CFT-Rebuild verwendet den bereits korrekt gebauten `ctx` wieder (enthält `is_rct`, forest_fixed_params, `parallel_jobs=-1`) und überlagert nur die getunten Forest-Params. Verifiziert: `model_t` ist im RCT-Modus ein `DummyClassifier` und bleibt es nach dem CFT-Overlay (mit übernommenen getunten Forest-Params); im Beobachtungs-Modus bleibt es der geschätzte Base-Learner. Ohne CFT war der Pfad bereits korrekt (erster `ctx`-Bau mit `is_rct`).
+- **Log-Konsistenz: `model_final`-Parameter jetzt auch für CausalForestDML/CausalForest.** Der „model_final effektive Params"-Log existierte nur für NonParamDML/DRLearner. Für die Forest-Modelle (deren „model_final" der Causal Forest selbst ist) wird nun nach dem CFT-Block analog ein „model_final (Forest) effektive Params"-Log ausgegeben (forest_fixed_params + CFT-getunte Params, `cft_tuned=ja/nein` als Pendant zu `explicit_tuned`). Damit loggt jedes Modell mit tunebarer Final-Stufe seine effektiven Parameter.
+- **Feature-Selektion liefert jetzt exakt `max_features` (Verhaltensänderung).** `select_features_by_importance` kappte die Union der Pro-Methode-Top-N nur nach oben auf `max_features`, füllte aber nie auf. Bei Überschneidungen zwischen Methoden (dieselben starken Features bei CatBoost *und* CausalForest) war die Union kleiner als das Budget → es kamen weniger Features heraus als eingestellt (z.B. 48 statt 77). Fix: Das Ergebnis wird auf `target = min(max_features, n_pool)` gebracht — bei Überschreitung wie bisher per Konsens-Rang gekappt (Verhalten **byte-identisch** zum Vorzustand, verifiziert), bei Unterschreitung neu mit den global bestbewerteten verbleibenden Features aufgefüllt. Die Pro-Methode-Top-N bleiben als garantierte Repräsentation erhalten. `max_features` ist damit eine **exakte Zielzahl** statt einer Obergrenze (Ausnahme: weniger Features im Pool nach dem Korrelationsfilter → alle verbleibenden). Propagiert nach UI (Label „Ziel-Feature-Anzahl", Hinweis-/Vorschautexte), HTML-Report, `rubin_overview.html` und Docs (`konfiguration.md`, `architektur.md`, `README_DE.md`). Neue Tests sichern die Exaktheit (Overlap-Auffüllung, Kappen, Pool < Budget, 1–3 Methoden).
+- **BLT-Performance: XLearner-Pseudo-Outcomes nur noch einmal berechnet.** `_build_xlearner_pseudo_outcomes` (2K OOF-Nuisance-Fits) wurde bisher *innerhalb* des per-Trial-Objectives (`_objective_xlearner_cate`) aufgerufen, obwohl die Pseudo-Outcomes nur von den (über alle Trials fixen) getunten Outcome-Nuisances + `tuning_cv_seed` abhängen, nicht von den Trial-Params der `cate_models`. Sie wurden so `n_trials`× redundant neu gebaut. Fix: Vorberechnung einmalig in `_tune_task` vor `study.optimize`, Übergabe als `pseudo`-Array an das Objective. Ergebnis byte-identisch (Pseudo-Outcomes sind deterministisch — verifiziert: zwei Aufrufe identisch, XLearner-Tune über zwei Läufe reproduzierbar), nur ohne die redundanten Fits.
+- **Skill-Score multiclass-fähig (Diagnose).** `_compute_skill_score` nutzte als Klassifikations-Baseline die *binäre* Entropie von `y.mean()` und war damit bei MT-Propensity (K>2 Arme) degeneriert (Baseline ≈ 0 → Skill 0). Fix: Baseline = Entropie der Klassenverteilung `−Σ p_k·ln(p_k)` (= Log-Loss des konstanten Klassen-Prior-Prädiktors), multiclass-fähig. Für binäres Y exakt identisch zur alten Formel (verifiziert byte-genau). Betrifft nur die Diagnose-/Report-Anzeige, nicht Selektion oder Hyperparameter-Wahl.
+- **Toter Parameter entfernt:** Der ungenutzte `multiclass`-Parameter von `BaseLearnerTuner._score_classifier` (die Multiclass-Behandlung erfolgt korrekt über `proba.ndim`) samt seiner vier Aufrufstellen entfernt.
+- **FMT-Refactor: NonParamDML/DRLearner-Duplikation entfernt.** Die ~150 Zeilen Scorer-Wahl + Qini-/RScore-Objective + `study.optimize` + Result-Extraktion waren in beiden Modell-Zweigen nahezu identisch dupliziert. Extrahiert in eine gemeinsame Methode `_run_fmt_study(...)`; die Zweige bauen nur noch ihre estimator-spezifischen `cached_folds` und reichen die (rollennamen-aufgelösten) Nuisance-Params herein (`final_model.py` 842 → 556 Zeilen). Verhaltenserhaltend verifiziert: FMT-`model_final`-Auswahl für NonParamDML ist byte-identisch zum Vorzustand, für `scorer=rscore` UND `scorer=qini`.
+- **FMT-RScorer-Cache: Nuisance-Fingerprint im Cache-Key.** Der Scorer-Cache-Key (`_outer_splits, tuning_cv_seed, single_fold, len(Y), op>0`) enthielt nicht die Nuisance-Konfiguration. Wurden NonParamDML und DRLearner beide FMT-getunt, verwendete das zweite Modell die Scorer des ersten — gebaut mit dessen Nuisance-Hyperparametern (reihenfolge-abhängig). Fix: deterministischer Fingerprint von (Outcome-, Propensity-, Base-fixed-Params) + `base_type` + `is_rct` im Key. Identische Configs teilen sich weiterhin den Cache (Speed bleibt), unterschiedliche bekommen jeweils einen eigenen, mit den eigenen Nuisance-Params gebauten Scorer.
+- **FMT-Docstring korrigiert:** `_apply_overfit_penalty`-Docstring nannte fälschlich `scale = max(|val_score|, 0.1)`, der Code nutzt (skaleninvariant) `1e-8`. Docstring an den Code angeglichen.
+- **CFT-RScorer-Cache: Schlüssel hinzugefügt.** `CausalForestTuner._scorer_cache` wurde bei jedem zweiten `tune()`-Aufruf (CausalForest nach CausalForestDML) blind wiederverwendet, ohne zu prüfen, ob Nuisance-Params, `base_type`, RCT-Status und Fold-Setup übereinstimmen. In der bestehenden Pipeline ist die Wiederverwendung sicher (der Caller liefert für beide Modelle identische BLT-Nuisances + Splits), aber unbemerkte Abweichungen hätten still falsche Scorer reused. Fix: `_scorer_cache_key` aus Nuisance-Fingerprint + `base_type` + `is_rct` + `inner_cv` + `tuning_cv_seed` + `single_fold` + `len(Y)`; Reuse nur bei Übereinstimmung, sonst Neuaufbau (verifiziert: identische Nuisance → Reuse, abweichende → Rebuild).
+- **CFT-Sampler-Seed pro Study (Verhaltensänderung).** Beide Optuna-Sampler (Qini- und RScore-Pfad) nutzten direkt `seed=tuning_cv_seed`, wodurch die CausalForestDML- und CausalForest-Studies bei identischem Suchraum exakt dieselbe Trial-Sequenz durchliefen. Umgestellt auf einen pro-Study aus `tuning_cv_seed + sha256(study_key)` abgeleiteten Seed (`_study_seed`, analog zu BaseLearnerTuner/FinalModelTuner) — CFDML und CF explorieren jetzt unterschiedliche Sequenzen (verifiziert: verschiedene Seeds, weiterhin reproduzierbar). **Hinweis:** Dies ändert bewusst die explorierte Sampler-Sequenz und damit die getunten Forest-Parameter — es ist eine Exploration-/Konventionsänderung, keine Output-Korrektur. Der Fold-Split-Seed (Stratifizierung) bleibt unverändert `tuning_cv_seed`.
+- **Fold-Daten-Cache: automatische Eviction (Memory-Leak-Härtung).** Der Modul-Cache `_fold_data_cache` in `training.py` (Fallback für `DataFrame.attrs`, falls diese durch eine DataFrame-Operation verloren gehen) war mit `id(df)` gekeyt und wurde nie geleert. Über viele Analysen hinweg wuchs er unbegrenzt; zudem konnte CPython eine `id()` nach GC des ursprünglichen DataFrames für ein neues Objekt wiederverwenden, sodass ein stale Eintrag fälschlich getroffen würde. Fix: In `store_fold_aligned_data` wird ein `weakref.finalize(df, _fold_data_cache.pop, id(df), None)` registriert → der Eintrag wird entfernt, sobald das DataFrame garbage-collected wird. Der Finalizer hält (nur `id(df)` als int + die Modul-Methode) keine starke Referenz auf das DataFrame und verhindert dessen GC daher nicht. Verifiziert: Round-Trip + attrs-Fallback unverändert, Eintrag verschwindet nach df-GC, 50 Wegwerf-DataFrames hinterlassen 0 Cache-Einträge.
+- **CFT-Tuning ignorierte `mc_iters`/`mc_agg`:** Der cache_values-`CausalForestDML` im CausalForest-Tuning (`tuning/causal_forest.py`) wurde ohne `mc_iters`/`mc_agg` gebaut → tunte die Forest-Parameter auf mc_iters=1-Nuisance-Residuen, während FMT, der zentrale Model-Builder und das finale/Produktions-Training `mc_iters=N` nutzen. Bei `mc_iters>1` wurden die Forest-Hyperparameter also unter anderen (höhervarianten) Residuen optimiert als das ausgelieferte Modell sieht. Fix: `mc_iters`/`mc_agg` aus der Config gesetzt (analog FMT), `_CFDML_EXPLICIT_KEYS` um beide ergänzt (Schutz gegen Doppel-Argumente). Verifiziert: CFDML mit `mc_iters>1` + cache_values + setattr + `refit_final()` reproduziert byte-genau einen Fresh-Fit. Default `mc_iters=None` (=1) bleibt verhaltensgleich → kein Regressionsrisiko; macht zugleich die Fit-Budget-Schätzungen (die `mc` bereits einrechneten) für CFT korrekt.
+- **App-Seitenleiste: Modell-Fit-Schätzung nach DRTester-Fix nachgezogen.** `estimateFits()` (14_app.jsx) rechnete für die DRTester-Nuisance `isExternal ? 10 : 20` — die „20" im Cross/TMES-Modus zählte die `fit_nuisance`-Berechnung auf Train UND Val. Da der `dr_train_`-Pfad entfernt wurde (nur noch Val), ist es jetzt in beiden Modi val-only (`f += 10`). Vorher wurde der Cross-Modus um 10 Fits überschätzt. Bundle via `build_ui.py` neu erzeugt.
+- **App-UI: FMT-Vorschau zeigt „Trials / Study"-Karte (Konsistenz mit CFT).** Die CausalForest-Tuning-Vorschau zeigte drei Karten (Optuna-Studies, Modell-Fits, Trials/Study), die Final-Model-Tuning-Vorschau nur zwei — die Trials standen dort nur in der Berechnungs-Detailspalte. Reine Anzeige-Inkonsistenz, kein funktionaler Unterschied; FMT zeigt die Karte jetzt ebenfalls.
+- **KRITISCH: Bundle enkodierte Rohdaten in Production falsch:** Der Bundle-Preprocessor war ein `SimpleCSVPreprocessor` (nur Schema/Dtype) und trug **nicht** die gelernten kategorialen Encoding-Maps (string→int) und numerischen NA-Fill-Werte des DataPrep-`FittedPreprocessor`. Bekommt Production Rohdaten, enkodierte `.astype("category")` Kategoriale mit batch-abhängigen Codes (≠ Training) und ließ numerische NaN ungefüllt → falsche CATEs. Fix: Der Bundle-Export lädt den DataPrep-`FittedPreprocessor` (liegt neben `x_file`), schränkt ihn via `restrict_fitted_preprocessor` auf die selektierten Features ein und bündelt diesen → Production enkodiert Rohdaten korrekt (Maps + NA-Fill) und reduziert in einem Schritt auf die Modell-Features. Verifiziert: Production reproduziert aus Rohdaten die exakte Analyse-Feature-Matrix; unbekannte Kategorien → -1. Fallback (mit Warnung) auf Schema-only, wenn der DataPrep-Preprocessor fehlt oder selektierte Features ihm unbekannt sind.
+- **KRITISCH: Champion-Auswahl konnte NaN-Modell wählen:** `_safe_float` in `model_management.py` gab für `NaN`/`Inf` den Wert selbst zurück (da `float(nan)` gelingt) statt `None`. Ein Modell mit nicht-endlicher Selektionsmetrik (z. B. NaN-Qini bei leeren Quantil-Bins / geringer CATE-Varianz) wurde dadurch nicht ausgeschlossen und konnte wegen der undefinierten NaN-Vergleiche im Sort fälschlich als Champion gewählt und ins Bundle/in Production befördert werden. Fix: `_safe_float` schließt nicht-endliche Werte aus (`math.isfinite`). Normale Auswahl/Tiebreak unverändert.
+- **DRTester: toter/latenter Train-Nuisance-Pfad entfernt:** `CustomDRTester.fit_nuisance` berechnete `dr_train_` via `fit_nuisance_cv(Xtrain)`, das von keiner `evaluate_*`-Methode gelesen wird (EconML nutzt `cate_preds_train_`, nicht `dr_train_`). Im Cross-/TMES-Modus war das eine redundante Nuisance-Cross-Fitting-Berechnung auf denselben Daten; zudem latenter Crash, falls die Funktion je mit unterschiedlich langen Train/Val aufgerufen wird (der vorberechnete T×Y-Splitter ist auf Val-Längen-Strata gebaut). Fix: nur noch `dr_val_` berechnen (`dr_train_ = None`). Keine Ergebnisänderung.
+- **App Path-Traversal-Härtung:** `/api/download`, `/api/view` und der Upload-`target_dir`-Check nutzten `str(full).startswith(str(ROOT.resolve()))` — ein String-Prefix ohne Separator, der ein Geschwister-Verzeichnis mit gleichem Namens-Präfix (z. B. `<root>_backup`) fälschlich zuließ. Fix: `Path.is_relative_to(...)`. Zusätzlich Upload-Response gegen `relative_to(ROOT)`-`ValueError` abgesichert, falls das Ziel unter `WORK_DIR` (statt `ROOT`) liegt.
+
+- **Uplift@k-Metrik (BT + MT):** `uplift_at_k` lieferte den fraction-skalierten Uplift-Kurvenwert `(rate_t − rate_c)·k` statt der Within-Group-Inkrement-Rate `rate_t − rate_c`. Dadurch waren `uplift_at_10/20/50pct` (und `uplift{10,20,50}_T{arm}`) um den Faktor k zu klein und stimmten nicht mit dem Uplift-by-Percentile-Plot / sklift überein. Fix: unskalierte kumulative Rate aus den Kurven-Counts (sklift `uplift_at_k(strategy='overall')`).
+- **Qini-/AUUC-Metrik konsistent mit Plot + sklift:** `qini_coefficient` wurde aus der Uplift-Kurve berechnet, während `_native_qini_curve` die echte Qini-Kurve `Y_t − Y_c·N_t/N_c` zeichnet → der annotierte AUC passte nicht zur gezeichneten Kurve. `qini_coefficient` nutzt jetzt die Qini-Kurve (sklift `qini_auc_score`, pro Population normiert); `auuc` ist jetzt die Fläche über der Random-Baseline auf der Uplift-Kurve (sklift `uplift_auc_score`). Beide Änderungen sind rangerhaltend — die Champion-Auswahl bleibt unverändert (empirisch: Pearson ≥ 0.9998, gleicher argmax).
+- **ACHTUNG — Skalenbruch:** Die obigen Metrik-Korrekturen ändern die Absolutwerte von `uplift_at_*`, `qini` und `auuc` in Report und MLflow. Historische MLflow-Werte sind danach nicht mehr maßstabsgleich mit neuen Läufen (Modell-Ranking/Champion-Auswahl jedoch unverändert).
+- **`test_high_threshold_removes_nothing` spröde:** Die synthetische Korrelation des Fixtures (0.99994) lag über dem Test-Threshold 0.999 → 'b' wurde korrekt entfernt, der Test erwartete aber fälschlich „nichts entfernt". Fix: Fixture-Noise angehoben auf corr(a,b) ≈ 0.96 (klar zwischen den getesteten Schwellen 0.9 und 0.999).
+- **KRITISCH: `_log_loss_fn` fehlender Import** in `base_learner.py` nach Modul-Split. `_score_classifier()` crashte mit NameError, still gefangen durch `except Exception: return 0.0` → alle Trials scored 0.0 → `best=0, skill=1.0000`. Fix: `from sklearn.metrics import log_loss as _log_loss_fn` in `base_learner.py`.
+- **`current_metric` NameError** in RCT-Warnung: Variable war nicht definiert, `except Exception: pass` verschluckte den Fehler. Fix: Hardcoded `neg_log_loss=%.4f` Format-String.
+- **`analysis_pipeline.py` Strukturbruch:** Dtype-Exception-Handler-Edit löschte versehentlich den äußeren `except FileNotFoundError:`-Block. Fix: Struktur wiederhergestellt.
+- **`final_model.py` fehlender `import gc`:** Module-Level-Import fehlte nach Extraktion (nur lokale `import gc as _gc` vorhanden). Fix: Module-Level-Import + lokale Aliase bereinigt.
+- **`top_pct` in 3 YAML-Configs:** `config_binary_treatment.yml`, `config_explainability.yml`, `config_reference_all_options.yml` enthielten das gelöschte Feld → `extra=forbid` ValidationError. Fix: Zeilen entfernt.
+- **`scikit-uplift` in `app/requirements_app.txt`:** Phantom-Dependency, war bereits aus `pyproject.toml` entfernt. Fix: Auch aus App-Requirements entfernt.
+- **`test_feature_selection.py` komplett veraltet:** Importierte `_top_pct_features` (gelöscht) und rief `select_features_by_importance(top_pct=...)` auf (Parameter entfernt). Fix: Tests auf `max_features`-API umgeschrieben.
+- **`test_settings.py` veraltete Assertions:** `max_features is None` (Default ist 77), `methods == ["lgbm_importance"]` (Default ist `["catboost_importance"]`), `top_pct`-Assertions. Fix: Gegen aktuelles Schema korrigiert.
+- **`config_explainability.yml`:** SHAP + Surrogate waren beide deaktiviert. Fix: `calculate_shap_values: true` + `surrogate_tree.enabled: true`.
+- **`config_speed.yml`:** 50 BLT-Trials bei Speed-Preset. Fix: Auf 20 reduziert.
+- **Doku-Fixes:** Forest-Defaults-Tabelle (min_samples_leaf/split), Overfit-Penalty-Formel (0.1 Floor), `tune_causal_forest()` → `CausalForestTuner.tune()`, Grid-Search → Optuna TPE, FMT-Parallelisierung (cache_values), `method`-Phantom-Feld in explainability.md, `rubin/utils/uplift_metrics.py` → `rubin/evaluation/`.
+
+- **Externer RScorer für FMT + CFT:** Scoring über EconML `RScorer` mit unabhängiger Nuisance (eigene model_y/model_t, 2-Fold T×Y-stratifiziertes Cross-Fitting auf Val-Daten). Ersetzt `est.score() + DummyRegressor`-Normalisierung. Vorteile: kein Overfitting-Leak, einheitliche R-Score-Metrik über alle Learner (NonParamDML, DRLearner, CausalForestDML, CausalForest via Adapter), Konsistenz mit EconML `tune()`. Referenz: Schuler et al. (2018), Nie & Wager (2021).
+- **n_estimators-Trennung (Tuning vs. Production):** Tuning verwendet immer `n_estimators=100` (EconML tune()-Konvention, 5× Speedup). Production-Modelle verwenden `n_estimators=500` (Default, via `forest_fixed_params` konfigurierbar). `_CFT_TUNING_N_ESTIMATORS` Konstante in `tuning_optuna.py`.
+- **CausalForestAdapter im GRF-Scoring:** Der reine CausalForest wird für RScorer-Kompatibilität über den existierenden `CausalForestAdapter` (erbt von `BaseCateEstimator`) gewrappt. `scorer.score(adapter)` statt manueller MSE-Berechnung.
+- **RCT Konstante Propensity:** Bei `study_type: "rct"` wird für alle Propensity-Rollen (`model_t`, `model_propensity`, `propensity_model`) ein `DummyClassifier(strategy="prior")` eingesetzt. BLT diagnostiziert vorher mit 20 Trials, ob Propensity-Skill ≈ 0 (bestätigt RCT). Training, FMT-Caching und CFT-Caching nutzen konsistent die konstante Propensity.
+- **Optuna TPE-Verbesserungen:** `consider_endpoints=True` (Randexploration), `n_warmup_steps=2` (stabileres Pruning), `n_startup_trials` ≤ 50% der Trials (TPE aktiviert sich bei Propensity-Tasks). Konsistent über BLT, FMT, CFT.
+- **Lineare Suchraum-Exploration:** `log=True` von allen Parametern entfernt außer `learning_rate`. Gleichmäßige Exploration statt logarithmischer Konzentration am unteren Rand.
+- **Speicher-Optimierungen (BLT):** `del model` in allen 5 Objectives nach jedem Fold, `malloc_trim(0)` zwischen Tasks — glibc gibt C++-Speicher ans OS zurück.
+- **SHAP-Farbpalette:** Custom SHAP-Plots (CATE-Profile, SHAP-Dependence) nutzen jetzt SHAP-Standardfarben (`#ff0051`/`#008bfb`) statt rubinrot.
+
+### Gefixt
+- **CausalForestDML `set_params` existiert nicht:** CausalForestDML ist kein sklearn `BaseEstimator` → `set_params()` wirft `AttributeError`, still gefangen durch `except Exception`. Alle 100 CFT-Trials schlugen sofort fehl (Score -1e12 in 1 Sekunde). Fix: `setattr(est, k, v)` statt `est.set_params(**params)`. Empirisch verifiziert: `setattr` + `refit_final()` produziert identische Ergebnisse wie Fresh-Fit.
+- **CFT Suchraum-Reduktion (9 → 4 Parameter):** Aligniert mit EconML `tune()`. Nur noch `max_depth` (kategorisch), `min_weight_fraction_leaf` (log), `min_var_fraction_leaf` (log), `criterion` (mse/het). Alle anderen Wald-Parameter auf EconML-Defaults fixiert (`n_estimators=100`, `min_samples_leaf=5`, `max_samples=0.45`). Verhindert Intercept-Kollaps und verbessert TPE-Effizienz.
+- **`_fmt_is_rct` UnboundLocalError:** Variable war im NonParamDML-Block definiert, DRLearner-Block konnte sie nicht sehen (separate `tune_final_model`-Aufrufe pro Modell). Fix: Definition vor die if/elif-Branches verschoben.
+- **CausalForestDML `max_samples`:** Fixiert auf EconML-Default 0.45 (nicht mehr im CFT-Suchraum). Bei `inference=True` maximal 0.5 erlaubt.
+- **Pipeline Progress-Tracking:** `_progress("Base-Learner-Tuning")` nur noch bei aktivem BLT. `total`-Schrittzahl schließt BLT nur ein wenn aktiviert. Behebt ausgegraute BLT/FMT/CFT-Steps bei deaktiviertem Tuning.
+- **BLT "Direkt verwendet" Badge:** Farbgebung von gold (FMT) auf rosé/rubinrot (BLT) korrigiert.
+- **DRLearner `discrete_outcome=True`:** Konsistent in BLT (Logloss-Objective), Training und Doku.
+- **Surrogate-Leakage beseitigt (Fold-Aligned Predictions):** K-Fold CV nutzt jetzt Fold-Aligned Predictions: für Surrogate-Fold k wird Champion_k's Prediction verwendet (Champion_k hat Fold k nie gesehen → komplett leakage-frei). Strenger als Standard-OOF-Stacking (eliminiert auch indirektes Leakage). Final-Fit für Produktion nutzt weiterhin Full-Data-Refit. Cross-Prediction sammelt jetzt per-Fold Full-Dataset-Predictions in `DataFrame.attrs["fold_aligned_preds"]`.
+- **Surrogate volle Evaluation:** DRTester-Plots (BLP, Calibration, Qini/TOC-CIs, Policy Values), Score-Redistribution und Custom Qini vs. Historisch jetzt auch für den Surrogate.
+
+### Hinzugefügt
+- **Dual-Seed-System:** Separater `tuning_seed` (Default: 18) für Tuning-CV-Folds, verhindert Val-Set-Overfitting. Cross-Prediction nutzt `SEED` (42), Tuning nutzt `tuning_seed` (18). UI-Slider + Warnung bei gleichen Seeds. Theoretische Einordnung (vs. Nested CV) dokumentiert.
+- **Produktions-Datenregime:** BLT-Tasks für DML/DR-Nuisance subsamplen die Trainingsmenge auf (K-1)/K, um das DML-interne Cross-Fitting zu simulieren. Scopes bleiben getrennt (7 Tasks).
+- **RAM-Monitoring:** `_log_ram()` an 8 Phasen-Übergängen mit Warnung ab 80% Auslastung.
+- **FMT Crash-Resilienz:** try/except pro FMT-Modell — DRLearner-Crash verliert nicht mehr NonParamDML-Ergebnisse.
+- **Pipeline-Log Validierungsmodus:** Expliziter Log nach Pipeline-Start (Cross-Val mit Seeds / External / TMES).
+- **Skill Scores (BLT):** Verbesserung gegenüber naivem Baseline-Modell. Klassifikation: `Skill = 1 − log_loss / baseline_log_loss`. Regression: `R² = 1 − MSE / Var(Y)`. Geloggt in Logger, MLflow, JSON-Artefakt, HTML-Report (neue Spalte).
+- **ATE-Barplot:** Response Rates pro Treatment-Gruppe mit SE-Fehlerbalken, ATE-Pfeil (BT), Δ-Labels (MT). Im Report unter "Datengrundlage".
+- **Native Uplift-Plots:** Qini-Kurve (+ Perfect-Kurve, name-Parameter), Uplift-by-Percentile (+ strategy/kind/string_percentiles), Treatment-Balance (+ random-Parameter). 
+- **CausalForest-Tuning (CFT):** Optuna TPE über 4 kausale Parameter (max_depth, min_weight_fraction_leaf, min_var_fraction_leaf, criterion). CausalForestDML via cache_values(), CausalForest via CausalForestAdapter. Scoring via QiniScorer (RCT) oder RScorer (obs.). Ersetzt EconML tune() Grid-Search.
+- **Unified Tuning-Logging:** Alle 3 Wellen: konsistentes Log-Format pro Study.
+- **`cache_values` + `refit_final()` (FMT + CFT):** Nuisance-Modelle werden einmalig pro äußerem Fold gecacht (EconML `cache_values=True`). Pro Trial wird nur `model_final` via `refit_final()` auf gecachten Residuals neu gefittet. Fit-Reduktion: 2.750 → 305 Fits (5F, 50T). Trials laufen sequentiell (`n_jobs=1`), alle CPU-Kerne pro Fit (`parallel_jobs=-1`).
+- **`discrete_outcome=True` (DRLearner):** `model_regression` ist jetzt ein Classifier (EconML nutzt `predict_proba()` für E[Y|X,T]). Tuning-Signatur: `("outcome", "classifier")`. Konsistent in model_registry, tuning_optuna, UI und Doku.
+- **`allow_missing=True`:** Auf alle EconML-Modelle gesetzt (außer CausalForestDML/CausalForest — GRF kann kein NaN in X). CatBoost (`nan_mode="Min"`) und LightGBM (`use_missing=True`) verarbeiten NaN nativ.
+
+### Geändert
+- **Base-Learner Default:** LightGBM → CatBoost (`base_learner.type: "catboost"`).
+- **Random Seed Default:** 42 → 18 für tuning_seed (SEED bleibt 42).
+- **CausalForest-Tuning:** EconML tune() Grid-Search (12/48 Kombinationen) → Optuna TPE (8-9 kontinuierliche Parameter).
+- **FMT/CFT Scoring:** Umstellung von rohem MSE auf R-Score (1 − MSE(heterogen) / MSE(konstant)). Verhindert Intercept-Kollaps bei CausalForestDML und verbessert Metrik-Vergleichbarkeit.
+- **FMT nutzt volle Trainingsdaten:** 80%-Subsetting entfernt — Dual-Seed-Schutz ist ausreichend.
+- **DRLearner Nuisance-Count:** `mc*cv*(1+K)+1` → `mc*cv*2+1` (1× model_propensity + 1× model_regression pro Fold, nicht K×). Identisch mit NonParamDML.
+- **FMT/CFT Parallelisierung:** Parallel (`n_cpus // 8`) → sequentiell (`n_jobs=1`, `cache_values`). Alle CPU-Kerne pro Fit (`parallel_jobs=-1`).
+- **FMT UI:** Wellen-Steuerung → direkte Trial-Auswahl (30/50/100). Konsistent mit CFT.
+- **Tuning-Defaults:** Alle 3 Stufen (BLT, FMT, CFT) sind per Default deaktiviert (`enabled: false`).
+- **CFDML Parallelisierung:** `parallel_jobs=1` → `-1` für Nuisance-Modelle (Bug Fix — Cross-Fitting ist sequentiell, keine Übersubskription).
+- **GC-Sweeps:** `gc.collect()` + `del est` / `del study` an allen Phasen-Übergängen.
+
+### Entfernt
+- **scikit-uplift (sklift):** Komplett entfernt (Import, Dependencies, `_ensure_sklift`, Funktionsnamen). Alle Uplift-Plots nativ implementiert.
+- **`lgbm_permutation`:** Feature-Selektionsmethode entfernt.
+- `_first_crossfit_train_indices()` (26 Zeilen Dead Code, ersetzt durch Dual-Seed-Schutz).
+- `crosspred_splits` Parameter aus `tune_final_model()`.
+- 68 Zeilen Dead JSX (Tag, ColumnPicker, ROLES, BT_PRESETS, MT_PRESETS, etc.).
+- REVIEW_PLAN.md, REVIEW_OVERVIEW.md, REVIEW_REPORT.md aus docs/.
+
+
+Alle relevanten Änderungen am rubin-Framework. Neueste Einträge oben.
+
+## 2026-04-22 (Session 11 — CV-Harmonisierung, Tuning-Metrik, Signatur-Trennung)
+
+### Kritische Fixes (Modellqualität)
+
+- **Alle internen CVs auf EconML-Default (2) gesetzt:** BLT `tuning.cv_splits`, FMT `final_model_tuning.cv_splits`, DML `dml_crossfit_folds` — jeweils unabhängig von `cross_validation_splits` (5, äußere Evaluation). Behebt Inkonsistenz, bei der interne CVs versehentlich auf 3–5 standen und die Tuning-/Produktions-Datenmengen nicht zusammenpassten.
+- **FMT `cv_splits` als eigenes Config-Feld wiederhergestellt** (Default 2). War entfernt worden, wodurch FMT `cross_validation_splits` (5) nutzte — 2.5× langsamer pro Trial und andere Scoring-Dynamik als Produktion.
+- **FMT `stability_penalty` auf 0.3 zurückgesetzt** (war 0.0). Ohne Penalty fand Optuna aggressive model_final-Params, die out-of-sample schlecht generalisierten.
+- **Tuning-Metrik von `pr_auc` auf `log_loss` zurückgesetzt.** Log-Loss misst Kalibrierung — essentiell für DML-Residualisierung `Y − E[Y|X]`. PR-AUC optimiert Ranking, was gut kalibrierte Nuisance-Vorhersagen nicht garantiert. Betrifft: settings, tuning_optuna, html_report, UI, config_reference, docs.
+- **FMT DRLearner: Äußere Score-Folds = `cross_validation_splits` (5),** interne DRLearner cv = `final_model_tuning.cv_splits` (2). Vorher wurden beide aus demselben Feld gelesen.
+- **Pipeline: `_dml_cv` liest jetzt `dml_crossfit_folds`** (Default 2), nicht mehr `cross_validation_splits` (5).
+
+### Task-Sharing Signatur-Trennung
+
+- **Neue `sample_scope`-Werte:** `"all"` (DML/DR-intern, ~40% N in Produktion) vs. `"all_direct"` (Meta-Learner, ~80% N). Verhindert, dass Modelle mit unterschiedlichen effektiven Trainingsmengen dasselbe Tuning teilen.
+- **Betroffene Tasks:**
+  - `outcome_regression`: DRLearner.model_regression (all) ↔ SLearner.overall_model (all_direct) — jetzt getrennt.
+  - `propensity`: DML/DR (all) ↔ XLearner.propensity_model (all_direct) — jetzt getrennt.
+- **7 Tasks statt 5** bei vollem Modell-Set (bei per_role/per_learner=false).
+
+### Fit-Berechnungen korrigiert
+
+- **`estimateFits`:** DML-internes cv von `cvSplits` (5) auf `dmlCv` (2) korrigiert → `fitsPerFit` von 11 auf 5 pro DML/DR-Modell.
+- **`estimateFits` BLT:** Innere CV von `cvSplits` (5) auf `bltCv` (2) korrigiert → halbiert die BLT-Fit-Schätzung.
+- **`estimateFits` BLT Tasks:** Spiegelt jetzt die Signatur-Trennung wider (7 Tasks).
+- **`FinalTuningPlanPreview` NonParamDML:** Korrigiert von 1 fit/trial auf `cv×2+1 = 5` fits/trial (RScorer-Setup + full NonParamDML.fit() pro Trial).
+- **`FinalTuningPlanPreview` DRLearner:** Korrigiert von `nCv` (2) outer folds auf `outerCv` (5), plus interne Fits pro Fold (5) = 25 fits/trial.
+- **CausalForestDML Tune Preview:** Nuisance-Fits von `cvSplits×2` (10) auf `dmlCv×2` (4) korrigiert.
+
+### Sonstige Änderungen
+
+- **`default`-Key aus `tuned_baselearner_params.json` und MLflow-Params gefiltert.** War ein interner Fallback-Lookup-Key, der User-facing keinen Mehrwert hatte.
+- **savePreds/predsFormat aus UI entfernt** (Cross-Predictions werden immer automatisch in MLflow geloggt).
+- **External Eval UI redesigned:** Kompaktere Card, klarere Input-Labels (X/Features, Y/Outcome, T/Treatment, S/Score), orphaned Closing-Tags entfernt.
+- **UI Help-Texte aktualisiert:** cvSplits beschreibt jetzt nur äußere Cross-Predictions; DML-internes cv separat erklärt.
+- **YAML-Emission:** `tuning.cv_splits` und `dml_crossfit_folds` werden nicht mehr emittiert (Backend-Defaults greifen). Nur bei Abweichung vom Default.
+- **Config Reference:** Alle neuen Defaults dokumentiert (cv_splits=2, dml_crossfit_folds=2, stability_penalty=0.3, metric=log_loss).
+
+## 2026-04-17 (Session 10 — Class Balance, Verzeichnis-Konsolidierung, UI-Polish)
+
+### Evaluiert & entfernt: Class-Balance / Imbalance-Weighting
+- **`class_balance`-Feature evaluiert und entfernt:** Tunbares `scale_pos_weight` (Optuna) + `CalibratedClassifierCV` wurden implementiert und getestet. Bei extremer Imbalance (1:1000) war der Effekt auf PR-AUC minimal (0.015 → 0.017), da `scale_pos_weight` primär die Kalibrierung ändert, nicht das Ranking. Die Split-Struktur von Gradient-Boosting-Modellen ist bereits ohne Gewichtung auf die seltene Klasse fokussiert (Log-Loss-Gradienten). Das Feature wurde entfernt, da es ein selbstverursachtes Kalibrierungsproblem erzeugt, das dann per `CalibratedClassifierCV` (3× Trainingszeit) repariert werden muss — ohne Netto-Mehrwert.
+
+### Verzeichnis-Konsolidierung
+- **Alle Server-Schreibpfade unter `runs/`:**
+  - Feature Dictionary: `ROOT/data/` → `WORK_DIR/exports/`
+  - Config Save: `ROOT/configs/` → `WORK_DIR/configs/`
+  - Config Import: `ROOT/config_imported.yml` → `WORK_DIR/.rubin_cache/`
+  - Edge-Case-Fix: `relative_to(ROOT)` Fallback bei externem WORK_DIR.
+- **Bundle-Pfad `runs/bundles` konsistent:** `settings.py` (`BundleConfig.base_dir`), `artifacts.py` (`ArtifactBundler.__init__`), `analysis_pipeline.py` (Fallback), UI (DEFAULT_CFG, YAML-Emission), 16 Config-Templates, Docs, `run_promote.py` Docstring.
+- **`.gitignore` bereinigt:** Keine Legacy-Sektion, nur `runs/` + Standard-Ignores. `configs/` (Template-Configs) wird korrekt NICHT ignoriert.
+
+### Repo-Struktur
+- **`uplift_metrics.py` verschoben:** `utils/uplift_metrics.py` → `evaluation/uplift_metrics.py`. Kein Backward-Compat-Shim (Grundversion). Imports in `analysis_pipeline.py` + `test_uplift_metrics.py` aktualisiert.
+- **Toter Code entfernt:** `grouped_outcome` Classifier-Variante (Methode `_objective_grouped_outcome`, Dispatch, FLAML-Set, UI-Maps, Pipeline-Label-Map) — `_role_signature()` gibt diesen Wert nie zurück.
+
+### UI-Optimierungen
+- **Datenpfade-Seite redesigned:** 1 zusammenhängender `<Sec>`-Block statt 2. Uppercase-Sektions-Labels (TRAININGSDATEN, EXTERNAL EVAL, BENCHMARK). Eval-Felder nur bei aktivem Toggle sichtbar. Benchmark nur bei gesetzter S-Datei.
+- **Ausgabe vereinfacht:** `outputDir` in Expander „Erweiterte Ausgabe-Optionen" verschoben. Info-Text klarstellt: „Ergebnisse werden automatisch in MLflow geloggt."
+- **Bundle-Export vereinfacht:** `bundleDir`-Eingabefeld entfernt, nur Hinweistext `runs/bundles/<timestamp-id>/`.
+- **Arbeitsverzeichnis:** Vollständige Ordnerstruktur als Tree-Darstellung. Label: „Eigenes Arbeitsverzeichnis (optional)".
+- **FM-Tuning Labels:** `FMT` → `FM-Tuning`, `FMT Intensiv` → `FM-Tuning Intensiv`. User-visible Text konsequent angepasst (FM-Tuning-Trials, FM-Tuning verwendet).
+- **Sprachmischung bereinigt:** `Higher is better` → `Höher = besser`, `Stability Penalty` → `Stabilitäts-Penalty`.
+- **Placeholder-Pfade:** `data/raw/eval_data.csv` → `runs/data/eval_data.csv`, `data/feature_dictionary.xlsx` → `runs/exports/feature_dictionary.xlsx`.
+- **DataPrep Pflicht-Spalten:** Target- und Treatment-Felder starten jetzt leer (nicht vorbefüllt mit Y/T). Placeholders: „z.B. Y, OUTCOME, ..." / „z.B. T, TREATMENT, ...".
+
+### Config-Templates
+- `config_reference_all_options.yml`: `class_balance` mit Kommentar hinzugefügt.
+- `config_grf_focus.yml`: Copy-Paste-Fix `output_dir: runs/dml_focus` → `runs/grf_focus`.
+
+## 2026-04-16 (Session 9 — UX + Tiefenprüfungen)
+
+### MLflow-Overview-Metriken
+- **Champion Top-Level-Logging:** Nach der Champion-Auswahl werden jetzt dedizierte Metriken und Tags geloggt, die in der MLflow-Experiment-Übersicht als Columns sichtbar gemacht werden können (einmalige Auswahl in der UI, wird im Browser-localStorage persistiert):
+  - `champion_score` (Metrik): Wert der konfigurierten Selection-Metric für den Champion
+  - `champion_qini`, `champion_auuc`, `champion_policy_value` (Metriken): Zusätzliche Performance-Werte für Schnellvergleich
+  - `rubin.champion_model` (Tag): Name des Champions (z.B. "NonParamDML")
+  - `rubin.selection_metric` (Tag): Konfigurierte Metrik (z.B. "qini")
+  - `rubin.learner` (Tag): Verwendeter Learner ("catboost", "lgbm", "both")
+  - `rubin.validation_mode` (Tag): Validierungsmodus ("cross", "external", "TMES")
+
+### UX-Verbesserungen
+- **Benchmark ohne Preset:** Das Add-On-Preset `benchmark` war ein Phantom (`cfg: {}`, keine Wirkung) und wurde entfernt. Der Benchmark-Vergleich gegen den historischen Score läuft **automatisch**, sobald eine S-Datei in `data_files.s_file` angegeben ist. Die Benchmark-Sektion auf der Datenpfade-Seite zeigt jetzt einen grünen Success-Badge bei gesetzter S-Datei, sonst einen gelben Hinweis mit Verweis.
+- **External Eval immer zugänglich:** Die Eval-Datei-Felder sind jetzt permanent auf der Datenpfade-Seite sichtbar, nicht mehr conditional versteckt hinter `validateOn==="external"`. Ein Toggle „External Eval aktivieren" direkt neben der Überschrift macht den Modus explizit. Bei Eintragen/Hochladen einer Eval-X/T/Y-Datei wird `validateOn` automatisch auf "external" gesetzt.
+- **Validation-Addon-Kategorie entfernt:** Nach den obigen Änderungen war die Validation-Gruppe bei den Add-Ons doppelt redundant (Toggle auf Datenpfade + Button auf Validierungs-Seite + Auto-Aktivierung). Das einzige verbliebene Preset `external_eval` und die leere Gruppe wurden entfernt. Layout: R4 (Erklärbarkeit) und R5 (Production) stehen jetzt in einer Reihe nebeneinander.
+- **Ensemble-Preset entfernt:** Das Add-On-Preset `ensemble` (setzte nur `ensembleEnabled: true`) war redundant, da der Ensemble-Toggle bereits direkt auf der Modell-Seite existiert. Production & Export enthält jetzt nur noch "Bundle & Surrogate".
+- **Kollisions-Warnung:** Bei gleichzeitig gesetztem `eval_mask_file` und `validateOn="external"` zeigt die UI jetzt eine Warn-Box auf der Validierungs-Seite. Backend ignoriert die Maske in diesem Fall (External-Eval-Dateien haben Vorrang), die UI macht das explizit.
+
+### UI-Pre-Validation erweitert
+Neue Checks in der Pre-Run-Validierung, die Backend-Validators spiegeln. Damit sieht der User die Fehler bereits im Validierungs-Panel statt erst beim Pydantic-Abbruch beim Run-Start:
+- **Manual Champion muss in Models-Liste sein**: Wenn `selection.manual_champion` gesetzt ist, prüft die UI jetzt, dass der Name auch in `models.models_to_train` enthalten ist.
+- **`fixed_params` bei `baseLearner="both"` muss nested sein**: Flache Parameter wie `{num_leaves: 31}` würden silent an beide Learner durchgereicht und CatBoost-Trials zum Absturz bringen. Die UI prüft jetzt auf `{lgbm:{...}, catboost:{...}}`-Struktur.
+- **`reference_group` bei binary nur 0 erlaubt**: Bei `treatment.type="binary"` sind andere Werte als 0 aktuell nicht unterstützt.
+- **MT-incompatible Selection-Metrics**: Bei `treatment.type="multi"` sind die BT-only-Metriken (`qini`, `auuc`, `uplift_at_10pct`, `uplift_at_20pct`, `uplift_at_50pct`, `policy_value`) nicht verfügbar. Die UI empfiehlt stattdessen `policy_value_T1`, `qini_T1` etc.
+
+### Tuning-Fairness & Logging
+- **Timeout bei `both`-Modus deaktiviert:** Bei `base_learner.type="both"` wird `timeout_seconds` (BLT + FMT) automatisch ignoriert und eine Warnung geloggt. Grund: LGBM-DART ist ~3× langsamer als CatBoost — ein Timeout würde zu weniger fertig durchgelaufenen LGBM-Trials führen und damit den Vergleich verzerren. Steuerung erfolgt ausschließlich über `n_trials`. UI zeigt bei Timeout + "both" einen gelben Hinweis.
+- **FMT-Parallelisierung reduziert:** `FinalModelTuner._tuning_n_jobs` nutzt jetzt `n_cpus // 8` statt `n_cpus // 4`. Jeder FMT-Trial fittet ein vollständiges Kausalmodell (model_y + model_t + model_final mit Cross-Fitting) und verbraucht ~5-10× mehr RAM als ein BLT-Trial. Bei 40 Kernen: 5 statt 10 parallele Trials, dafür je 8 statt 4 Kerne pro Fit.
+- **RCT-Propensity-Cap in Tuning-Plan-UI:** `TuningPlanPreview` berücksichtigt jetzt den Backend-Cap (`min(n_trials, 20)` bei RCT + Propensity). Fits-Berechnung, Zeilen-Badge und Info-Box sind korrekt. Zuvor wurde die volle Trial-Zahl angezeigt.
+- **BLT-Log bereinigt:** Der irreführende `Ø Score` (Mittelwert über PR-AUC und neg_MSE — verschiedene Skalen) und die pauschale `Trials/Task`-Angabe (bei RCT variieren die Trials pro Task) wurden entfernt. Stattdessen werden die Einzel-Scores pro Task ausgegeben.
+
+### Tiefenprüfungen ohne Findings
+- UI cfg-Keys vs YAML_TO_CFG-Mapping: alle Keys gemappt oder als UI-only dokumentiert
+- Backend-Felder ohne UI-Exposition: 9 technische Defaults (`storage_path`, `study_name_prefix` etc.) bewusst Backend-only
+- Pydantic strict-mode Validierung der generierten YAML: alle Felder in Schemata definiert, `extra="forbid"` hält
+- `fixed_params` bei `base_learner.type="both"`: Struktur `{catboost:{...}, lgbm:{...}}` ist im Backend korrekt handled (`build_base_learner` wählt anhand `_learner_type` und verwirft den nicht-gewählten Sub-Dict)
+- Feature-Selection bei TMES: läuft auf bereits reduziertem X (nach Train/Holdout-Split) — leakage-frei
+- `dml_crossfit_folds`: wird zur Laufzeit auf `cross_validation_splits` gesetzt; bewusst kein separater UI-Toggle
+
+---
+
+## 2026-04-16 (Session 8)
+
+### Korrektheit
+- **TMES Data-Leakage-Fix:** Bei `eval_mask_file` (Train-Many-Evaluate-Some) wurden zuvor Mask-Rows sowohl zum Training als auch zur Evaluation genutzt → optimistische Metriken. Neue Logik spaltet vor dem Training: `~mask` → X/T/Y für Training, `mask` → Holdout-Eval-Set. TMES läuft jetzt effektiv wie External Eval. MLflow loggt `tmeo_train_n` und `tmeo_eval_n`. Betroffen: `rubin/pipelines/analysis_pipeline.py`.
+- **Bundle-Export Konsistenz bei TMES:** Der `X_full`-Snapshot für Bundle-Refit wird jetzt NACH dem TMES-Split erstellt, damit das Bundle-Modell nur auf Trainingsdaten refittet wird (nicht auf dem gesamten Datensatz inkl. Eval-Zeilen).
+- **HTML-Report TMES-Erkennung:** Der Report zeigt jetzt alle drei Validierungsmodi korrekt an (`cross (5 Folds)`, `external (separater Datensatz)`, `TMES (Mask-Subset)`). Summary-Bar zeigt bei TMES zusätzlich `Eval (TMES): N Beob.`.
+
+### YAML-Roundtrip-Bugs (UI ↔ Backend)
+- **Search-Space bei `baseLearner="both"`:** Der UI-YAML-Emitter emittierte bei "both" gar keinen `search_space`-Block → customized Ranges gingen silent verloren. Fix: Emittiert jetzt beide Learner-Sektionen wenn customized.
+- **Search-Space Import:** `parseYamlToCfg` las `search_space` gar nicht (nur 1-Ebenen-Parser). Neuer verschachtelter Parser für `tuning.search_space.{catboost,lgbm}` und `final_model_tuning.search_space.{catboost,lgbm}`.
+- **Regex-Parser-Fix:** `[a-z_]+` erlaubte keine Ziffern → Parameter mit Zahlen im Namen (`l2_leaf_reg`, `reg_alpha`) wurden silent verschluckt. Fix: `[a-z0-9_]+`.
+- **`log`-Flag Durchgängigkeit:** UI-Search-Space-Defs hatten kein `log: true` Flag → bei Änderung von log-skalierten Params (`learning_rate`, `l2_leaf_reg`, `random_strength`, ...) emittierte die UI die Range ohne `log: true` → Backend wechselte still von log-uniform zu linearem Sampling. Fix: UI-Defs ergänzt, Emitter gibt `log: true` aus, `low` wird automatisch auf `1e-6` geclampt falls User `low=0` setzt (Optuna-Constraint bei `log=True`). SSEditor zeigt `(log)`-Suffix am Parametername.
+- **PData-Scope:** `setSp`/`setSpFmt` wurden nicht an `PData` durchgereicht → YAML-Import konnte Search-Spaces nicht in UI-State restaurieren. Fix: Props durchgereicht, Import extrahiert `__sp`/`__spFmt` und ruft Setter.
+
+### Tuning-Qualität
+- **TPESampler `group=True`:** Bei `base_learner.type="both"` fiel TPE bei CatBoost-spezifischen Parametern (`l2_leaf_reg`, `random_strength`, `rsm`, `min_data_in_leaf`, `model_size_reg`, `leaf_estimation_iterations`) auf `RandomSampler` zurück, weil der Parameter-Set zwischen Trials variierte (conditional search space). Fix: `group=True` partitioniert die Trial-Historie — TPE lernt separate KDE-Modelle für LGBM- und CatBoost-Zweig. Warnungen verschwinden, Tuning-Qualität bei "both" deutlich verbessert. Doppelter Fallback bei alten Optuna-Versionen.
+
+### Explainability
+- **SHAP-Analyse:** Zweistufiger Fallback — EconML SHAP-Plot-Satz (Summary, CATE-Profile, Dependence, Scatter) → generische SHAP-Werte (TreeExplainer). Importance-CSV und Plots als MLflow-Artefakte. Auch als CLI-Runner (`run_explain.py`).
+
+### UX / UI
+- **FLAML+both Warnung:** UI zeigt jetzt vor dem Run einen roten Hinweis bei Kombination `baseLearner="both"` + `tuningAutoml="flaml"`, dass Optuna als Fallback verwendet wird (FLAML unterstützt keine kategorische Learner-Wahl).
+- **Modus-Badges in Pre-Run-Summary und während des Runs:** Cross (🔵) / External (🟣) / TMES (🟠) farblich differenziert.
+- **Progress-Steps-Label:** "Training & Cross-Predictions" → "Training & Predictions" (neutral für alle Validierungsmodi).
+- **Addon-Preset "Benchmark" entfernt:** Hatte leeres `cfg: {}`, bewirkte nichts — Benchmark läuft ohnehin automatisch bei gesetztem S-File.
+
+### Dokumentation
+- `docs/evaluation.md`: TMES-Sektion vollständig umgeschrieben (Leakage-free Routing)
+- `docs/konfiguration.md`: `eval_mask_file`, `validate_on`, `shap_values.method` aktualisiert
+- `docs/tuning_optuna.md`: TPE `group=True` dokumentiert, FLAML+both-Einschränkung ergänzt
+- `docs/explainability.md`: `shap_values.method` ergänzt
+- `docs/architektur.md`: HTML-Report TMES-Badges dokumentiert
+- `docs/app_build.md`: Sync-Workflow für Index.html und Overview.html ergänzt
+
+---
+
+## Ältere Änderungen
+
+Frühere Änderungen sind nicht in einem formalen Changelog erfasst. Siehe Git-Log oder die thematisch gegliederten Docs für Details.
