@@ -1,0 +1,15 @@
+# ────────────────────────────────────────────────────
+# AUTO-GENERATED – nicht manuell bearbeiten!
+# Quelle: pyproject.toml  →  pixi run sync-requirements
+# ────────────────────────────────────────────────────
+# Nur fuer pip-Fallback in app.sh (Web-UI).
+# ────────────────────────────────────────────────────
+
+# Die React-App (rubin_ui.html) laeuft rein client-side.
+# Flask dient als Backend-Server, React als Frontend.
+
+flask>=3.0
+pandas>=2.0,<3
+pyarrow>=12
+openpyxl>=3.0
+pyyaml>=6.0
