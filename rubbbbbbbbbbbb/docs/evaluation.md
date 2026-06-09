@@ -112,6 +112,60 @@ Inhalt des Plots:
 Hinweis: Die Vergleichsplots werden nur dann erzeugt, wenn die DRTester-Auswertung sowohl für
 die kausalen Modelle als auch für den historischen Score erfolgreich berechnet wurde.
 
+## Heterogenitäts-Bewertung im Report
+
+Die Sektion „Heterogenität" im HTML-Report fasst die Metriken zu einer farbcodierten Gesamteinschätzung
+zusammen, ob der gefundene Treatment-Effekt überhaupt heterogen (d. h. per Targeting ausnutzbar) ist.
+Die Logik steckt in `_compute_heterogeneity_assessment` (`rubin/pipelines/analysis_pipeline.py`) und liefert
+zwei *getrennte* Bewertungen: das modellbasierte Heterogenitäts-Level und – falls ein historischer Score
+konfiguriert ist – den historischen Vergleich.
+
+### Eingangsgrößen
+
+Alle Größen stammen aus den Eval-Metriken des **Champions**, mit Ausnahme des Modell-Konsenses:
+
+- `champ_qini`, `champ_pv` — Qini bzw. Policy Value des Champions.
+- `concentration = uplift_at_10pct / uplift_at_50pct` — Verhältnis der inkrementellen Response-Rate
+  (`rate_treat − rate_control`) in den Top-10 % zu den Top-50 % nach Modell-Score. Misst, wie stark
+  sich der Effekt auf die wenigen bestbewerteten Personen bündelt (siehe „Uplift-Plots"). Wird auf
+  **`0` gesetzt, sobald `uplift_at_10pct` oder `uplift_at_50pct` ≤ 0 ist** — „stark" ist dann ausgeschlossen.
+- `n_positive_qini` / `n_models` — Anzahl Modelle mit Qini > 0 (Modell-Konsens), **ohne** SurrogateTree und Ensemble.
+
+Die `concentration` ist ein reines *Steilheits*-Maß (wie schnell der Uplift abfällt, wenn man die Zielgruppe
+verbreitert) — **nicht** die Gesamtmenge an Zusatz-Conversions (das ist Policy Value bzw. AUUC).
+
+### Klassifikation (erste zutreffende Bedingung gewinnt)
+
+| Level | Bedingung |
+|---|---|
+| **Keine** (rot) | `champ_qini ≤ 0` (kein Modell sortiert besser als Zufall) **oder** `champ_pv < 0` (Targeting schadet) |
+| **Stark** (grün) | `n_positive_qini ≥ 3` **und** `champ_pv > 0` **und** `concentration ≥ 1.5` |
+| **Moderat** (gelb) | `n_positive_qini ≥ 2` **und** `champ_pv ≥ 0` |
+| **Schwach** (orange) | sonst (z. B. nur 1 Modell mit positivem Qini, oder Konzentration < 1.5 bei 2 positiven Modellen) |
+
+Die Reihenfolge ist wichtig: Die „Keine"-Gates werden zuerst geprüft. Für **stark** müssen also *alle vier*
+Teilbedingungen erfüllt sein (positiver Qini durch Gate garantiert, positiver Policy Value, mindestens drei
+Modelle mit Konsens *und* ein konzentrierter Effekt); fehlt eine, fällt es auf moderat oder schwach zurück.
+
+**Zahlenbeispiel Konzentration:** Top-10 % → 30 % (Treat) vs. 10 % (Control) = 0,20; Top-50 % → 22 % vs. 10 % = 0,12.
+Dann `concentration = 0,20 / 0,12 ≈ 1,67` (≥ 1,5). Praktisch: Wer nur die obersten 10 % behandelt, holt pro Person
+deutlich mehr Uplift heraus als bei den obersten 50 % — der Effekt steckt in einer kleinen High-Responder-Gruppe.
+
+### Historischer Score-Vergleich (separat)
+
+Nur wenn `historical_score.name` gesetzt und im Eval enthalten ist. Vergleicht den Champion mit dem Altscore über
+`qini_diff = champ_qini − hist_qini` und `pv_diff = champ_pv − hist_pv`:
+
+| Stufe | Bedingung |
+|---|---|
+| übertrifft (Qini + PV) | `qini_diff > 0` **und** `pv_diff > 0` |
+| übertrifft (Qini) | `qini_diff > 0` |
+| Altscore ohne Uplift | `hist_qini ≤ 0` |
+| hinter Benchmark | sonst |
+
+Dies ist eine eigenständige Skala und **nicht** identisch mit dem Heterogenitäts-Level; beide erscheinen im Report
+als separate Karten.
+
 ## Multi-Treatment-Evaluation
 
 Bei Multi-Treatment (T ∈ {0, 1, …, K-1}) wird die Evaluation automatisch angepasst:
