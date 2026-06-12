@@ -1,126 +1,57 @@
-#!/bin/bash
-
-# Beende bei jedem Fehler
-set -e
-
-# ============================================================================
-# Config-Auswahl
-# ============================================================================
-# Standardmäßig wird config.production.yaml verwendet. Über die Env-Variable
-# PLUTO_PROFILE kann ein anderes Profil gewählt werden:
-#
-#   PLUTO_PROFILE=smoke   ./schaden_forecast_job.sh   # Schnelltest
-#   PLUTO_PROFILE=tuning  ./schaden_forecast_job.sh   # Hyperparametersuche
-#   PLUTO_PROFILE=tuned   ./schaden_forecast_job.sh   # Eingefrorene Parameter
-#   ./schaden_forecast_job.sh                          # Produktion (Default)
-#
-# Alternativ kann ein beliebiger Pfad direkt gesetzt werden:
-#   PLUTO_CONFIG=/pfad/zu/config.yaml ./schaden_forecast_job.sh
-# ============================================================================
-
-# ============================================================================
-# Persistentes Runs-Verzeichnis (Domino)
-# ============================================================================
-# In Domino Scheduled Runs werden alle Dateien unter /mnt/ nach Abschluss
-# automatisch ins Projekt zurück synchronisiert. Das Runs-Verzeichnis
-# liegt daher DIREKT unter /mnt/ (nicht im geklonten Repo, das bei jedem
-# Lauf gelöscht wird).
-#
-# /mnt/
-# ├── runs/                          ← PERSISTENT (wächst über Läufe)
-# │   ├── metrics_history.csv
-# │   ├── retrospective_accuracy.csv
-# │   ├── tuned_h13_model.yaml
-# │   ├── 2025-04-21T08-30_h13_model/
-# │   └── ...
-# ├── da-pluto-timeseries/           ← wird bei jedem Lauf gelöscht + neu geklont
-# │   ├── forecasting/
-# │   ├── pluto_forecast_job.py
-# │   └── ...
-# └── ferien-api-data-main/          ← Ferien-ICS-Dateien
-# ============================================================================
-
-PROFILE="${PLUTO_PROFILE:-production}"
-export PLUTO_RUNS_DIR="${PLUTO_RUNS_DIR:-/mnt/runs}"
-
-echo "Setup SSH..."
-# Sichere Berechtigungen für SSH-Key
-chmod 400 ~/.ssh/id_rsa
-# Add TFS zu known_hosts, falls nicht vorhanden
-if ! grep -q "tfs" ~/.ssh/known_hosts 2>/dev/null; then
-  ssh-keyscan -p 22 tfs >> ~/.ssh/known_hosts
-fi
-
-# (Optional) Git SSL prüfen deaktivieren
-git config --global http.sslVerify false || true
-
-# Repository-Variablen
-REPO_DIR="da-pluto-timeseries"
-REPO_URL="ssh://tfs:22/web/DefaultCollection/GIT_Projects/_git/da-pluto-timeseries"
-BRANCH="holidays_winsorizer"
-
-echo "Lösche vorhandenes Repo-Verzeichnis und klone neu..."
-delete_and_clone() {
-  if [ -d "$REPO_DIR" ]; then
-    echo "$REPO_DIR existiert – lösche es"
-    rm -rf "$REPO_DIR"
-  fi
-  echo "Repository wird geklont"
-  git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
-  cd "$REPO_DIR"
-}
-
-delete_and_clone
-
-echo "Aktuelle Dateien im Repository:"
-ls -alh .
-
-# >>> conda initialize >>>
-echo "Conda initialize..."
-__conda_setup="$('/opt/conda/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"
-if [ $? -eq 0 ]; then
-  eval "$__conda_setup"
-elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
-  . "/opt/conda/etc/profile.d/conda.sh"
-else
-  export PATH="/opt/conda/bin:$PATH"
-fi
-unset __conda_setup
-# <<< conda initialize <<<
-
-echo "Activate Conda environment..."
-conda activate generic
-
-echo "Installiere Python-Dependencies..."
-pip install "u8darts[torch]" icalendar optuna pyyaml
-
-# Config-Auflösung: PLUTO_CONFIG hat Vorrang, sonst Profil-basiert.
-if [ -z "${PLUTO_CONFIG}" ]; then
-  CONFIG_FILE="config.${PROFILE}.yaml"
-  if [ -f "${CONFIG_FILE}" ]; then
-    export PLUTO_CONFIG="${PWD}/${CONFIG_FILE}"
-    echo "Verwende Config-Profil: ${PROFILE} (${CONFIG_FILE})"
-  else
-    echo "Config-Profil '${PROFILE}' nicht gefunden (${CONFIG_FILE}). Nutze Defaults."
-  fi
-else
-  echo "Verwende PLUTO_CONFIG=${PLUTO_CONFIG}"
-fi
-
-# Runs-Verzeichnis anlegen (bleibt über Läufe hinweg erhalten)
-mkdir -p "${PLUTO_RUNS_DIR}"
-echo "Runs-Verzeichnis: ${PLUTO_RUNS_DIR}"
-
-# Bisherige Runs anzeigen (für Nachvollziehbarkeit im Log)
-RUN_COUNT=$(find "${PLUTO_RUNS_DIR}" -maxdepth 1 -type d -name "20*" 2>/dev/null | wc -l)
-echo "Bisherige Runs im Verzeichnis: ${RUN_COUNT}"
-if [ -f "${PLUTO_RUNS_DIR}/metrics_history.csv" ]; then
-  HISTORY_LINES=$(wc -l < "${PLUTO_RUNS_DIR}/metrics_history.csv")
-  echo "Metriken-Historie: ${HISTORY_LINES} Zeilen"
-fi
-
-echo "Starte Forecast Job..."
-python pluto_forecast_job.py
-
-echo "Job abgeschlossen."
-echo "Domino synchronisiert ${PLUTO_RUNS_DIR} automatisch ins Projekt."
+Runs-Verzeichnis: /mnt/runs
+Bisherige Runs im Verzeichnis: 12
+Starte Forecast Job...
+The StatsForecast module could not be imported. To enable support for the AutoARIMA, AutoETS and Croston models, please consider installing it.
+INFO:__main__:Lade Konfiguration aus /mnt/da-pluto-timeseries/config.smoke.yaml
+INFO:__main__:Runs-Verzeichnis: /mnt/runs
+INFO:pluto_multivariate_repository:Connection to DB2 database was successful.
+INFO:pluto_multivariate_repository:Using source table: t7.TA_DA_PLUTO_SP_2025
+INFO:pluto_multivariate_repository:Using target table: t7.TA_DA_PLUTO_SP_2025_PROGNOSE
+INFO:pluto_multivariate_repository:Loaded multivariate time series from DB2. Rows: 1987, Columns (components): 80
+WARNING:pluto_multivariate_repository:UNERWARTETE PRODUKTE in DB gefunden (nicht in product_list): ['Sonstiges']. Diese werden trotzdem verarbeitet.
+WARNING:pluto_multivariate_repository:UNERWARTETER SCHADENSTATUS in DB gefunden (nicht in status_list): ['LFD', 'NEU']. Diese werden trotzdem verarbeitet.
+WARNING:pluto_multivariate_repository:FEHLENDER SCHADENSTATUS: In der erwarteten Liste, aber nicht in der DB vorhanden: ['Folgebearbeitung', 'Neuschaden'].
+INFO:pluto_multivariate_repository:DIM_ORGA: 3 distinkte Ausprägungen geladen.
+INFO:pluto_multivariate_repository:DB2 connection successfully closed.
+Traceback (most recent call last):
+  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 273, in <module>
+    run_pluto_multivariate_forecast_job()
+  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 156, in run_pluto_multivariate_forecast_job
+    results = run_full_job(df_daily, cfg=cfg, logger=None)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 789, in run_full_job
+    artifacts, metrics_df, backtest, true_ts = train_and_evaluate_for_horizon(
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 594, in train_and_evaluate_for_horizon
+    res = rolling_block_forecast(
+          ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/utils.py", line 268, in rolling_block_forecast
+    model = model_builder()
+            ^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 587, in model_builder_eval
+    return build_tft(effective_hcfg, effective_tft_cfg)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/da-pluto-timeseries/forecasting/model.py", line 435, in build_tft
+    return TFTModel(
+           ^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/forecasting_model.py", line 128, in __call__
+    return super().__call__(**all_params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/tft_model.py", line 945, in __init__
+    super().__init__(**self._extract_torch_model_params(**model_kwargs))
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/torch.py", line 92, in decorator
+    with fork_rng():
+  File "/opt/conda/envs/generic/lib/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/random.py", line 227, in fork_rng
+    device_rng_states = [device_mod.get_rng_state(device) for device in devices]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/random.py", line 227, in <listcomp>
+    device_rng_states = [device_mod.get_rng_state(device) for device in devices]
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/cuda/random.py", line 33, in get_rng_state
+    _lazy_init()
+  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/cuda/__init__.py", line 491, in _lazy_init
+    torch._C._cuda_init()
+RuntimeError: The NVIDIA driver on your system is too old (found version 12080). Please update your GPU driver by downloading and installing a new version from the URL: http://www.nvidia.com/Download/index.aspx Alternatively, go to: https://pytorch.org to install a PyTorch version that has been compiled with your version of the CUDA driver.
