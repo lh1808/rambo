@@ -1,3 +1,4 @@
+Verwende Config-Profil: smoke (config.smoke.yaml)
 Runs-Verzeichnis: /mnt/runs
 Bisherige Runs im Verzeichnis: 12
 Starte Forecast Job...
@@ -12,46 +13,71 @@ WARNING:pluto_multivariate_repository:UNERWARTETE PRODUKTE in DB gefunden (nicht
 WARNING:pluto_multivariate_repository:UNERWARTETER SCHADENSTATUS in DB gefunden (nicht in status_list): ['LFD', 'NEU']. Diese werden trotzdem verarbeitet.
 WARNING:pluto_multivariate_repository:FEHLENDER SCHADENSTATUS: In der erwarteten Liste, aber nicht in der DB vorhanden: ['Folgebearbeitung', 'Neuschaden'].
 INFO:pluto_multivariate_repository:DIM_ORGA: 3 distinkte Ausprägungen geladen.
+INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 40 samples.
+INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+`Trainer.fit` stopped: `max_epochs=10` reached.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+[Block] train [2023-12-24 .. 2025-12-14] -> pred [2025-12-21 .. 2026-03-15] (len=13)
+INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 40 samples.
+INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+`Trainer.fit` stopped: `max_epochs=10` reached.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+[Block] train [2024-03-24 .. 2026-03-15] -> pred [2026-03-22 .. 2026-06-14] (len=13)
+INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 40 samples.
+INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+`Trainer.fit` stopped: `max_epochs=10` reached.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 27 samples.
+INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+`Trainer.fit` stopped: `max_epochs=10` reached.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+[Block] train [2022-12-25 .. 2025-06-15] -> pred [2025-06-22 .. 2026-06-14] (len=52)
+INFO:darts.models.forecasting.torch_forecasting_model:Train dataset contains 27 samples.
+INFO:darts.models.forecasting.torch_forecasting_model:Time series values are 64-bits; casting model to float64.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+`Trainer.fit` stopped: `max_epochs=10` reached.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+INFO:__main__:Run-Artefakte für Horizont 13 unter /mnt/runs/2026-06-12T11-07_h13_model
+INFO:__main__:Run-Artefakte für Horizont 52 unter /mnt/runs/2026-06-12T11-07_h52_model
+INFO:__main__:Keine früheren Forecasts zur retrospektiven Evaluation vorhanden.
+INFO:__main__:Wochentagsprofile: 80 Komponenten (Ebenen: {'component': 69, 'group': 11})
+INFO:__main__:Disaggregation: 52 Wochen × 80 Komponenten → 364 Tage (weekend_policy=empirical).
+INFO:__main__:Schreibe Forecast: 364 Tage ab 2026-06-15 bis 2027-06-13 (letztes Ist-Datum: 2026-06-11).
+INFO:pluto_multivariate_repository:Forecast in t7.TA_DA_PLUTO_SP_2025_PROGNOSE geschrieben (28462 Zeilen).
+INFO:__main__:PLUTO multivariate forecast job completed successfully.
 INFO:pluto_multivariate_repository:DB2 connection successfully closed.
-Traceback (most recent call last):
-  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 273, in <module>
-    run_pluto_multivariate_forecast_job()
-  File "/mnt/da-pluto-timeseries/pluto_forecast_job.py", line 156, in run_pluto_multivariate_forecast_job
-    results = run_full_job(df_daily, cfg=cfg, logger=None)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 789, in run_full_job
-    artifacts, metrics_df, backtest, true_ts = train_and_evaluate_for_horizon(
-                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 594, in train_and_evaluate_for_horizon
-    res = rolling_block_forecast(
-          ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/utils.py", line 268, in rolling_block_forecast
-    model = model_builder()
-            ^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/pipeline.py", line 587, in model_builder_eval
-    return build_tft(effective_hcfg, effective_tft_cfg)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/da-pluto-timeseries/forecasting/model.py", line 435, in build_tft
-    return TFTModel(
-           ^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/forecasting_model.py", line 128, in __call__
-    return super().__call__(**all_params)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/models/forecasting/tft_model.py", line 945, in __init__
-    super().__init__(**self._extract_torch_model_params(**model_kwargs))
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/darts/utils/torch.py", line 92, in decorator
-    with fork_rng():
-  File "/opt/conda/envs/generic/lib/python3.11/contextlib.py", line 137, in __enter__
-    return next(self.gen)
-           ^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/random.py", line 227, in fork_rng
-    device_rng_states = [device_mod.get_rng_state(device) for device in devices]
-                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/random.py", line 227, in <listcomp>
-    device_rng_states = [device_mod.get_rng_state(device) for device in devices]
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/cuda/random.py", line 33, in get_rng_state
-    _lazy_init()
-  File "/opt/conda/envs/generic/lib/python3.11/site-packages/torch/cuda/__init__.py", line 491, in _lazy_init
-    torch._C._cuda_init()
-RuntimeError: The NVIDIA driver on your system is too old (found version 12080). Please update your GPU driver by downloading and installing a new version from the URL: http://www.nvidia.com/Download/index.aspx Alternatively, go to: https://pytorch.org to install a PyTorch version that has been compiled with your version of the CUDA driver.
+Job abgeschlossen.
