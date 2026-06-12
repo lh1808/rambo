@@ -1,0 +1,127 @@
+# ============================================================================
+# config.tuning.yaml – Optuna-Hyperparametersuche
+# ============================================================================
+# Gleiche Epochen wie Produktion (200), aber aggressiveres EarlyStopping
+# (patience=10) und Optuna-Pruning (MedianPruner). Dadurch laufen
+# schlechte Trials nur ~15 Epochen, mittlere ~40-60, gute ~80-120.
+# Laufzeit: ~3–5 Stunden (A100 GPU) / ~10–16 Stunden (CPU).
+#
+# Verwendung:
+#   PLUTO_PROFILE=tuning ./schaden_forecast_job.sh
+
+data:
+  freq: "W-SUN"
+  ics_root_dir: "/mnt/ferien-api-data-main/resources/de"
+
+preprocessing:
+  lags: [4, 8, 13, 52]
+  rolling_windows: [4, 8, 13, 52]
+  add_lags: true
+  add_yoy: true
+  add_ma: true
+  add_std: false
+  yoy_mode: "log"
+  min_periods: 4
+  product_aggregation: true
+
+tft:
+  n_epochs: 200
+  batch_size: 16
+  hidden_size: 64
+  hidden_continuous_size: 16
+  lstm_layers: 2
+  dropout: 0.3
+  learning_rate: 0.001
+  optimizer: "adamw"
+  loss: "mse"
+  feed_forward: "SwiGLU"
+  weight_decay: 0.0005
+  gradient_clip_val: 1.0
+  use_time_encoders: true
+  early_stopping_patience: 15
+
+horizons:
+  13:
+    name: "h13_model"
+    horizon_weeks: 13
+    input_chunk_length: 52
+    output_chunk_length: 13
+    train_length_weeks: 104
+    validation_weeks: 52
+    stride_weeks: 13
+    window_mode: "fixed"
+  52:
+    name: "h52_model"
+    horizon_weeks: 52
+    input_chunk_length: 52
+    output_chunk_length: 52
+    train_length_weeks: 130
+    validation_weeks: 52
+    stride_weeks: 52
+    window_mode: "expanding"
+
+tuning:
+  # metric: "combined_pooled" = alpha × WAPE + (1-alpha) × sMAPE,
+  #   beide volumengewichtet ÜBER die Komponenten gepoolt. Empfohlen mit
+  #   ORGA, damit die vielen kleinen Zellen den Score nicht dominieren.
+  #   alpha=0.7 → 70% Fokus auf Volumen.
+  #   Alternativen: "combined" (ungewichtetes Mittel), "wape", "smape", ...
+  # Sampler/Pruning: sampler_multivariate (Default true) modelliert
+  #   Parameter-Wechselwirkungen; use_pruning (Default true) nutzt den
+  #   MedianPruner auf train_loss (siehe Hinweis in TuningConfig).
+  # num_attention_heads_choices: optionaler Suchraum; Werte müssen
+  #   hidden_size teilen (alle hidden_size-Stufen sind durch 1/2/4 teilbar).
+  13:
+    enabled: true
+    n_trials: 40
+    direction: "minimize"
+    metric: "combined_pooled"
+    tuning_metric_alpha: 0.7
+    tuning_validation_weeks: 52
+    train_length_min: 78
+    train_length_max: 117
+    train_length_step: 13
+    hidden_size_min: 32
+    hidden_size_max: 96
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 32
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 0.0005
+    learning_rate_max: 0.003
+    weight_decay_min: 0.00001
+    weight_decay_max: 0.01
+    batch_size_choices: [8, 16, 24, 32]
+    num_attention_heads_choices: [1, 2, 4]
+    input_chunk_length_choices: [39, 52, 65]
+  52:
+    enabled: true
+    n_trials: 25
+    direction: "minimize"
+    metric: "combined_pooled"
+    tuning_metric_alpha: 0.7
+    tuning_validation_weeks: 52
+    train_length_min: 104
+    train_length_max: 117
+    train_length_step: 13
+    hidden_size_min: 32
+    hidden_size_max: 128
+    hidden_size_step: 16
+    hidden_continuous_size_min: 8
+    hidden_continuous_size_max: 48
+    hidden_continuous_size_step: 8
+    lstm_layers_min: 1
+    lstm_layers_max: 3
+    dropout_min: 0.1
+    dropout_max: 0.5
+    learning_rate_min: 0.0003
+    learning_rate_max: 0.002
+    weight_decay_min: 0.00001
+    weight_decay_max: 0.01
+    batch_size_choices: [8, 16, 24, 32]
+    num_attention_heads_choices: [1, 2, 4]
+    # input_chunk_length_choices: [52]   # h52: wenig Spielraum (ICL+52<=train_length); bewusst aus
