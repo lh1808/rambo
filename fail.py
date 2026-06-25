@@ -1,1 +1,4 @@
--1 ist ein Wert, den das Modell beim Training nie gesehen hat, also kann es ihn nicht sinnvoll einordnen. LightGBM behandelt ihn wie eine leere Zelle und schickt die Zeile an jeder Verzweigung einfach in die Richtung, die beim Training am häufigsten passte – ein neutraler Standardweg statt einer echten Entscheidung. CatBoost rechnet für unbekannte Ausprägungen mit einem Rückfallwert, der ungefähr dem Gesamtdurchschnitt der Zielgröße entspricht, statt mit dem typischen Wert genau dieser Kategorie. Unterm Strich trägt dieses Feature für die betroffene Zeile nichts Spezifisches mehr bei – bei einem unwichtigen Feature egal, bei einem wichtigen wird die Vorhersage für diese Kunden ungenauer.
+from econml.score import EnsembleCateEstimator
+
+members = [m for n, m in pipe.models.items() if n not in ("Ensemble", "SurrogateTree")]
+ens = EnsembleCateEstimator(cate_models=members, weights=np.ones(len(members)) / len(members))
