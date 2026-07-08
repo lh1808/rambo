@@ -3094,13 +3094,15 @@ class AnalysisPipeline:
         # MLflow Tracking: Alle Artefakte landen konsolidiert unter work_dir.
         # Falls MLFLOW_TRACKING_URI gesetzt ist, hat diese Vorrang (z.B. Remote-Server).
         # Sonst: lokales Tracking unter {work_dir}/mlruns.
+        # File-Store-Opt-in BEDINGUNGSLOS — auch eine extern gesetzte
+        # MLFLOW_TRACKING_URI kann auf einen File-Pfad zeigen; hinge das
+        # Opt-in am if unten, crashte set_experiment genau dann.
+        from rubin.utils.mlflow_compat import allow_file_store
+        allow_file_store()
         if not os.environ.get("MLFLOW_TRACKING_URI"):
             # Lokaler File-Store ist hier der gewollte Betriebsmodus (Single-User-
-            # Tracking, Artefakte konsolidiert unter work_dir). MLflow >=3.14 verlangt
-            # dafuer ein explizites Opt-in, da der File-Store nur noch gewartet, aber
-            # nicht weiterentwickelt wird — fuer lokales Tracking ohne Server-Features
-            # ist er vollstaendig ausreichend.
-            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+            # Tracking, Artefakte konsolidiert unter work_dir; MLflow >=3.14
+            # verlangt dafuer das Opt-in — bedingungslos gesetzt, s. u.).
             mlflow_dir = os.path.join(work_dir, "mlruns")
             mlflow.set_tracking_uri(f"file://{os.path.abspath(mlflow_dir)}")
 
