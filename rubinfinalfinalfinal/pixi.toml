@@ -1,0 +1,132 @@
+[workspace]
+name = "rubin"
+description = "Causal ML Framework – Analyse- und Production-Pipelines"
+channels = [
+  "https://nexus3.lan.huk-coburg.de/repository/conda-qc-huk",
+  "https://nexus3.lan.huk-coburg.de/repository/conda-forge",
+]
+platforms = ["linux-64"]
+conda-pypi-map = {"https://nexus3.lan.huk-coburg.de/repository/conda-forge" = "https://nexus.lan.huk-coburg.de/repository/raw-githubusercontent/prefix-dev/parselmouth/refs/heads/main/files/compressed_mapping.json"}
+
+[pypi-options]
+index-url = "https://nexus.lan.huk-coburg.de/repository/pypi/simple"
+
+[activation]
+env = { PIXI_TLS_ROOT_CERTS = "all", UV_NATIVE_TLS = "true" }
+
+[tasks]
+analyze = { cmd = "python run_analysis.py", description = "Analyse-Pipeline starten. Beispiel: pixi run analyze -- --config configs/config_quickstart.yml" }
+analyze-quick = { cmd = "python run_analysis.py --config configs/config_quickstart.yml", description = "Analyse mit Quickstart-Config (Smoke-Test)" }
+dataprep = { cmd = "python run_dataprep.py", description = "Datenaufbereitung. Beispiel: pixi run dataprep -- --config configs/config_full.yml" }
+score = { cmd = "python run_production.py", description = "Production-Scoring. Beispiel: pixi run score -- --bundle runs/bundles/... --x data.csv --out scores.csv" }
+scoring = { cmd = "python production/run_scoring.py", description = "Produktivsetzung: Config-getriebenes Scoring mit SAS-XPT + Monitoring. Beispiel: pixi run scoring -- --config production/scoring_ph.yml" }
+explain = { cmd = "python run_explain.py", description = "Explainability-Artefakte erzeugen. Beispiel: pixi run explain -- --bundle runs/bundles/... --x data/X.parquet" }
+promote = { cmd = "python run_promote.py", description = "Champion im Bundle wechseln. Beispiel: pixi run promote -- --bundle runs/bundles/... --model TLearner" }
+sync-requirements = { cmd = "python scripts/sync_requirements.py", description = "requirements.txt und app/requirements_app.txt aus pyproject.toml generieren" }
+build-app = { cmd = "python scripts/build_app_html.py", description = "React-App bauen: Libraries herunterladen und in rubin_ui.html einbetten (einmalig, braucht Internet)" }
+info = { cmd = "python scripts/info.py", description = "Zeigt Framework-Informationen" }
+
+[dependencies]
+python = ">=3.10,<3.13"
+numpy = ">=2.0"
+pandas = ">=2.0,<3"
+pydantic = ">=2.0"
+scikit-learn = ">=1.3"
+mlflow = ">=2.10"
+optuna = ">=3.5"
+matplotlib-base = ">=3.7"
+scipy = ">=1.11"
+lightgbm = ">=4.0"
+# CatBoost über PyPI (nicht conda-forge):
+# Das conda-forge-Paket bringt unnötige CUDA-Abhängigkeiten mit,
+# die zu Konflikten führen können. Das PyPI-Paket ist eigenständig.
+econml = ">=0.15"
+pyarrow = ">=12"
+pyreadstat = ">=1.2"  # SAS-Export (XPT); auch im prod-Feature
+openpyxl = ">=3.0"
+pyyaml = ">=6.0"
+
+# ── PyPI-Pakete ──
+# Voraussetzung: export PIXI_TLS_ROOT_CERTS="all" UND export UV_NATIVE_TLS=true VOR pixi install
+# Am besten in .devboxrc oder devbox-setup hinterlegen.
+# Hinzufügen: pixi add --pypi <paket>
+[pypi-dependencies]
+rubin = { path = ".", editable = true }
+catboost = ">=1.2"
+flaml = { version = ">=2.1", extras = ["automl"] }
+
+# ── Feature: shap (optional) ──
+[feature.shap.dependencies]
+shap = ">=0.43"
+
+# ── Feature: app (React-UI + Flask-Backend) ──
+[feature.app.dependencies]
+flask = ">=3.0"
+
+[feature.app.tasks]
+app = { cmd = "bash app.sh", description = "rubin-UI starten (lokal: Port 8501, Domino: $DOMINO_APP_PORT)" }
+
+# ── Feature: dev (Test- und Lint-Tools) ──
+[feature.dev.dependencies]
+pytest = ">=7.4"
+pytest-cov = ">=4.1"
+ruff = ">=0.3"
+pre-commit = ">=3.5"
+
+# ── Feature: prod (schlankes Production-Scoring) ──
+# Nur die Laufzeit-Abhängigkeiten für run_production.py / ProductionPipeline:
+# Bundle laden (pickle: econml/lightgbm/catboost/sklearn), Daten lesen (pyarrow),
+# scoren, schreiben. KEIN mlflow/optuna/matplotlib/shap/flaml — möglich durch die
+# Lazy-Imports in rubin/__init__.py (PEP 562). Nutzung: pixi run -e prod score -- …
+[feature.prod.dependencies]
+python = ">=3.10,<3.13"
+numpy = ">=2.0"
+pandas = ">=2.0,<3"
+pydantic = ">=2.0"
+scikit-learn = ">=1.3"
+lightgbm = ">=4.0"
+econml = ">=0.15"
+pyarrow = ">=12"
+pyyaml = ">=6.0"
+# SAS-Export im Production-Scoring (XPT V8 via pyreadstat.write_xport;
+# natives sas7bdat-Schreiben existiert in der Python-Welt nicht).
+pyreadstat = ">=1.2"
+# SAS-Library-Einstieg (run_scoring_saspy.py): Pull/Write-Back über eine
+# SAS-Session (sd2df/df2sd). Verbindung via sascfg_personal.py.
+saspy = ">=5.0"
+
+[feature.prod.tasks]
+# Tasks sind in pixi feature-gebunden — mit no-default-feature stünde dem
+# prod-Env sonst KEIN Task zur Verfügung (auch 'score' nicht).
+score = { cmd = "python run_production.py", description = "Production-Scoring (CLI). Beispiel: pixi run -e prod score -- --bundle runs/bundles/... --x data.parquet --out scores.csv" }
+scoring = { cmd = "python production/run_scoring.py", description = "Produktivsetzung: Config-getriebenes Scoring mit SAS-XPT + Monitoring. Beispiel: pixi run -e prod scoring -- --config production/scoring_ph.yml" }
+scoring-saspy = { cmd = "python production/run_scoring_saspy.py", description = "Produktivsetzung über saspy: SAS-Library → Bundle → SAS-Library. Beispiel: pixi run -e prod scoring-saspy -- --config production/scoring_<usecase>.yml (Vorlage: scoring_template_saspy.yml)" }
+
+[feature.prod.pypi-dependencies]
+rubin = { path = ".", editable = true }
+catboost = ">=1.2"
+
+[feature.dev.tasks]
+ui-sync = { cmd = "python scripts/check_ui_sync.py", description = "Drei-Ebenen-Synchronität der UI prüfen (src/*.jsx ↔ rubin_ui_src.jsx ↔ index.html)" }
+test = { cmd = "python -m pytest tests/ -v --tb=short" }
+test-cov = { cmd = "python -m pytest tests/ -v --cov=rubin --cov-report=term-missing" }
+lint = "ruff check rubin/ app/ tests/ run_*.py"
+lint-fix = "ruff check --fix rubin/ app/ tests/ run_*.py"
+# Blocking-Gate: nur echte Bugs (undefined names + Syntaxfehler). Exit != 0 bei Treffern.
+# Schmaler Scope als `lint`, damit das Gate ab Tag 1 grün ist und NameError-Bugs (#1/#2) hart abfaengt.
+gate = "ruff check --select F821 --target-version py310 rubin/ app/ tests/ run_*.py"
+# Einmalig pro Klon: pre-commit-Hook installieren (ruft `gate` bei jedem Commit auf).
+hooks-install = "pre-commit install"
+
+[environments]
+default = { features = ["shap"], solve-group = "default" }
+app = { features = ["shap", "app"], solve-group = "default" }
+dev = { features = ["shap", "dev"], solve-group = "default" }
+# Schlankes Scoring-Environment: bewusst OHNE das Default-Feature-Set
+# (kein mlflow/optuna/matplotlib/shap/flaml). WICHTIG: dieselbe solve-group
+# wie default — pixi garantiert damit identische Versionen der gemeinsamen
+# Pakete (econml, lightgbm, catboost, sklearn, pandas, numpy) zwischen
+# Analyse- und Scoring-Environment. Bundles sind Pickles; Entpickeln über
+# econml-Versionsgrenzen hinweg ist riskant (ProductionPipeline warnt
+# zusätzlich beim Laden über den ml_package_versions-Stempel im Bundle).
+prod = { features = ["prod"], no-default-feature = true, solve-group = "default" }
