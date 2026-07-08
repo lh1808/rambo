@@ -1,0 +1,70 @@
+# ============================================================================
+# Scoring-Config: Kausalscore PH (Brief) — konkreter Use-Case, Datei-Flow.
+# Pro Use-Case eine solche Datei (Kopiervorlage mit allen Feldern und
+# Pflicht/Optional-Markierung: scoring_template_file.yml). Pfade lassen
+# sich per CLI überschreiben (--input/--bundle/--output).
+#
+#   pixi run -e prod python production/run_scoring.py --config production/scoring_ph.yml
+# ============================================================================
+
+name: kausalscore_ph
+runner: file                # file (Datei→XPT, Default) | saspy (SAS-Library)
+bundle: /mnt/Production/PH_production/bundle   # rubin-Bundle-Verzeichnis
+
+input:
+  path: /domino/edv/pvc-hf1kundehuk/ScoringdatensatzProduktiv/scoringdatensatz.sas7bdat
+  format: sas7bdat            # parquet | csv | sas7bdat (None → aus Endung)
+  pull_only_needed_columns: true  # nur Bundle-Features + IDs einlesen — mehrere
+                              # Scores mit unterschiedlichen Feature-Teilmengen
+                              # können so gegen dieselbe breite Tabelle laufen
+  sas_chunksize: 200000
+  sas_encoding: ISO-8859-1
+  uppercase_columns: true     # SAS-Spaltennamen → Großschreibung
+
+# Werden unverändert durchgereicht (kein Modell-Feature, per Index gejoint)
+id_columns:
+  - PARTNER_ID_V
+  - GESELLSCHAFT_FS
+
+preprocessing:
+  replace_inf_with_nan: true  # Inf → NaN vor dem Transform, damit die im
+                              # Bundle gelernte Missing-Behandlung greift (was
+                              # genau, bestimmt die Trainings-Konfiguration)
+
+# Modellauswahl — vollständig YAML-gesteuert, UNABHÄNGIG vom Champion:
+# score_p_model/score_b_model nehmen jeden Modellnamen aus dem Bundle
+# ("champion" ist nur ein Alias auf den Registry-Champion); extra_models
+# ergänzt beliebig viele weitere als CATE_<Name>-Spalten. Verfügbare Namen:
+# metadata.json/model_registry.json im Bundle bzw. das Log beim Scoring-Start.
+scoring:
+  score_p_model: champion     # "champion" (Alias) | konkreter Name, z.B. Ensemble, DRLearner
+  score_b_model: SurrogateTree  # null → keine SCORE_B-Spalte (optional!)
+  extra_models: []            # zusätzliche Spalten CATE_<Name>
+  batch_size: 100000
+  round_decimals: 6           # Rundung ja, Skalierung bewusst nicht (ein pro
+                              # Batch gefitteter Scaler machte Läufe unvergleichbar)
+
+output:
+  xpt_path: /domino/edv/pvc-hf1kundehuk/ScoringdatensatzProduktiv/kausalscore_ph.xpt
+  table_name: kau_ph
+  file_format_version: 5      # Vorgabe des empfangenden Systems — nicht ändern
+  csv_path: null              # optional: CSV parallel
+  timestamp_format: "%Y-%j"   # YYYY-DDD; TIMESTAMP-Spalte wird automatisch
+                              # gesetzt (nicht in meta_columns definieren)
+  meta_columns:
+    SCORE_TYP: MO_SCORE_20_INVESTBER
+    VALID_TO: 31DEC9999
+    SCORE_VERFAHREN: kausal
+  column_order:
+    - PARTNER_ID_V
+    - GESELLSCHAFT_FS
+    - SCORE_TYP
+    - VALID_TO
+    - SCORE_P
+    - SCORE_B
+    - SCORE_VERFAHREN
+    - TIMESTAMP
+
+monitoring:
+  dir: null                   # Default: <xpt-Verzeichnis>/monitoring
+  keep_latest_copy: true      # zusätzlich <name>_latest.json überschreiben
