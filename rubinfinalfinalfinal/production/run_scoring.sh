@@ -33,7 +33,10 @@ set -euo pipefail
 
 # ── Parameter (per Env überschreibbar, sonst Defaults) ──────────────────────
 GIT_URL="${GIT_URL:-ssh://tfs.lan.huk-coburg.de:22/web/DefaultCollection/GIT_Projects/_git/da-hf1-rubin}"
-GIT_REF="${GIT_REF:-main}"                 # Für reproduzierbare Prod-Läufe: Tag/Commit pinnen!
+GIT_REF="${GIT_REF:-main}"                 # Für reproduzierbare Prod-Läufe pinnen:
+                                           # Tag (empfohlen — Shallow-Clone, schnell)
+                                           # oder Commit-SHA (Fallback unten: voller
+                                           # Clone + Checkout, funktioniert, langsamer).
 # Ein oder mehrere Configs (Leerzeichen-getrennt — Pfade dürfen daher selbst
 # keine Leerzeichen enthalten). SCORING_CONFIG (Singular) bleibt als Alias
 # für den Ein-Score-Fall nutzbar.

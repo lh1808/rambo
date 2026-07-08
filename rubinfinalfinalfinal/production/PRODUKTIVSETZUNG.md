@@ -162,7 +162,7 @@ synchronisieren. Steuerung über **Env-Variablen der Job-Definition**:
 | Variable | Default | Bedeutung |
 |---|---|---|
 | `SCORING_CONFIGS` | `production/scoring_ph.yml` | Leerzeichen-Liste der Configs — **hier** kommen neue Use-Cases dazu. Jeder Score läuft in einem eigenen Python-Prozess (Speicher wird zwischen Scores vollständig freigegeben) |
-| `GIT_REF` | `main` | **Für Prod pinnen** (Tag/Commit) — reproduzierbare Läufe |
+| `GIT_REF` | `main` | **Für Prod pinnen** — annotiertes Tag empfohlen (Shallow-Clone, schnell); Commit-SHAs funktionieren über den automatischen Fallback (voller Clone + Checkout, langsamer). Pinnt Code **und** `pixi.lock` als Einheit, `--frozen` installiert exakt diesen Stand |
 | `CONTINUE_ON_ERROR` | `0` | `1`: alle Scores versuchen; Exit ≠ 0, wenn einer scheitert |
 | `RUNNER_SCRIPT` | — | Erzwingt einen Einstieg für alle Configs (normal: `runner:`-Key pro YAML) |
 | `BUNDLE/INPUT/OUTPUT_OVERRIDE` | — | Nur im Ein-Score-Datei-Fall erlaubt |
