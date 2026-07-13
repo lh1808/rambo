@@ -1,1 +1,337 @@
-PYTHONFAULTHANDLER=1 pixi run python -m app.server
+Fatal Python error: Segmentation fault
+
+Thread 0x00007f038dffb6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f038e7fc6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f038effd6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f038f7fe6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f038ffff6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b0ff96c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b17fa6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b1ffb6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b27fc6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1909 in _calc_fstr
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 3555 in get_feature_importance
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2754 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b2ffd6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b37fe6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f03b3fff6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040cff96c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Current thread 0x00007f040d7fa6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040dffb6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040e7fc6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040effd6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040f7fe6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f040ffff6c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f041ce926c0 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 1824 in _train
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 2716 in _fit
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/catboost/core.py", line 5547 in fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/utils/categorical_patch.py", line 188 in _wrapped_fit
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 338 in _fit_model
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 364 in _objective_all_classification
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 702 in objective
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 206 in _run_trial
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 165 in _optimize_sequential
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 59 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/thread.py", line 93 in _worker
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1012 in run
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00007f074573a740 (most recent call first):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 355 in wait
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/threading.py", line 655 in wait
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/concurrent/futures/_base.py", line 305 in wait
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/_optimize.py", line 102 in _optimize
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/optuna/study/study.py", line 516 in optimize
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 751 in _tune_task
+  File "/home/ubuntu/da-hf1-rubin/rubin/tuning/base_learner.py", line 881 in tune_all
+  File "/home/ubuntu/da-hf1-rubin/rubin/pipelines/analysis_pipeline.py", line 499 in _run_tuning
+  File "/home/ubuntu/da-hf1-rubin/rubin/pipelines/analysis_pipeline.py", line 3431 in run
+  File "/home/ubuntu/da-hf1-rubin/run_analysis.py", line 128 in main
+  File "/home/ubuntu/da-hf1-rubin/run_analysis.py", line 132 in <module>
+
+Extension modules: yaml._yaml, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, pyarrow.lib, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.properties, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pyarrow._compute, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing, sklearn.__check_build._check_build, _cyutility, scipy._cyutility, scipy._lib._ccallback_c, scipy.sparse._sparsetools, _csparsetools, scipy.sparse._csparsetools, scipy.special._ufuncs_cxx, scipy.linalg._fblas, scipy.linalg._flapack, scipy.linalg._batched_linalg, scipy.linalg._cythonized_array_utils, scipy.linalg._solve_toeplitz, scipy.linalg._internal_matfuncs, scipy.linalg._linalg_pythran, scipy.linalg.cython_blas, scipy.linalg.cython_lapack, scipy.linalg._decomp_update, scipy.special._ellip_harm_2, scipy.special._special_ufuncs, scipy.special._gufuncs, scipy.special._ufuncs, scipy.special._specfun, scipy.special._comb, scipy.sparse.linalg._dsolve._superlu, scipy.sparse.linalg._eigen.arpack._arpacklib, scipy.sparse.linalg._propack, scipy.spatial._ckdtree, scipy.spatial._hausdorff, scipy.spatial._distance_wrap, scipy._lib.messagestream, scipy.spatial._qhull, scipy.spatial._voronoi, scipy.spatial.transform._rotation_cy, scipy.spatial.transform._rigid_transform_cy, scipy.optimize._group_columns, scipy.optimize._trlib._trlib, scipy.optimize._lbfgsb, _moduleTNC, scipy.optimize._moduleTNC, scipy.optimize._slsqplib, scipy.optimize._minpack, scipy.optimize._lsq.givens_elimination, scipy.optimize._zeros, scipy._lib._uarray._uarray, scipy.linalg._decomp_interpolative, scipy.optimize._bglu_dense, scipy.optimize._lsap, scipy.optimize._direct, scipy.integrate._odepack, scipy.integrate._quadpack, scipy.integrate._vode, scipy.integrate._dop, scipy.interpolate._fitpack, scipy.interpolate._dierckx, scipy.interpolate._ppoly, scipy.interpolate._interpnd, scipy.interpolate._rbfinterp_pythran, scipy.interpolate._rgi_cython, scipy.special.cython_special, scipy.stats._stats, scipy.stats._biasedurn, scipy.stats._levy_stable.levyst, scipy.stats._stats_pythran, scipy.stats._ansari_swilk_statistics, scipy.sparse.csgraph._tools, scipy.sparse.csgraph._shortest_path, scipy.sparse.csgraph._traversal, scipy.sparse.csgraph._min_spanning_tree, scipy.sparse.csgraph._flow, scipy.sparse.csgraph._matching, scipy.sparse.csgraph._reordering, scipy.stats._sobol, scipy.stats._qmc_cy, scipy.stats._rcont.rcont, scipy.stats._qmvnt_cy, scipy.ndimage._nd_image, scipy.ndimage._rank_filter_1d, _ni_label, scipy.ndimage._ni_label, sklearn.utils._isfinite, sklearn.utils.sparsefuncs_fast, sklearn.utils.murmurhash, sklearn.utils._openmp_helpers, sklearn.utils._random, sklearn.utils._seq_dataset, sklearn.metrics.cluster._expected_mutual_info_fast, sklearn.preprocessing._csr_polynomial_expansion, sklearn.preprocessing._target_encoder_fast, sklearn.metrics._dist_metrics, sklearn.metrics._pairwise_distances_reduction._datasets_pair, sklearn.utils._cython_blas, sklearn.metrics._pairwise_distances_reduction._base, sklearn.metrics._pairwise_distances_reduction._middle_term_computer, sklearn.utils._heap, sklearn.utils._sorting, sklearn.metrics._pairwise_distances_reduction._argkmin, sklearn.metrics._pairwise_distances_reduction._argkmin_classmode, sklearn.utils._vector_sentinel, sklearn.metrics._pairwise_distances_reduction._radius_neighbors, sklearn.metrics._pairwise_distances_reduction._radius_neighbors_classmode, sklearn.metrics._pairwise_fast, sklearn.linear_model._cd_fast, _loss, sklearn._loss._loss, sklearn.utils.arrayfuncs, sklearn.svm._liblinear, sklearn.svm._libsvm, sklearn.svm._libsvm_sparse, sklearn.linear_model._sag_fast, sklearn.utils._weight_vector, sklearn.linear_model._sgd_fast, numba.core.typeconv._typeconv, numba._helperlib, numba._dynfunc, numba._dispatcher, numba.core.runtime._nrt_python, numba.np.ufunc._internal, numba.experimental.jitclass._box, scipy.cluster.vq._vq, scipy.cluster.hierarchy._hierarchy, scipy.cluster.hierarchy._optimal_leaf_ordering, sklearn.utils._fast_dict, sklearn.cluster._hierarchical_fast, sklearn.cluster._k_means_common, sklearn.cluster._k_means_elkan, sklearn.cluster._k_means_lloyd, sklearn.cluster._k_means_minibatch, sklearn.neighbors._partition_nodes, sklearn.neighbors._ball_tree, sklearn.neighbors._kd_tree, sklearn.decomposition._online_lda_fast, sklearn.decomposition._cdnmf_fast, sklearn.cluster._dbscan_inner, sklearn.cluster._hdbscan._tree, sklearn.cluster._hdbscan._linkage, sklearn.cluster._hdbscan._reachability, sklearn._isotonic, sklearn.tree._utils, sklearn.tree._tree, sklearn.tree._partitioner, sklearn.tree._splitter, sklearn.tree._criterion, sklearn.neighbors._quad_tree, sklearn.manifold._barnes_hut_tsne, sklearn.manifold._utils, sklearn.ensemble._gradient_boosting, sklearn.ensemble._hist_gradient_boosting.common, sklearn.ensemble._hist_gradient_boosting._gradient_boosting, sklearn.ensemble._hist_gradient_boosting._binning, sklearn.ensemble._hist_gradient_boosting._bitset, sklearn.ensemble._hist_gradient_boosting.histogram, sklearn.ensemble._hist_gradient_boosting._predictor, sklearn.ensemble._hist_gradient_boosting.splitting, shap._cext, _kernel_lib, PIL._imaging, kiwisolver._cext, scipy.io.matlab._mio_utils, scipy.io.matlab._streams, scipy.io.matlab._mio5_utils, sklearn.datasets._svmlight_format_fast, sklearn.feature_extraction._hashing_fast, statsmodels.robust._qn, scipy.signal._sigtools, scipy.signal._max_len_seq_inner, scipy.signal._upfirdn_apply, scipy.signal._spline, scipy.signal._sosfilt, scipy.signal._peak_finding_utils, statsmodels.tsa._innovations, statsmodels.nonparametric._smoothers_lowess, statsmodels.nonparametric.linbin, statsmodels.tsa.statespace._smoothers._conventional, statsmodels.tsa.statespace._smoothers._univariate, statsmodels.tsa.statespace._smoothers._univariate_diffuse, statsmodels.tsa.statespace._smoothers._classical, statsmodels.tsa.statespace._smoothers._alternative, statsmodels.tsa.statespace._kalman_smoother, statsmodels.tsa.statespace._filters._conventional, statsmodels.tsa.statespace._filters._univariate, statsmodels.tsa.statespace._filters._univariate_diffuse, statsmodels.tsa.statespace._filters._inversions, statsmodels.tsa.statespace._kalman_filter, statsmodels.tsa.statespace._tools, statsmodels.tsa.statespace._representation, statsmodels.tsa.statespace._initialization, statsmodels.tsa.statespace._simulation_smoother, statsmodels.tsa.statespace._cfa_simulation_smoother, statsmodels.tsa.innovations._arma_innovations, statsmodels.tsa.exponential_smoothing._ets_smooth, scipy.fftpack.convolve, statsmodels.tsa.stl._stl, statsmodels.tsa.holtwinters._exponential_smoothers, statsmodels.tsa.regime_switching._hamilton_filter, statsmodels.tsa.regime_switching._kim_smoother, econml.tree._utils, econml.tree._tree, econml.tree._splitter, econml.tree._criterion, econml.grf._utils, econml.grf._criterion, google._upb._message, _brotli, backports.zstd._zstd, pyarrow._fs, pyarrow._azurefs, pyarrow._hdfs, pyarrow._gcsfs, pyarrow._s3fs, pyarrow._parquet, pyarrow._acero, pyarrow._csv, pyarrow._json, pyarrow._substrait, pyarrow._dataset, pyarrow._dataset_orc, pyarrow._parquet_encryption, pyarrow._dataset_parquet_encryption, pyarrow._dataset_parquet, PIL._imagingmath, _cffi_backend, _catboost, catboost._catboost (total: 278)
