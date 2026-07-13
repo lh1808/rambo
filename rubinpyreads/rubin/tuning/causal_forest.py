@@ -144,8 +144,13 @@ class CausalForestTuner:
         T_np = np.asarray(T).ravel()
 
         base_type = (self.cfg.base_learner.type or "catboost").lower()
-        if base_type == "both":
-            base_type = "catboost"
+        # "both" NICHT vorab auf "catboost" kollabieren: Die BLT-getunten
+        # Nuisance-Params enthalten im both-Modus '_learner_type' (+ ggf.
+        # genestete lgbm/catboost-fixed_params). Nur der both-Zweig in
+        # build_base_learner() wählt daraus den richtigen Learner und entfernt
+        # die Meta-Keys — beim Kollabieren landeten sie ungefiltert im
+        # CatBoost-Konstruktor (TypeError '_learner_type') bzw. LGBM-getunte
+        # Params im falschen Builder.
 
         is_cfdml = model_type.lower() == "causalforestdml"
 

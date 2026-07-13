@@ -812,24 +812,41 @@ class AnalysisPipeline:
         # ── Tuned Params + Scores als JSON-Artefakt (leicht inspizierbar) ──
         # Wird NACH BLT und FMT geschrieben, damit alle Rollen enthalten sind —
         # insbesondere model_final aus dem FMT inkl. _learner_type ("both"-Modus:
-        # welcher Learner pro Rolle gewonnen hat). "default" wird gefiltert
-        # (interner Fallback-Lookup-Key, kein konfigurierbarer Parameter).
+        # welcher Learner pro Rolle gewonnen hat). Nach einem späteren CFT wird
+        # das Artefakt in _run_training erneut geschrieben (MLflow überschreibt
+        # gleichnamige Artefakte), damit auch forest/grf-Rollen enthalten sind.
+        self._tuning_scores = {
+            "scores": dict(_blt_tuner.best_scores) if _blt_tuner is not None else {},
+            "skill_scores": dict(_blt_tuner.skill_scores) if _blt_tuner is not None else {},
+            "fmt_scores": dict(_fmt_tuner.best_scores) if _fmt_tuner is not None else {},
+            "cft_scores": {},
+        }
         if _blt_tuner is not None or _fmt_tuner is not None:
-            def _write_tuned_params(p):
-                import json
-                payload = {
-                    "params": {k: {r: dict(v) for r, v in roles.items() if r != "default"}
-                               for k, roles in tuned_params_by_model.items()},
-                    "scores": dict(_blt_tuner.best_scores) if _blt_tuner is not None else {},
-                    "skill_scores": dict(_blt_tuner.skill_scores) if _blt_tuner is not None else {},
-                    # FMT: R-Score/Qini des Final-Model-Tunings (Keys: "final__<Modell>").
-                    "fmt_scores": dict(_fmt_tuner.best_scores) if _fmt_tuner is not None else {},
-                }
-                with open(p, "w", encoding="utf-8") as fh:
-                    json.dump(payload, fh, indent=2, ensure_ascii=False, default=float)
-            _log_temp_artifact(mlflow, _write_tuned_params, "tuned_baselearner_params.json")
+            self._write_tuned_params_artifact(mlflow, tuned_params_by_model)
 
         return tuned_params_by_model
+
+    def _write_tuned_params_artifact(self, mlflow, tuned_params_by_model) -> None:
+        """Schreibt/überschreibt das Artefakt tuned_baselearner_params.json.
+
+        Payload: alle getunten Params pro Modell/Rolle ("default"-Fallback-Key
+        gefiltert — interner Lookup-Key) plus BLT-/FMT-/CFT-Scores aus
+        self._tuning_scores. Wird am Ende von _run_tuning und erneut nach dem
+        CFT in _run_training aufgerufen, damit forest/grf-Rollen im Artefakt
+        landen (CFT läuft erst im Trainingsschritt)."""
+        scores = getattr(self, "_tuning_scores", None) or {
+            "scores": {}, "skill_scores": {}, "fmt_scores": {}, "cft_scores": {}}
+
+        def _write_tuned_params(p):
+            import json
+            payload = {
+                "params": {k: {r: dict(v) for r, v in roles.items() if r != "default"}
+                           for k, roles in tuned_params_by_model.items()},
+                **scores,
+            }
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, ensure_ascii=False, default=float)
+        _log_temp_artifact(mlflow, _write_tuned_params, "tuned_baselearner_params.json")
 
     def _run_training(self, cfg, X, T, Y, tuned_params_by_model, holdout_data, mlflow, _progress_cb=None):
         """Training der kausalen Learner + Cross-Predictions.
@@ -1079,6 +1096,11 @@ class AnalysisPipeline:
                         })
                         if best_p:
                             self._report.add_cft_best_params(name, best_p)
+                    # Params-JSON aktualisieren: forest/grf-Rollen + CFT-Score sind
+                    # erst jetzt bekannt (CFT läuft nach _run_tuning im Trainingsschritt).
+                    if hasattr(self, "_tuning_scores") and best_score is not None:
+                        self._tuning_scores.setdefault("cft_scores", {})[f"cft__{name}"] = float(best_score)
+                    self._write_tuned_params_artifact(mlflow, tuned_params_by_model)
                 except Exception:
                     self._logger.warning("CFT '%s' fehlgeschlagen.", name, exc_info=True)
                     mlflow.log_param(f"cf_tune__{name}__enabled", False)

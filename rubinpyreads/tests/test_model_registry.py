@@ -123,3 +123,30 @@ class TestPredictEffect:
 
         with pytest.raises(AttributeError):
             _predict_effect(NoMethodModel(), pd.DataFrame({"a": [1]}))
+
+
+class TestParamsForDefaultFallback:
+    """Regressionstests: 'default'-Fallback in params_for.
+
+    Der 'default'-Key ist eine Kopie der ersten BLT-getunten BASE-LEARNER-Rolle
+    (inkl. _learner_type). Für Nicht-Base-Learner-Rollen ("forest"/"grf") muss
+    der Fallback abschaltbar sein — sonst landen Base-Learner-Keys als Kwargs
+    im CausalForestDML-/GRF-Konstruktor (TypeError '_learner_type')."""
+
+    def _ctx(self, tuned):
+        ctx = ModelContext.__new__(ModelContext)
+        ctx.tuned_params = tuned
+        return ctx
+
+    def test_params_for_uses_default_fallback_by_default(self):
+        ctx = self._ctx({"default": {"_learner_type": "lgbm", "num_leaves": 31}})
+        assert ctx.params_for("model_y")["_learner_type"] == "lgbm"
+
+    def test_params_for_without_default_fallback_returns_empty(self):
+        ctx = self._ctx({"default": {"_learner_type": "lgbm", "num_leaves": 31}})
+        assert ctx.params_for("forest", use_default=False) == {}
+        assert ctx.params_for("grf", use_default=False) == {}
+
+    def test_params_for_without_default_still_returns_role_params(self):
+        ctx = self._ctx({"forest": {"max_depth": 5}, "default": {"_learner_type": "lgbm"}})
+        assert ctx.params_for("forest", use_default=False) == {"max_depth": 5}

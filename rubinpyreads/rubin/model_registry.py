@@ -216,9 +216,16 @@ class ModelContext:
     # BLT diagnostiziert vorab, dass Propensity-Skill ≈ 0 (bestätigt RCT).
     is_rct: bool = False
 
-    def params_for(self, role: str) -> Dict[str, Any]:
+    def params_for(self, role: str, use_default: bool = True) -> Dict[str, Any]:
         # Zuerst rollen-spezifisch, sonst 'default', sonst leer.
-        return dict(self.tuned_params.get(role) or self.tuned_params.get("default") or {})
+        # use_default=False für Rollen, die KEINE Base-Learner-Rollen sind
+        # (z. B. "forest"/"grf"): Der 'default'-Fallback ist eine Kopie der
+        # ersten BLT-getunten Base-Learner-Rolle — deren Keys (_learner_type,
+        # iterations, depth, num_leaves, ...) sind keine gültigen Forest-Kwargs
+        # und crashen den CausalForestDML-/GRF-Konstruktor.
+        if use_default:
+            return dict(self.tuned_params.get(role) or self.tuned_params.get("default") or {})
+        return dict(self.tuned_params.get(role) or {})
 
 
 Factory = Callable[[ModelContext], Any]
@@ -370,6 +377,10 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
         for _ek in ("model_y", "model_t", "discrete_treatment", "discrete_outcome",
                      "cv", "random_state", "n_jobs", "inference", "mc_iters", "mc_agg"):
             merged.pop(_ek, None)
+        # Defensiv: Base-Learner-Meta-Keys entfernen, falls die Forest-Rolle je
+        # durch gemergte fixed_params verunreinigt wird ("both"-Modus-Struktur).
+        for _mk in ("_learner_type", "lgbm", "catboost"):
+            merged.pop(_mk, None)
         if "n_estimators" in merged:
             ne = int(merged["n_estimators"])
             if ne % 4 != 0:
@@ -390,7 +401,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
             # KEIN allow_missing: GRF final model kann kein NaN in X (Split-Features),
             # und rubin nutzt kein W. allow_missing=True würde NaN in X durchlassen
             # und zu kryptischem GRF-Crash führen statt klarem Validierungsfehler.
-            **_sanitize_forest_params(_CFDML_DEFAULTS, ctx.params_for("forest")),
+            **_sanitize_forest_params(_CFDML_DEFAULTS, ctx.params_for("forest", use_default=False)),
         ),
     )
 
@@ -446,7 +457,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
         lambda ctx: CausalForestAdapter(
             random_state=ctx.seed,
             n_jobs=ctx.parallel_jobs,
-            **_sanitize_forest_params(_CF_DEFAULTS, ctx.params_for("grf")),
+            **_sanitize_forest_params(_CF_DEFAULTS, ctx.params_for("grf", use_default=False)),
         ),
     )
 
