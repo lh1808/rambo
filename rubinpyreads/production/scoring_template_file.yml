@@ -1,0 +1,93 @@
+# ============================================================================
+# VORLAGE — Scoring-Config, Datei-Flow (Datei → Bundle → SAS-XPT).
+#
+# Für einen neuen Use-Case: Datei kopieren als scoring_<usecase>.yml und die
+# mit PFLICHT markierten Felder setzen (<…> sind Platzhalter). Alles andere
+# hat sinnvolle Defaults und kann unverändert bleiben. Konkretes, gelebtes
+# Beispiel: scoring_ph.yml. Schritt-für-Schritt: PRODUKTIVSETZUNG.md.
+#
+#   pixi run -e prod python production/run_scoring.py --config production/scoring_<usecase>.yml
+# ============================================================================
+
+name: <usecase>             # PFLICHT — bestimmt die Monitoring-Dateinamen
+runner: file                # Transport-Deklaration für run_scoring.sh:
+                            # file (dieser Flow) | saspy (SAS-Library-Flow)
+bundle: <pfad/zum/bundle>   # PFLICHT — rubin-Bundle-Verzeichnis (Analysis-Export)
+
+input:
+  path: <pfad/zur/eingabedatei>   # PFLICHT — parquet | csv | sas7bdat
+  format: null                # optional (Default: aus der Dateiendung)
+  pull_only_needed_columns: true  # optional — nur Bundle-Features + IDs einlesen;
+                              # erlaubt mehrere Scores mit unterschiedlichen
+                              # Feature-Teilmengen gegen dieselbe breite Tabelle
+  sas_chunksize: 200000       # optional — nur für format: sas7bdat
+  sas_encoding: ISO-8859-1    # optional — nur für format: sas7bdat
+  csv_sep: ","                # optional — nur für format: csv (";" bei dt. CSVs)
+  csv_encoding: utf-8         # optional — nur für format: csv
+  uppercase_columns: false    # optional (Default: false) — Spaltennamen →
+                              # Großschreibung; bei SAS-Quelltabellen üblich: true
+                              # MUSS zur Schreibweise der Bundle-Features passen
+                              # (DataPrep-Bundles: Großschreibung → true) — bei
+                              # Mismatch bricht der Lauf mit klarer Meldung ab
+
+# PFLICHT (mind. eine) — werden unverändert durchgereicht (kein Modell-Feature;
+# Überschneidung mit Features wird hart abgelehnt)
+id_columns:
+  - <ID_SPALTE>
+
+preprocessing:
+  replace_inf_with_nan: true  # optional — Inf → NaN vor dem Transform, damit
+                              # die im Bundle gelernte Missing-Behandlung greift
+                              # (was genau, bestimmt die Trainings-Konfiguration)
+
+# Modellauswahl — vollständig YAML-gesteuert, UNABHÄNGIG vom Champion:
+# score_p_model/score_b_model nehmen jeden Modellnamen aus dem Bundle
+# ("champion" ist nur ein Alias auf den Registry-Champion); extra_models
+# ergänzt beliebig viele weitere als CATE_<Name>-Spalten. Verfügbare Namen:
+# model_registry.json im Bundle bzw. das Log beim Scoring-Start.
+scoring:
+  score_p_model: champion     # optional — "champion" (Alias) | konkreter Name
+  score_b_model: null         # optional — z. B. SurrogateTree; null → keine SCORE_B-Spalte
+  extra_models: []            # optional — zusätzliche Spalten CATE_<Name>
+  batch_size: 100000          # optional — Zeilen pro Modell-Predict
+  round_decimals: 6           # optional — Score-Rundung (Skalierung gibt es
+                              # bewusst nicht: ein pro Lauf gefitteter Scaler
+                              # machte Läufe unvergleichbar)
+
+output:
+  xpt_path: <pfad/zur/ziel.xpt>   # PFLICHT — wird pro Lauf überschrieben
+                              # (Historisierung macht das Zielsystem)
+  table_name: <sas_tabellenname>  # optional (Default: SCORES) — interner
+                              # SAS-Tabellenname; max. 8 Zeichen bei V5
+  file_format_version: 5      # optional — 5 kürzt Spaltennamen auf 8 Zeichen
+                              # (Kollisionen werden hart abgelehnt; die vollen
+                              # Namen bleiben als Spalten-Labels erhalten);
+                              # 8 für lange Namen
+  csv_path: null              # optional — CSV parallel zur XPT
+  timestamp_format: "%Y-%j"   # optional — TIMESTAMP-Spalte wird automatisch
+                              # gesetzt (nicht in meta_columns definieren)
+  meta_columns: {}            # optional — konstante Zusatzspalten, z. B.
+                              #   SCORE_TYP: <wert>
+  column_order: null          # optional — Ziel-Reihenfolge; SCORE_P expandiert
+                              # bei Multi-Treatment automatisch (SCORE_P1, …)
+
+# ── Variante: MEHRERE Bundles gegen DENSELBEN Input (Ein-Lade-Modus) ────────
+# Wenn das Laden teuer ist (große Datei) und mehrere Modelle/Bundles auf
+# derselben Gesamttabelle scoren sollen: statt bundle/scoring/output oben
+# eine scores-Liste — der Input wird nur EINMAL gelesen (Spalten = Union
+# aller Bundle-Features + IDs) und pro Eintrag unterschiedlich preprocessed
+# und gescort. Preis: die Tabelle bleibt über alle Scores im Speicher.
+# Monitoring-Dateien heißen dann <name>_<eintragsname>_….json.
+#
+# scores:
+#   - name: haupt                       # PFLICHT — Log-/Monitoring-Suffix
+#     bundle: <pfad/zum/bundle_a>       # PFLICHT
+#     output: {xpt_path: <pfad/a.xpt>}  # PFLICHT (Rest erbt Defaults)
+#   - name: variante
+#     bundle: <pfad/zum/bundle_b>
+#     scoring: {score_p_model: DRLearner}   # optional pro Eintrag
+#     output: {xpt_path: <pfad/b.xpt>}
+
+monitoring:
+  dir: null                   # optional — Default: <xpt-Verzeichnis>/monitoring
+  keep_latest_copy: true      # optional — zusätzlich <name>_latest.json überschreiben
