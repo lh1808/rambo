@@ -527,7 +527,7 @@ causal_forest:
   tune_enabled: false
   n_trials: 50
   single_fold: false
-  scorer: auto            # auto → qini bei RCT, rscore bei observational
+  scorer: auto            # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore
   overfit_penalty: 0.0    # Train-Val-Gap-Penalty (empfohlen ~0.2–0.35)
   overfit_tolerance: 0.10 # Relativer Gap-Toleranz (10%)
   tune_models: []
@@ -557,7 +557,7 @@ Felder:
 - `overfit_penalty`: Train-Val-Gap-Penalty (0 = deaktiviert, empfohlen ~0.2–0.35). Bestraft Konfigurationen mit hohem In-Sample vs. OOF-Score-Gap.
 - `overfit_tolerance`: Relativer Gap-Toleranzwert (Default 0.10 = 10%).
 - `overfit_max_penalized_gap`: Deckelt den bestraften relativen Gap (Saturierung, Default 1.0). Verhindert, dass die Penalty bei kleinem Val-Score (Qini/R-Score nahe 0) das Vorzeichen kippt oder die Selektion dominiert. `<=0` = kein Cap (unbeschränkt).
-- `scorer`: Scoring-Modus für CFT. `auto` (Default) → `qini` bei RCT, `rscore` bei Beobachtungsdaten. `qini` optimiert direkt die Ranking-Qualität (aggregierter OOF-Qini, kein Pruning). `rscore` nutzt den EconML RScorer (unabhängige Nuisance, Pruning möglich). Wird synchron mit FMT gesetzt.
+- `scorer`: Scoring-Modus für CFT. `auto` (Default) → `qini` bei RCT, `rscore` bei Beobachtungsdaten; bei Multi-Treatment immer `rscore` (Qini ist binär-only, explizites `qini` wird von der Config-Validierung abgelehnt). `qini` optimiert direkt die Ranking-Qualität (aggregierter OOF-Qini, kein Pruning). `rscore` nutzt den EconML RScorer (unabhängige Nuisance, Pruning möglich). Wird synchron mit FMT gesetzt.
 - `tune_models`: Liste der Modelle für CFT. Mögliche Werte: `CausalForestDML`, `CausalForest`.
   Leere Liste = alle Forest-Modelle in der Modellauswahl.
 - `tune_max_rows`: Max. Zeilen für CFT (RAM-Kontrolle). `null` = alle Daten.
@@ -653,7 +653,7 @@ final_model_tuning:
   n_trials: 100
   models: null
   single_fold: false
-  scorer: auto               # auto | qini | rscore. auto = Qini bei RCT, R-Score bei Beobachtungsdaten
+  scorer: auto               # auto | qini | rscore. auto = Qini bei RCT, R-Score bei Beobachtungsdaten; bei Multi-Treatment immer R-Score
   overfit_penalty: 0.0
   overfit_tolerance: 0.10
   max_tuning_rows: null
