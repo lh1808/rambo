@@ -273,7 +273,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
       {view==="template"&&<Sec title="Treatment-Typ">
         <Info>Grundlegende Entscheidung: Binary Treatment (T in {"{0,1}"}) oder Multi-Treatment (T in {"{0,1,...,K-1}"}). Bestimmt, welche Modelle und Metriken verfügbar sind.</Info>
         <div style={{display:"flex",gap:10,marginTop:10}}>
-          {[{k:"binary",l:"Binary Treatment",d:"T in {0,1} – 8 Modelle + Ensemble verfügbar"},{k:"multi",l:"Multi-Treatment",d:"T in {0,...,K-1} – nur DML-Modelle"}].map(o => {
+          {[{k:"binary",l:"Binary Treatment",d:"T in {0,1} – 8 Modelle + Ensemble verfügbar"},{k:"multi",l:"Multi-Treatment",d:"T in {0,...,K-1} – 3 Modelle: ParamDML, DRLearner, CausalForestDML"}].map(o => {
             const active = tt === o.k;
             return (
               <button key={o.k} onClick={()=>switchTreatment(o.k)} style={{flex:1,padding:"20px 22px",borderRadius:12,border:active?"2px solid #9B111E":"1.5px solid "+C.border,background:active?"#FDF2F3":"#faf6f6",cursor:"pointer",textAlign:"left",transition:"all 0.2s"}}

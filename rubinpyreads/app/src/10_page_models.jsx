@@ -262,7 +262,7 @@ const PModelsOnly = ({cfg,set}) => {
   const mt=cfg.treatmentType==="multi";const nanB=cfg.hasNaN?new Set(["CausalForestDML","CausalForest"]):new Set();const mtB=mt?btOnly:new Set();const av=allModels.filter(m=>!mtB.has(m)&&!nanB.has(m));
   const _isObs = (cfg.studyType||"rct") !== "rct";
   const _noConfModels = new Set(["SLearner","TLearner","CausalForest"]);
-  return (<Sec title="Kausale Modelle">{mt&&<Info type="warn"><strong>Multi-Treatment:</strong> Nur Modelle mit Residualisierung verfügbar (NonParamDML, ParamDML, DRLearner, CausalForestDML). Meta-Learner und CausalForest unterstützen kein Multi-Treatment.</Info>}{cfg.hasNaN&&<Info type="warn"><strong>Fehlende Werte:</strong> CausalForestDML und CausalForest werden automatisch übersprungen (GRF-basierte Modelle können keine fehlenden Werte verarbeiten).</Info>}
+  return (<Sec title="Kausale Modelle">{mt&&<Info type="warn"><strong>Multi-Treatment:</strong> Verfügbar sind <strong>ParamDML, DRLearner und CausalForestDML</strong>. NonParamDML unterstützt nur Binary Treatment (EconML-Restriktion: der Reweighting-Trick des finalen Modells benötigt ein skalares Treatment-Residuum) – ebenso Meta-Learner (SLearner/TLearner/XLearner) und CausalForest.</Info>}{cfg.hasNaN&&<Info type="warn"><strong>Fehlende Werte:</strong> CausalForestDML und CausalForest werden automatisch übersprungen (GRF-basierte Modelle können keine fehlenden Werte verarbeiten).</Info>}
     {[
       {label:"Meta-Learner",color:"#9B111E",bg:"#fdf2f3",models:[
         {m:"SLearner",d:"Ein Modell für alle – einfachste Baseline"},
