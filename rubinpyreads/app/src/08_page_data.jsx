@@ -11,7 +11,10 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
     activeAddons.forEach(k => {const a=ADDON_PRESETS.find(x=>x.key===k);if(a){Object.assign(addonOverlay,a.cfg);if(a.waves)addonOverlay[a.waves.field]=_wavesToTrials(a.waves.w, a.waves.stage||"blt");}});
     // Filter models: remove BT-only models when switching to multi
     const defaultModels = newTt==="multi" ? DEFAULT_CFG.models.filter(m=>!btOnly.has(m)) : DEFAULT_CFG.models;
-    setCfg({...DEFAULT_CFG,...paths,...addonOverlay,models:defaultModels,treatmentType:newTt,refGroup:0,selMetric:newTt==="multi"?"policy_value":"qini"});
+    // Qini-Scorer (FMT/CFT) ist binär-only — bei Multi auf "auto" zurücksetzen
+    // (Backend löst auto bei Multi-Treatment zu rscore auf).
+    const scorerReset = newTt==="multi" ? {fmtScorer:"auto",cfScorer:"auto"} : {};
+    setCfg({...DEFAULT_CFG,...paths,...addonOverlay,...scorerReset,models:defaultModels,treatmentType:newTt,refGroup:0,selMetric:newTt==="multi"?"policy_value":"qini"});
   };
 
 

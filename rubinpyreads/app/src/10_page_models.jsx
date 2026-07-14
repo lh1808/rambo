@@ -170,7 +170,7 @@ const TuningPlanPreview = ({models, trials, cv, outerCv, innerCv: innerCvProp, i
 };
 
 // ── Final-Model Tuning Plan ──
-const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, fmtTrials, fmtCv, outerCv: outerCvProp, mcIters, isBoth, fmtScorer, studyType}) => {
+const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, fmtTrials, fmtCv, outerCv: outerCvProp, mcIters, isBoth, fmtScorer, studyType, isMulti}) => {
   const bothMultiplier = isBoth ? 2 : 1;
   const nTrials = (fmtTrials || 50) * bothMultiplier;
   const internalCv = fmtCv || 5;  // Innere CV (Default=5, synchronisiert mit BLT und DML)
@@ -181,7 +181,7 @@ const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, f
   // cache_values-Architektur: Nuisance EINMALIG pro äußerem Fold, Trials nur model_final
   const nuisanceFitsPerDmlFold = mc * internalCv * 2 + 1; // model_y + model_t + initial model_final
   const nuisanceFitsPerDrFold = mc * internalCv * 2 + 1; // propensity + regression + initial model_final
-  const _fmtScRes = (fmtScorer||"auto")==="auto" ? ((studyType||"rct")==="rct"?"qini":"rscore") : fmtScorer;
+  const _fmtScRes = isMulti ? "rscore" : ((fmtScorer||"auto")==="auto" ? ((studyType||"rct")==="rct"?"qini":"rscore") : fmtScorer);
   const scorerFitsPerFold = _fmtScRes==="qini" ? 0 : 2 * 2; // RScorer: cv=2 × (model_y + model_t); QiniScorer: 0
   const outerFolds = fmtSingleFold ? 1 : outerCv;
 

@@ -281,7 +281,7 @@ class CausalForestConfig(BaseModel):
     tune_max_rows: Optional[int] = None  # Max. Zeilen für Tuning (RAM-Kontrolle)
     n_trials: int = 50  # Optuna-Trials für CFT
     single_fold: bool = False  # Single-Fold statt K-Fold (5× schneller, weniger robust)
-    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational
+    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore (Qini ist binär-only)
     overfit_penalty: float = 0.0  # Train-Val-Gap-Penalty (0 = deaktiviert, empfohlen ~0.2–0.35)
     overfit_tolerance: float = 0.10  # Relativer Gap-Toleranz (10%, entschärft)
     overfit_max_penalized_gap: float = 1.0  # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap (unbeschränkt). Verhindert Sign-Flip/Dominanz bei kleinen Scores (Qini/R-Score nahe 0).
@@ -361,7 +361,7 @@ class FinalModelTuningConfig(BaseModel):
     overfit_penalty: float = 0.0
     overfit_tolerance: float = 0.10
     overfit_max_penalized_gap: float = 1.0  # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap (unbeschränkt). Verhindert Sign-Flip/Dominanz bei kleinen Scores (Qini/R-Score nahe 0).
-    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational
+    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore (Qini ist binär-only)
     fixed_params: Dict[str, Any] = Field(default_factory=dict)
     search_space: SearchSpaceConfig = Field(default_factory=SearchSpaceConfig)
 
@@ -552,6 +552,46 @@ class AnalysisConfig(BaseModel):
                     f"Empfohlen: 'policy_value' (global IPW), 'policy_value_T1', "
                     f"'qini_T1', 'auuc_T1', etc."
                 )
+            # Explizit gesetzter Qini-Scorer für FMT/CFT ist bei MT nicht möglich:
+            # Der Qini-Scorer ist binär-only (t ∈ {0,1}, 1-d CATE). 'auto' wird
+            # oben in resolve_scorer_auto bei MT bereits zu 'rscore' aufgelöst —
+            # hier wird nur die explizite Fehlkonfiguration abgefangen.
+            _mt_scorer_offenders = []
+            if self.final_model_tuning.enabled and self.final_model_tuning.scorer == "qini":
+                _mt_scorer_offenders.append("final_model_tuning.scorer")
+            if getattr(self.causal_forest, "tune_enabled", False) and self.causal_forest.scorer == "qini":
+                _mt_scorer_offenders.append("causal_forest.scorer")
+            if _mt_scorer_offenders:
+                raise ValueError(
+                    f"treatment.type='multi' mit {' und '.join(_mt_scorer_offenders)}='qini': "
+                    f"Der Qini-Scorer ist binär-only (verlangt t in {{0,1}} und 1-d CATE). "
+                    f"Bitte 'rscore' oder 'auto' setzen (auto wird bei Multi-Treatment "
+                    f"automatisch zu rscore aufgelöst)."
+                )
+            # treatment_only-Mehrdatei-Modus ist binär definiert: Er filtert pro
+            # Datei hart auf T==1 und baut die Control-Kopie aus diesen Zeilen.
+            # Bei K>2 Armen würden alle Zeilen mit T>=2 STILL verworfen und die
+            # Arm-Struktur zerstört — daher harte Ablehnung statt Datenverlust.
+            _dp = getattr(self, "data_prep", None)
+            if _dp is not None and getattr(_dp, "multiple_files_option", "merge") == "treatment_only":
+                raise ValueError(
+                    "treatment.type='multi' mit data_prep.multiple_files_option='treatment_only': "
+                    "Dieser Modus ist nur für Binary Treatment definiert (filtert pro Datei "
+                    "auf T==1; Zeilen mit T>=2 gingen still verloren). Bitte "
+                    "multiple_files_option='merge' verwenden und die Arme über "
+                    "treatment_replacement abbilden."
+                )
+            # balance_treatments ist ebenfalls binär definiert: Ziel-Raten-Suche und
+            # Downsampling arbeiten mit T==1 vs. T==0 (Effektiv-N = p·(1−p)) — bei
+            # K>2 Armen würden T>=2-Zeilen ignoriert bzw. die Arm-Struktur verzerrt.
+            if _dp is not None and getattr(_dp, "balance_treatments", False):
+                raise ValueError(
+                    "treatment.type='multi' mit data_prep.balance_treatments=true: "
+                    "Das dateiübergreifende Treatment-Balancing ist nur für Binary "
+                    "Treatment definiert (T==1 vs. T==0). Bitte deaktivieren — die "
+                    "Raten-Warnung pro Datei bleibt aktiv (bei Multi-Treatment als "
+                    "Anteil T>0 mit Arm-Verteilung im Log)."
+                )
 
         manual = (self.selection.manual_champion or "").strip()
         if not manual:
@@ -599,8 +639,16 @@ class AnalysisConfig(BaseModel):
 
     @model_validator(mode="after")
     def resolve_scorer_auto(self) -> "AnalysisConfig":
-        """Löst scorer='auto' zu 'qini' (RCT) oder 'rscore' (observational) auf."""
-        resolved = "qini" if self.study_type == "rct" else "rscore"
+        """Löst scorer='auto' zu 'qini' (RCT) oder 'rscore' (observational) auf.
+
+        Bei treatment.type='multi' wird IMMER 'rscore' aufgelöst — auch bei RCT:
+        Der Qini-Scorer (uplift_curve/qini_coefficient) ist binär-only (verlangt
+        t ∈ {0,1} und 1-d CATE); bei K>2 Armen ist die CATE (n, K-1)-dimensional.
+        EconMLs RScorer unterstützt Multi-Treatment (R-Loss über <θ(X), T_res>)."""
+        if self.treatment.type == "multi":
+            resolved = "rscore"
+        else:
+            resolved = "qini" if self.study_type == "rct" else "rscore"
         if self.final_model_tuning.scorer == "auto":
             object.__setattr__(self.final_model_tuning, "scorer", resolved)
         if self.causal_forest.scorer == "auto":

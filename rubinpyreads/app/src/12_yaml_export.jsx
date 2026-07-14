@@ -313,11 +313,20 @@ const validate = cfg => {
   if(cfg.treatmentType==="binary" && cfg.refGroup!==0 && cfg.refGroup!==undefined && cfg.refGroup!==null){
     i.push(`treatment.reference_group=${cfg.refGroup}: Bei binary Treatment nur 0 erlaubt.`);
   }
-  // MT-incompatible Selection-Metrics (spiegelt Backend-Validator)
+  // MT-incompatible Selection-Metrics (spiegelt Backend-Validator _bt_only_metrics).
+  // Hinweis: 'policy_value' (global IPW) ist bei Multi-Treatment die EMPFOHLENE
+  // Metrik (siehe settings.py) und gehört nicht in diese Liste.
   if(cfg.treatmentType==="multi"){
-    const btOnlyMetrics = new Set(["qini","auuc","uplift_at_10pct","uplift_at_20pct","uplift_at_50pct","policy_value"]);
+    const btOnlyMetrics = new Set(["qini","auuc","uplift_at_10pct","uplift_at_20pct","uplift_at_50pct"]);
     if(btOnlyMetrics.has(cfg.selMetric)){
-      i.push(`selection.metric='${cfg.selMetric}' existiert bei Multi-Treatment nicht. Empfohlen: 'policy_value_T1', 'qini_T1', 'qini_T2' etc.`);
+      i.push(`selection.metric='${cfg.selMetric}' existiert bei Multi-Treatment nicht. Empfohlen: 'policy_value' (global), 'policy_value_T1', 'qini_T1', 'qini_T2' etc.`);
+    }
+    // Qini-Scorer (FMT/CFT) ist binär-only — spiegelt Backend-Validator.
+    if(cfg.fmtEnabled && cfg.fmtScorer==="qini"){
+      i.push(`final_model_tuning.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore' oder 'auto' wählen.`);
+    }
+    if(cfg.cfTune && cfg.cfScorer==="qini"){
+      i.push(`causal_forest.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore' oder 'auto' wählen.`);
     }
   }
   return i;

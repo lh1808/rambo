@@ -188,6 +188,41 @@ class ProductionPipeline:
         # Optionale Best-Effort-Typangleichung auf Basis der im Bundle gespeicherten Referenz.
         # Das erleichtert stabile Scorings, wenn Rohdaten aus anderen Exportwegen kommen.
         X_input = X_raw.copy()
+
+        # ── Feature-Guard (analog zum Scoring-Flow in production/run_scoring.py) ──
+        # Ohne diesen Check würden fehlende/anders geschriebene Feature-Spalten vom
+        # Preprocessor still zu NaN reindexed: GRF-Modelle crashen dann kryptisch
+        # ("Input contains NaN"), GBM-Modelle scoren stillschweigend Unsinn.
+        _expected = list(self.metadata.get("feature_columns") or [])
+        if not _expected and isinstance(self.bundle_dtypes, dict):
+            _expected = list(self.bundle_dtypes.keys())
+        if _expected:
+            _missing = [c for c in _expected if c not in X_input.columns]
+            if _missing:
+                # rubin-Konvention: DataPrep schreibt alle Spalten uppercase — bei
+                # Case-Mismatch werden die Input-Spalten angeglichen, sobald das
+                # die Fehlmenge reduziert (auch teilweise: so meldet der Fehler
+                # unten präzise nur die WIRKLICH fehlenden Spalten).
+                _upper_map = {c: str(c).upper() for c in X_input.columns}
+                _resolved = [c for c in _missing if c in set(_upper_map.values())]
+                if _resolved:
+                    X_input.columns = [_upper_map[c] for c in X_input.columns]
+                    logging.getLogger("rubin.production").info(
+                        "Feature-Spalten automatisch auf Großschreibung angeglichen "
+                        "(Bundle-Konvention; %d Spalten betroffen).", len(_resolved),
+                    )
+                    _missing = [c for c in _expected if c not in X_input.columns]
+            if _missing:
+                raise ValueError(
+                    f"Eingabedaten enthalten {len(_missing)} vom Bundle erwartete "
+                    f"Feature-Spalte(n) nicht: {_missing[:10]}"
+                    f"{' …' if len(_missing) > 10 else ''}. "
+                    f"Vorhandene Spalten: {list(X_input.columns)[:10]}"
+                    f"{' …' if len(X_input.columns) > 10 else ''}. "
+                    f"Ohne diese Features würde der Preprocessor sie zu NaN auffüllen "
+                    f"und das Scoring unbrauchbare Werte liefern."
+                )
+
         if isinstance(self.bundle_dtypes, dict):
             for col, dt in self.bundle_dtypes.items():
                 if col in X_input.columns:

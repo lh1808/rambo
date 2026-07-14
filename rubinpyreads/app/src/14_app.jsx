@@ -233,7 +233,7 @@ function App() {
     // 3. FMT (Final-Model-Tuning) — cache_values: Nuisance EINMALIG + RScorer + Trials nur model_final
     const fmtFitsPerDmlFit = mc * innerCv * 2 + 1;   // NonParamDML: model_y + model_t + model_final
     const fmtFitsPerDrFit = mc * innerCv * 2 + 1;   // DRLearner: propensity + regression + model_final
-    const _fmtScRes = (cfg.fmtScorer||"auto")==="auto" ? ((cfg.studyType||"rct")==="rct"?"qini":"rscore") : cfg.fmtScorer;
+    const _fmtScRes = cfg.treatmentType==="multi" ? "rscore" : ((cfg.fmtScorer||"auto")==="auto" ? ((cfg.studyType||"rct")==="rct"?"qini":"rscore") : cfg.fmtScorer);
     const fmtScorerFitsPerFold = _fmtScRes==="qini" ? 0 : 4;  // RScorer: cv=2 × (model_y + model_t); QiniScorer: 0
     if (cfg.fmtEnabled) {
       const fmtTr = (cfg.fmtTrials||50) * bothMult;
@@ -252,7 +252,7 @@ function App() {
     if (cfg.cfTune) {
       const cfTrials = cfg.cfTrials || 50;
       const cfFolds = cfg.cfSingleFold ? 1 : innerCv;
-      const _cfScRes = (cfg.cfScorer||"auto")==="auto" ? ((cfg.studyType||"rct")==="rct"?"qini":"rscore") : cfg.cfScorer;
+      const _cfScRes = cfg.treatmentType==="multi" ? "rscore" : ((cfg.cfScorer||"auto")==="auto" ? ((cfg.studyType||"rct")==="rct"?"qini":"rscore") : cfg.cfScorer);
       const cfScorerFitsPerFold = _cfScRes==="qini" ? 0 : 4; // RScorer: cv=2 × (model_y + model_t); QiniScorer: 0
       // CausalForestDML: Pre-fit cfFolds × (Nuisance + RScorer) + cfTrials × cfFolds × 1 (forest refit)
       if ((cfg.cfTuneModels||[]).includes("CausalForestDML") && m.includes("CausalForestDML")) f += cfFolds * (mc*innerCv*2+1+cfScorerFitsPerFold) + cfTrials * cfFolds;

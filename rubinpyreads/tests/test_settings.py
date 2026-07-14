@@ -293,3 +293,105 @@ class TestLoadConfig:
         assert cfg.shap_values.calculate_shap_values is True
         assert cfg.shap_values.n_shap_values == 5000
         assert cfg.shap_values.top_n_features == 15
+
+
+class TestMultiTreatmentScorerResolution:
+    """Regressionstests: FMT-/CFT-Scorer bei Multi-Treatment.
+
+    Der Qini-Scorer ist binär-only (uplift_curve verlangt t in {0,1} und 1-d
+    CATE). resolve_scorer_auto muss 'auto' bei treatment.type='multi' daher
+    IMMER zu 'rscore' auflösen (auch bei RCT); explizit gesetztes 'qini' wird
+    vom MT-Validator abgelehnt — sonst scheitern alle FMT-/CFT-Trials erst
+    zur Laufzeit an '_check_binary'."""
+
+    def _base_cfg(self, **overrides):
+        cfg = {
+            "mlflow": {"experiment_name": "t"},
+            "constants": {"SEED": 1, "work_dir": "/tmp/t"},
+            "data_files": {"x_file": "x.parquet", "t_file": "t.parquet", "y_file": "y.parquet"},
+            "study_type": "rct",
+            "treatment": {"type": "multi", "reference_group": 0},
+            "models": {"models_to_train": ["ParamDML", "DRLearner"], "ensemble": False},
+            "selection": {"metric": "policy_value", "higher_is_better": True},
+            "final_model_tuning": {"enabled": True, "n_trials": 2, "scorer": "auto"},
+        }
+        for k, v in overrides.items():
+            cfg[k] = v
+        return cfg
+
+    def test_auto_resolves_to_rscore_under_multi_even_at_rct(self, tmp_path):
+        import yaml
+        from rubin.settings import load_config
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(self._base_cfg()), encoding="utf-8")
+        cfg = load_config(str(p))
+        assert cfg.final_model_tuning.scorer == "rscore"
+        assert cfg.causal_forest.scorer == "rscore"
+
+    def test_auto_still_resolves_to_qini_for_binary_rct(self, tmp_path):
+        import yaml
+        from rubin.settings import load_config
+        c = self._base_cfg(
+            treatment={"type": "binary", "reference_group": 0},
+            selection={"metric": "qini", "higher_is_better": True},
+        )
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        cfg = load_config(str(p))
+        assert cfg.final_model_tuning.scorer == "qini"
+
+    def test_explicit_qini_fmt_scorer_rejected_under_multi(self, tmp_path):
+        import yaml
+        import pytest
+        from rubin.settings import load_config
+        c = self._base_cfg()
+        c["final_model_tuning"]["scorer"] = "qini"
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        with pytest.raises(Exception, match="binär-only"):
+            load_config(str(p))
+
+    def test_explicit_qini_cft_scorer_rejected_under_multi(self, tmp_path):
+        import yaml
+        import pytest
+        from rubin.settings import load_config
+        c = self._base_cfg()
+        c["causal_forest"] = {"tune_enabled": True, "n_trials": 2, "scorer": "qini"}
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        with pytest.raises(Exception, match="binär-only"):
+            load_config(str(p))
+
+    def test_treatment_only_rejected_under_multi(self, tmp_path):
+        """treatment_only filtert pro Datei hart auf T==1 — bei K>2 Armen gingen
+        Zeilen mit T>=2 still verloren. Kombination wird abgelehnt."""
+        import yaml
+        import pytest
+        from rubin.settings import load_config
+        c = self._base_cfg()
+        c["data_prep"] = {
+            "data_path": ["a.csv", "b.csv"], "output_path": "/tmp/out",
+            "target": "Y", "treatment": "T",
+            "multiple_files_option": "treatment_only",
+        }
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        with pytest.raises(Exception, match="still verloren"):
+            load_config(str(p))
+
+    def test_balance_treatments_rejected_under_multi(self, tmp_path):
+        """balance_treatments ist binär definiert (T==1 vs. T==0, Effektiv-N p·(1−p))
+        — bei K>2 Armen würde die Arm-Struktur verzerrt. Kombination abgelehnt."""
+        import yaml
+        import pytest
+        from rubin.settings import load_config
+        c = self._base_cfg()
+        c["data_prep"] = {
+            "data_path": ["a.csv", "b.csv"], "output_path": "/tmp/out",
+            "target": "Y", "treatment": "T",
+            "balance_treatments": True,
+        }
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        with pytest.raises(Exception, match="Balancing ist nur für Binary Treatment"):
+            load_config(str(p))

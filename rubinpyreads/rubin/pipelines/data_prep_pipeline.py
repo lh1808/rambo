@@ -351,17 +351,38 @@ class DataPrepPipeline:
             # der Aufrufer braucht sie ggf. für eval_file_index.
             return df
 
-        # Treatment-Rate pro Datei berechnen
+        # Treatment-Rate pro Datei berechnen.
+        # Multi-Treatment: "Rate" = Anteil T>0 (alle Arme gepoolt) — (t==1).mean()
+        # würde T>=2-Zeilen fälschlich wie Control zählen. Zusätzlich wird die
+        # Arm-Verteilung pro Datei geloggt. Das aktive Balancing (unten) bleibt
+        # binär definiert und wird bei Multi-Treatment bereits von der
+        # Config-Validierung abgelehnt (settings.py).
+        _is_multi = bool(self.cfg is not None and getattr(getattr(self.cfg, "treatment", None), "type", "binary") == "multi")
         stats = []
         for fid in file_ids:
             mask = df["__file_source__"] == fid
             n = int(mask.sum())
             t_vals = df.loc[mask, treat_col]
-            treat_rate = float((t_vals == 1).mean()) if n > 0 else 0.0
+            if _is_multi:
+                treat_rate = float((t_vals > 0).mean()) if n > 0 else 0.0
+                _arm_counts = t_vals.value_counts().sort_index().to_dict()
+                self._logger.info(
+                    "Datei %d: %d Zeilen, Treatment-Rate (T>0): %.1f%%, Arm-Verteilung: %s",
+                    fid, n, treat_rate * 100, _arm_counts,
+                )
+            else:
+                treat_rate = float((t_vals == 1).mean()) if n > 0 else 0.0
+                self._logger.info(
+                    "Datei %d: %d Zeilen, Treatment-Rate: %.1f%%",
+                    fid, n, treat_rate * 100,
+                )
             stats.append({"file": fid, "n": n, "treat_rate": treat_rate})
-            self._logger.info(
-                "Datei %d: %d Zeilen, Treatment-Rate: %.1f%%",
-                fid, n, treat_rate * 100,
+
+        if _is_multi and dp.balance_treatments:
+            # Doppelter Boden zur Config-Validierung (direkte API-Nutzung).
+            raise ValueError(
+                "balance_treatments ist bei treatment.type='multi' nicht unterstützt "
+                "(binär definierte Ziel-Raten-Suche). Bitte deaktivieren."
             )
 
         rates = [s["treat_rate"] for s in stats]
@@ -376,7 +397,11 @@ class DataPrepPipeline:
                 max_diff * 100,
             )
             rate_strs = [f"{s['treat_rate']*100:.1f}%" for s in stats]
-            balance_msg = "Downsampling wird angewendet." if dp.balance_treatments else "Aktiviere balance_treatments für Ausgleich."
+            if _is_multi:
+                balance_msg = ("Bei Multi-Treatment nicht automatisch ausgleichbar "
+                               "(balance_treatments ist binär definiert) — Arm-Verteilungen der Dateien prüfen.")
+            else:
+                balance_msg = "Downsampling wird angewendet." if dp.balance_treatments else "Aktiviere balance_treatments für Ausgleich."
             print(
                 f"[rubin] WARNUNG: Treatment-Imbalance erkannt! "
                 f"Raten pro Datei: {rate_strs} "
