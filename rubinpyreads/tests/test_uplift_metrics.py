@@ -374,3 +374,96 @@ class TestUpliftAtKEdgeCases:
         assert uplift_at_k(curve, k_fraction=0.001) == 0.0
         # Regulärer Fall unverändert funktionsfähig
         assert np.isfinite(uplift_at_k(curve, k_fraction=0.5))
+
+
+class TestUpliftCurveMtArgmax:
+    """Referenztests für die Argmax-Qini-Kurve (Multi-Treatment-Ranking).
+
+    Konsistenz-Anforderungen aus der Konstruktion (siehe Docstring):
+    K=2 == binäre Kurve (exakt), dominanter Arm == per-Arm-Kurve (exakt),
+    Diskrimination auf synthetischen MT-Daten, HT-Gewichte selbst-normalisiert.
+    """
+
+    def _mt_data(self, n=2000, seed=7, p=(0.34, 0.33, 0.33)):
+        rng = np.random.RandomState(seed)
+        X = rng.normal(size=(n, 3))
+        t = rng.choice([0, 1, 2], size=n, p=list(p))
+        tau1 = 0.15 * (X[:, 0] > 0)
+        tau2 = 0.25 * (X[:, 1] > 0)
+        base = 0.3 + 0.05 * X[:, 2]
+        prob = np.clip(base + (t == 1) * tau1 + (t == 2) * tau2, 0.01, 0.99)
+        y = (rng.uniform(size=n) < prob).astype(int)
+        return X, t, y, np.column_stack([tau1, tau2])
+
+    def test_k2_exactly_equals_binary_curve(self):
+        from rubin.evaluation.uplift_metrics import (
+            uplift_curve, uplift_curve_mt_argmax, qini_coefficient)
+        rng = np.random.RandomState(1)
+        n = 800
+        t = rng.choice([0, 1], size=n)
+        y = rng.choice([0, 1], size=n)
+        score = rng.normal(size=n)
+        c_bin = uplift_curve(y, t, score)
+        c_arg = uplift_curve_mt_argmax(y, t, score.reshape(-1, 1))
+        np.testing.assert_allclose(c_arg.uplift, c_bin.uplift, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(c_arg.n_treat, c_bin.n_treat, atol=1e-12)
+        assert qini_coefficient(c_arg) == pytest.approx(qini_coefficient(c_bin), abs=1e-12)
+
+    def test_dominant_arm_equals_per_arm_curve(self):
+        from rubin.evaluation.uplift_metrics import (
+            uplift_curve_mt_argmax, uplift_curve_mt_per_arm, qini_coefficient)
+        X, t, y, tau = self._mt_data()
+        # Modell empfiehlt überall Arm 1: Spalte 0 strikt größer
+        scores = np.column_stack([tau[:, 0] + 1.0, tau[:, 1] - 1.0])
+        c_arg = uplift_curve_mt_argmax(y, t, scores)
+        c_arm = uplift_curve_mt_per_arm(y, t, scores[:, 0], treatment_arm=1)
+        assert qini_coefficient(c_arg) == pytest.approx(qini_coefficient(c_arm), abs=1e-12)
+
+    def test_discriminates_true_from_random_scores(self):
+        from rubin.evaluation.uplift_metrics import uplift_curve_mt_argmax, qini_coefficient
+        X, t, y, tau = self._mt_data(n=4000)
+        rng = np.random.RandomState(9)
+        q_true = qini_coefficient(uplift_curve_mt_argmax(y, t, tau))
+        q_rand = np.mean([
+            qini_coefficient(uplift_curve_mt_argmax(y, t, rng.normal(size=tau.shape)))
+            for _ in range(5)])
+        assert q_true > q_rand + 0.005, (q_true, q_rand)
+
+    def test_unequal_priors_weights_self_normalized(self):
+        from rubin.evaluation.uplift_metrics import uplift_curve_mt_argmax, qini_coefficient
+        X, t, y, tau = self._mt_data(n=3000, p=(0.5, 0.15, 0.35))
+        c = uplift_curve_mt_argmax(y, t, tau)
+        # Gewichtete Treated-Zähler bleiben in der Größenordnung der echten Anzahl
+        n_matched = c.n_treat[-1]
+        assert 0 < n_matched
+        assert np.isfinite(qini_coefficient(c))
+
+    def test_input_validation(self):
+        from rubin.evaluation.uplift_metrics import uplift_curve_mt_argmax
+        y = np.array([0, 1, 0]); t = np.array([0, 1, 2])
+        with pytest.raises(ValueError, match="CATE-Spalten"):
+            uplift_curve_mt_argmax(y, t, np.zeros((3, 1)))  # nur 1 Spalte für Arm 2
+        with pytest.raises(ValueError, match="Shape"):
+            uplift_curve_mt_argmax(y, t, np.zeros((2, 2)))  # falsche Zeilenzahl
+
+    def test_model_ordering_preserved_under_unequal_priors(self):
+        """Tuning-relevante Eigenschaft: Die Rangfolge der Kandidatenmodelle
+        (wahre Effektfläche > vertauschte Arme > Zufall) bleibt auch bei stark
+        ungleichen Zuweisungs-Priors erhalten (HT-Kompositions-Korrektur).
+        Deterministisch über feste Seeds."""
+        from rubin.evaluation.uplift_metrics import uplift_curve_mt_argmax, qini_coefficient
+        for seed in (0, 1, 2):
+            rng = np.random.RandomState(seed)
+            n = 8000
+            X = rng.normal(size=(n, 2))
+            t = rng.choice([0, 1, 2], size=n, p=[0.34, 0.06, 0.60])
+            tau1 = 0.30 * (X[:, 0] > 0)
+            tau2 = 0.10 * np.ones(n)
+            prob = np.clip(0.3 + (t == 1) * tau1 + (t == 2) * tau2, 0.01, 0.99)
+            y = (rng.uniform(size=n) < prob).astype(int)
+            tau = np.column_stack([tau1, tau2])
+            q_true = qini_coefficient(uplift_curve_mt_argmax(y, t, tau))
+            q_swap = qini_coefficient(uplift_curve_mt_argmax(y, t, tau[:, ::-1]))
+            q_rand = qini_coefficient(uplift_curve_mt_argmax(y, t, rng.normal(size=tau.shape)))
+            assert q_true > q_swap, (seed, q_true, q_swap)
+            assert q_true > q_rand, (seed, q_true, q_rand)

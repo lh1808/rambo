@@ -152,7 +152,7 @@ causal_forest:
   tune_models: []                           # Welche GRF-Modelle tunen: ["CausalForestDML","CausalForest"]. Leer = alle.
   n_trials: 50                              # Anzahl Optuna-Trials pro Modell
   single_fold: false                        # true = nur 1 Fold pro Trial evaluieren (schneller, verrauschter)
-  scorer: auto                              # auto = Qini bei RCT, RScore bei Beobachtungsdaten; bei Multi-Treatment immer RScore (Qini ist binär-only). Alternativen: qini, rscore
+  scorer: auto                              # auto = Qini bei RCT, RScore bei Beobachtungsdaten; bei Multi-Treatment immer RScore. Alternativen: qini (binär-only), rscore, qini_argmax (MT-Ranking über alle Arme; bei K=2 identisch zu qini)
   overfit_penalty: 0.0                      # Train-Val-Gap-Penalty (0=deaktiviert). Bestraft In-Sample vs OOF-Score-Gap. Empfohlen ~0.2–0.35
   overfit_tolerance: 0.10                   # Relativer Gap-Schwellwert (10% — wie FMT)
   overfit_max_penalized_gap: 1.0            # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap. Verhindert Sign-Flip bei kleinen Scores.
@@ -225,7 +225,7 @@ final_model_tuning:
   overfit_penalty: 0.0                    # Train-Val-Gap-Penalty für model_final (0=deaktiviert). Bestraft Overfitting auf Trainingsdaten.
   overfit_tolerance: 0.10                  # Relativer Gap-Schwellwert (10% für FMT — CATE-Signal schwächer)
   overfit_max_penalized_gap: 1.0           # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap. Verhindert Sign-Flip bei kleinen Scores.
-  scorer: auto                             # auto = Qini bei RCT, RScore bei Beobachtungsdaten; bei Multi-Treatment immer RScore (Qini ist binär-only). Alternativen: qini, rscore
+  scorer: auto                             # auto = Qini bei RCT, RScore bei Beobachtungsdaten; bei Multi-Treatment immer RScore. Alternativen: qini (binär-only), rscore, qini_argmax (MT-Ranking über alle Arme; bei K=2 identisch zu qini)
   max_tuning_rows: null                    # Datenmenge für FMT begrenzen (z.B. 200000). null = alle Daten des Tuning-Splits
   fixed_params: {}                         # Feste Hyperparameter für model_final (wenn Tuning deaktiviert)
   search_space:

@@ -323,10 +323,10 @@ const validate = cfg => {
     }
     // Qini-Scorer (FMT/CFT) ist binär-only — spiegelt Backend-Validator.
     if(cfg.fmtEnabled && cfg.fmtScorer==="qini"){
-      i.push(`final_model_tuning.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore' oder 'auto' wählen.`);
+      i.push(`final_model_tuning.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore', 'qini_argmax' oder 'auto' wählen.`);
     }
     if(cfg.cfTune && cfg.cfScorer==="qini"){
-      i.push(`causal_forest.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore' oder 'auto' wählen.`);
+      i.push(`causal_forest.scorer='qini' ist bei Multi-Treatment nicht möglich (binär-only). Bitte 'rscore', 'qini_argmax' oder 'auto' wählen.`);
     }
   }
   return i;

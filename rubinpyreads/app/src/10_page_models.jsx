@@ -181,7 +181,7 @@ const FinalTuningPlanPreview = ({models, fmtEnabled, fmtModels, fmtSingleFold, f
   // cache_values-Architektur: Nuisance EINMALIG pro äußerem Fold, Trials nur model_final
   const nuisanceFitsPerDmlFold = mc * internalCv * 2 + 1; // model_y + model_t + initial model_final
   const nuisanceFitsPerDrFold = mc * internalCv * 2 + 1; // propensity + regression + initial model_final
-  const _fmtScRes = isMulti ? "rscore" : ((fmtScorer||"auto")==="auto" ? ((studyType||"rct")==="rct"?"qini":"rscore") : fmtScorer);
+  const _fmtScRes = isMulti ? (((fmtScorer||"auto")!=="auto"&&fmtScorer!=="qini") ? fmtScorer : "rscore") : ((fmtScorer||"auto")==="auto" ? ((studyType||"rct")==="rct"?"qini":"rscore") : fmtScorer);
   const scorerFitsPerFold = _fmtScRes==="qini" ? 0 : 2 * 2; // RScorer: cv=2 × (model_y + model_t); QiniScorer: 0
   const outerFolds = fmtSingleFold ? 1 : outerCv;
 

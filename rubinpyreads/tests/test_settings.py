@@ -348,7 +348,7 @@ class TestMultiTreatmentScorerResolution:
         c["final_model_tuning"]["scorer"] = "qini"
         p = tmp_path / "c.yml"
         p.write_text(yaml.safe_dump(c), encoding="utf-8")
-        with pytest.raises(Exception, match="binär-only"):
+        with pytest.raises(Exception, match="binäre Qini-Scorer"):
             load_config(str(p))
 
     def test_explicit_qini_cft_scorer_rejected_under_multi(self, tmp_path):
@@ -359,7 +359,7 @@ class TestMultiTreatmentScorerResolution:
         c["causal_forest"] = {"tune_enabled": True, "n_trials": 2, "scorer": "qini"}
         p = tmp_path / "c.yml"
         p.write_text(yaml.safe_dump(c), encoding="utf-8")
-        with pytest.raises(Exception, match="binär-only"):
+        with pytest.raises(Exception, match="binäre Qini-Scorer"):
             load_config(str(p))
 
     def test_treatment_only_rejected_under_multi(self, tmp_path):
@@ -395,3 +395,17 @@ class TestMultiTreatmentScorerResolution:
         p.write_text(yaml.safe_dump(c), encoding="utf-8")
         with pytest.raises(Exception, match="Balancing ist nur für Binary Treatment"):
             load_config(str(p))
+
+    def test_qini_argmax_allowed_under_multi(self, tmp_path):
+        """qini_argmax (MT-Ranking über alle Arme) ist bei Multi-Treatment für
+        FMT und CFT erlaubt — im Gegensatz zum binären qini."""
+        import yaml
+        from rubin.settings import load_config
+        c = self._base_cfg()
+        c["final_model_tuning"]["scorer"] = "qini_argmax"
+        c["causal_forest"] = {"tune_enabled": True, "n_trials": 2, "scorer": "qini_argmax"}
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(c), encoding="utf-8")
+        cfg = load_config(str(p))
+        assert cfg.final_model_tuning.scorer == "qini_argmax"
+        assert cfg.causal_forest.scorer == "qini_argmax"
