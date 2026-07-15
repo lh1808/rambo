@@ -23,7 +23,7 @@ from rubin.tuning.common import (
     _iter_stratified_or_kfold, _safe_import_optuna, _create_fold_scorer,
     _log_trial_diagnostics, build_base_learner,
 )
-from rubin.evaluation.uplift_metrics import uplift_curve, qini_coefficient
+from rubin.evaluation.uplift_metrics import uplift_curve, uplift_curve_mt_argmax, qini_coefficient
 
 # Tuning n_estimators: Kleine Forests (100) für Speed, Production nutzt mehr
 _CFT_TUNING_N_ESTIMATORS = 100  # EconML tune() Konvention
@@ -258,12 +258,28 @@ class CausalForestTuner:
         # ── Scorer-Wahl ──
         _scorer_type = getattr(self.cfg.causal_forest, "scorer", "rscore")
 
-        if _scorer_type == "qini":
+        if _scorer_type in ("qini", "qini_argmax"):
             # ═══ QiniScorer: Aggregierter OOF-Qini (kein RScorer, kein Pruning) ═══
+            # "qini": binäres Ranking. "qini_argmax": Multi-Treatment-Ranking über
+            # alle Arme (uplift_curve_mt_argmax; bei K=2 exakt == "qini").
+            _use_argmax = _scorer_type == "qini_argmax"
             _op = getattr(self.cfg.causal_forest, "overfit_penalty", 0.0)
             _ot = getattr(self.cfg.causal_forest, "overfit_tolerance", 0.10)
             _omg = getattr(self.cfg.causal_forest, "overfit_max_penalized_gap", 1.0)
-            _tlog.info("CFT '%s': Scorer='qini' — Pruning deaktiviert (QiniScorer benötigt alle Folds).", model_type)
+            _tlog.info("CFT '%s': Scorer='%s' — Pruning deaktiviert (QiniScorer benötigt alle Folds).",
+                       model_type, _scorer_type)
+
+            def _cft_cate(est_or_adapter, X_part):
+                if _use_argmax:
+                    return np.asarray(est_or_adapter.const_marginal_effect(X_part)).reshape(len(X_part), -1)
+                return np.asarray(est_or_adapter.effect(X_part)).squeeze()
+
+            def _cft_qini(y_part, t_part, cate_part):
+                y_i, t_i = np.asarray(y_part).astype(int), np.asarray(t_part).astype(int)
+                if _use_argmax:
+                    return float(qini_coefficient(uplift_curve_mt_argmax(
+                        y_i, t_i, np.asarray(cate_part).reshape(len(y_i), -1))))
+                return float(qini_coefficient(uplift_curve(y_i, t_i, cate_part)))
 
             def objective(trial):
                 params = {}
@@ -291,13 +307,13 @@ class CausalForestTuner:
                             for k, v in all_params.items():
                                 setattr(est, k, v)
                             est.refit_final()
-                            cate_val = np.asarray(est.effect(X_np[va])).squeeze()
+                            cate_val = _cft_cate(est, X_np[va])
                             all_cate_val.append(cate_val)
                             all_y_val.append(Y_np[va])
                             all_t_val.append(T_np[va])
                             if _op > 0:
-                                cate_train = np.asarray(est.effect(X_np[tr])).squeeze()
-                                fold_train_qinis.append(float(qini_coefficient(uplift_curve(Y_np[tr].astype(int), T_np[tr].astype(int), cate_train))))
+                                cate_train = _cft_cate(est, X_np[tr])
+                                fold_train_qinis.append(_cft_qini(Y_np[tr], T_np[tr], cate_train))
                         except Exception as _e:
                             _tlog.debug("CFT '%s' Trial %d Fold %d: %s", model_type, trial.number, fold_i, _e)
                             return -1e12
@@ -309,13 +325,13 @@ class CausalForestTuner:
                                 **all_params,
                             )
                             adapter.fit(Y_np[tr], T_np[tr], X=X_np[tr])
-                            cate_val = np.asarray(adapter.effect(X_np[va])).squeeze()
+                            cate_val = _cft_cate(adapter, X_np[va])
                             all_cate_val.append(cate_val)
                             all_y_val.append(Y_np[va])
                             all_t_val.append(T_np[va])
                             if _op > 0:
-                                cate_train = np.asarray(adapter.effect(X_np[tr])).squeeze()
-                                fold_train_qinis.append(float(qini_coefficient(uplift_curve(Y_np[tr].astype(int), T_np[tr].astype(int), cate_train))))
+                                cate_train = _cft_cate(adapter, X_np[tr])
+                                fold_train_qinis.append(_cft_qini(Y_np[tr], T_np[tr], cate_train))
                             del adapter
                             gc.collect()
                         except Exception as _e:
@@ -325,7 +341,7 @@ class CausalForestTuner:
                 cate = np.concatenate(all_cate_val)
                 y_agg = np.concatenate(all_y_val)
                 t_agg = np.concatenate(all_t_val)
-                oof_qini = float(qini_coefficient(uplift_curve(y_agg.astype(int), t_agg.astype(int), cate)))
+                oof_qini = _cft_qini(y_agg, t_agg, cate)
                 trial.set_user_attr("raw_val_score", oof_qini)
                 if _op > 0 and fold_train_qinis:
                     return self._apply_overfit_penalty(oof_qini, float(np.mean(fold_train_qinis)), penalty=_op, tolerance=_ot, max_penalized_gap=_omg)

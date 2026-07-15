@@ -18,7 +18,7 @@ from rubin.tuning.common import (
     _iter_stratified_or_kfold, _safe_import_optuna, _create_fold_scorer,
     _suggest_params, build_base_learner, _log_trial_diagnostics,
 )
-from rubin.evaluation.uplift_metrics import uplift_curve, qini_coefficient
+from rubin.evaluation.uplift_metrics import uplift_curve, uplift_curve_mt_argmax, qini_coefficient
 from rubin.settings import AnalysisConfig
 from rubin.utils.data_utils import available_cpu_count
 
@@ -206,10 +206,28 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                 "FMT timeout_seconds=%d wird bei 'both' ignoriert (faire Trial-Allokation).", _fmt_timeout)
             _fmt_timeout = None
 
-        if _scorer_type == "qini":
+        if _scorer_type in ("qini", "qini_argmax"):
             # ═══ QiniScorer: Aggregierter OOF-Qini (kein RScorer, kein Pruning) ═══
-            _tlog.info("FMT '%s': Scorer='qini' — Pruning deaktiviert (QiniScorer benötigt alle Folds).", model_name)
+            # "qini": binäres Ranking (1-d CATE, T in {0,1}).
+            # "qini_argmax": Multi-Treatment-Ranking — EIN Ranking über alle Arme
+            # via s(x)=max_k tau_k(x), bewertet mit uplift_curve_mt_argmax
+            # (HT-gewichtete matched-treated-Evidenz; bei K=2 exakt == "qini").
+            _use_argmax = _scorer_type == "qini_argmax"
+            _tlog.info("FMT '%s': Scorer='%s' — Pruning deaktiviert (QiniScorer benötigt alle Folds).",
+                       model_name, _scorer_type)
             study = self._create_study(f"final__{model_name}__{base_type}", use_pruner=False)
+
+            def _oof_cate(est, X_part):
+                # Argmax braucht die volle (n, K-1)-Effektfläche; binärer Qini den 1-d Effekt.
+                if _use_argmax:
+                    return np.asarray(est.const_marginal_effect(X_part)).reshape(len(X_part), -1)
+                return np.asarray(est.effect(X_part)).squeeze()
+
+            def _fold_qini(y_part, t_part, cate_part):
+                if _use_argmax:
+                    return float(qini_coefficient(uplift_curve_mt_argmax(
+                        y_part, t_part, np.asarray(cate_part).reshape(len(y_part), -1))))
+                return float(qini_coefficient(uplift_curve(y_part, t_part, cate_part)))
 
             def objective(trial):
                 cand_params = _suggest_params(trial, base_type, self.cfg.final_model_tuning.search_space, is_fmt=True)
@@ -221,26 +239,27 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                 for fold_i, (est, tr, va) in enumerate(cached_folds):
                     est.model_final = build_base_learner(base_type, {**fmt_fixed_params, **cand_params}, seed=self.seed, task="regressor", parallel_jobs=-1)
                     est.refit_final()
-                    cate_val = np.asarray(est.effect(X_tune.iloc[va])).squeeze()
+                    cate_val = _oof_cate(est, X_tune.iloc[va])
                     all_cate_val.append(cate_val)
                     all_y_val.append(Y_tune[va])
                     all_t_val.append(T_tune[va])
                     if op > 0:
-                        cate_train = np.asarray(est.effect(X_tune.iloc[tr])).squeeze()
-                        fold_train_qinis.append(float(qini_coefficient(uplift_curve(Y_tune[tr], T_tune[tr], cate_train))))
+                        cate_train = _oof_cate(est, X_tune.iloc[tr])
+                        fold_train_qinis.append(_fold_qini(Y_tune[tr], T_tune[tr], cate_train))
 
                 cate = np.concatenate(all_cate_val)
                 y_agg = np.concatenate(all_y_val)
                 t_agg = np.concatenate(all_t_val)
-                oof_qini = float(qini_coefficient(uplift_curve(y_agg, t_agg, cate)))
+                oof_qini = _fold_qini(y_agg, t_agg, cate)
                 trial.set_user_attr("raw_val_score", oof_qini)
                 if op > 0 and fold_train_qinis:
                     return self._apply_overfit_penalty(oof_qini, float(np.mean(fold_train_qinis)), penalty=op, tolerance=ot)
                 return oof_qini
 
             _tlog.info(
-                "FMT '%s': Starte %d Trials (cache_values, OOF-Qini, %s).",
-                model_name, _fmt_nt, "Single-Fold" if sf else f"{outer_splits}-Fold",
+                "FMT '%s': Starte %d Trials (cache_values, %s, %s).",
+                model_name, _fmt_nt, "OOF-Argmax-Qini" if _use_argmax else "OOF-Qini",
+                "Single-Fold" if sf else f"{outer_splits}-Fold",
             )
         else:
             # ═══ RScorer: EconML R-Score pro Fold ═══

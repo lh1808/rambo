@@ -581,11 +581,25 @@ class AnalysisPipeline:
                         _max_prop_skill,
                     )
                 else:
-                    self._logger.info(
-                        "RCT-Diagnose bestätigt: Propensity-Skill = %.4f ≈ 0. "
-                        "Training verwendet konstante Propensity P(T|X) = mean(T) = %.3f.",
-                        _max_prop_skill, float(np.mean(T)),
-                    )
+                    # Konstante Propensity = Klassen-Prior-Vektor (DummyClassifier
+                    # strategy="prior"). Binär entspricht das mean(T); bei
+                    # Multi-Treatment werden die Prior-Anteile pro Arm geloggt —
+                    # mean(T) wäre dort keine Wahrscheinlichkeit.
+                    _t_int = np.asarray(T).astype(int)
+                    _arms, _counts = np.unique(_t_int, return_counts=True)
+                    if len(_arms) > 2:
+                        _priors = ", ".join(f"P(T={a})={c/len(_t_int):.3f}" for a, c in zip(_arms, _counts))
+                        self._logger.info(
+                            "RCT-Diagnose bestätigt: Propensity-Skill = %.4f ≈ 0. "
+                            "Training verwendet konstante Propensity (Klassen-Priors: %s).",
+                            _max_prop_skill, _priors,
+                        )
+                    else:
+                        self._logger.info(
+                            "RCT-Diagnose bestätigt: Propensity-Skill = %.4f ≈ 0. "
+                            "Training verwendet konstante Propensity P(T|X) = mean(T) = %.3f.",
+                            _max_prop_skill, float(np.mean(T)),
+                        )
 
             # Modellgüte der Base-Learner-Tuning-Tasks loggen
             for task_key, score in tuner.best_scores.items():
@@ -734,7 +748,7 @@ class AnalysisPipeline:
                     model_short = tk.replace("final__", "")
                     # Score-Label: abhängig vom konfigurierten Scorer
                     _fmt_scorer = getattr(cfg.final_model_tuning, "scorer", "rscore")
-                    score_label = "OOF-Qini" if _fmt_scorer == "qini" else "OOF-R-Score"
+                    score_label = {"qini": "OOF-Qini", "qini_argmax": "OOF-Argmax-Qini"}.get(_fmt_scorer, "OOF-R-Score")
                     if pen_val is not None:
                         delta = abs(raw_val - pen_val)
                         if delta > 1e-10:
@@ -852,7 +866,7 @@ class AnalysisPipeline:
         """Training der kausalen Learner + Cross-Predictions.
 
         Bei RCT (study_type="rct") wird für Propensity-Rollen ein DummyClassifier
-        verwendet (konstante Propensity P(T|X) = mean(T)). Cross-Predictions sammeln
+        verwendet (konstante Propensity = Klassen-Priors; binär entspricht das mean(T)). Cross-Predictions sammeln
         Fold-Aligned Predictions (pro Fold Full-Dataset-Predict) für leakage-freies
         Surrogate-Training.
 
@@ -1074,7 +1088,7 @@ class AnalysisPipeline:
                     mlflow.log_param(f"cf_tune__{name}__n_trials", _n_cf_trials)
                     mlflow.log_param(f"cf_tune__{name}__best_params", str(best_p))
                     _cft_scorer = getattr(cfg.causal_forest, "scorer", "rscore")
-                    _cft_score_label = "OOF-Qini" if _cft_scorer == "qini" else "R-Score"
+                    _cft_score_label = {"qini": "OOF-Qini", "qini_argmax": "OOF-Argmax-Qini"}.get(_cft_scorer, "R-Score")
                     if best_score is not None:
                         mlflow.log_metric(f"cf_tune__{name}__best_{'qini' if _cft_scorer == 'qini' else 'r_score'}", best_score)
                     self._logger.info(

@@ -281,7 +281,7 @@ class CausalForestConfig(BaseModel):
     tune_max_rows: Optional[int] = None  # Max. Zeilen für Tuning (RAM-Kontrolle)
     n_trials: int = 50  # Optuna-Trials für CFT
     single_fold: bool = False  # Single-Fold statt K-Fold (5× schneller, weniger robust)
-    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore (Qini ist binär-only)
+    scorer: Literal["auto", "qini", "rscore", "qini_argmax"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore. qini_argmax: MT-Ranking über alle Arme (Opt-in; bei K=2 identisch zu qini)
     overfit_penalty: float = 0.0  # Train-Val-Gap-Penalty (0 = deaktiviert, empfohlen ~0.2–0.35)
     overfit_tolerance: float = 0.10  # Relativer Gap-Toleranz (10%, entschärft)
     overfit_max_penalized_gap: float = 1.0  # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap (unbeschränkt). Verhindert Sign-Flip/Dominanz bei kleinen Scores (Qini/R-Score nahe 0).
@@ -361,7 +361,7 @@ class FinalModelTuningConfig(BaseModel):
     overfit_penalty: float = 0.0
     overfit_tolerance: float = 0.10
     overfit_max_penalized_gap: float = 1.0  # Deckelt den bestraften relativen Gap (Saturierung). <=0 = kein Cap (unbeschränkt). Verhindert Sign-Flip/Dominanz bei kleinen Scores (Qini/R-Score nahe 0).
-    scorer: Literal["auto", "qini", "rscore"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore (Qini ist binär-only)
+    scorer: Literal["auto", "qini", "rscore", "qini_argmax"] = "auto"  # auto → qini bei RCT, rscore bei observational; bei Multi-Treatment immer rscore. qini_argmax: MT-Ranking über alle Arme (Opt-in; bei K=2 identisch zu qini)
     fixed_params: Dict[str, Any] = Field(default_factory=dict)
     search_space: SearchSpaceConfig = Field(default_factory=SearchSpaceConfig)
 
@@ -564,9 +564,10 @@ class AnalysisConfig(BaseModel):
             if _mt_scorer_offenders:
                 raise ValueError(
                     f"treatment.type='multi' mit {' und '.join(_mt_scorer_offenders)}='qini': "
-                    f"Der Qini-Scorer ist binär-only (verlangt t in {{0,1}} und 1-d CATE). "
-                    f"Bitte 'rscore' oder 'auto' setzen (auto wird bei Multi-Treatment "
-                    f"automatisch zu rscore aufgelöst)."
+                    f"Der binäre Qini-Scorer verlangt t in {{0,1}} und 1-d CATE. "
+                    f"Für Multi-Treatment stehen 'rscore' (Default via 'auto'; bewertet die "
+                    f"volle Effektfläche) und 'qini_argmax' (Ranking über alle Arme via "
+                    f"s(x)=max_k tau_k(x); für Personen-Priorisierung) zur Verfügung."
                 )
             # treatment_only-Mehrdatei-Modus ist binär definiert: Er filtert pro
             # Datei hart auf T==1 und baut die Control-Kopie aus diesen Zeilen.

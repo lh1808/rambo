@@ -68,6 +68,123 @@ def tiebreak_jitter(scores: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return rng.uniform(-eps, eps, n)
 
 
+def uplift_curve_mt_argmax(
+    y: np.ndarray,
+    t: np.ndarray,
+    scores_2d: np.ndarray,
+) -> UpliftCurve:
+    """Argmax-Uplift-Kurve für Multi-Treatment: EIN Ranking über alle Arme.
+
+    Verallgemeinerung der binären Qini-Kurve auf K Arme für den Anwendungsfall
+    "Personen-Priorisierung": Jede Person wird nach ihrem BESTEN geschätzten
+    Effekt s(x) = max_k τ̂_k(x) gerankt (genau die Liste, die produktiv
+    abgearbeitet wird), empfohlener Arm ist rec(x) = argmax_k. Gemessen wird
+    der kumulative Uplift der Politik "gib jedem seinen empfohlenen Arm":
+
+    - Evidenz-Subset: Controls (T=0) und "matched treated" (T == rec) —
+      Beobachtungen mit T>0, aber T != rec tragen keine Information über die
+      empfohlene Politik und werden ausgeschlossen (wie bei
+      uplift_curve_mt_per_arm die Fremd-Arme).
+    - Horvitz-Thompson-Gewichtung der matched treated mit w ∝ 1/P(T=rec),
+      selbst-normalisiert (Mittel der Gewichte = 1): Ohne Gewichtung wären
+      Empfehlungen in größere Arme im Treated-Mittel überrepräsentiert.
+      P(T=k) sind die empirischen Arm-Priors der GESAMTEN Stichprobe
+      (RCT-Annahme: Zuweisung unabhängig von X).
+
+    Konsistenz-Eigenschaften (durch Konstruktion, siehe Tests):
+    - K=2: rec ≡ 1, Subset = alle Zeilen, Gewichte ≡ 1 → exakt identisch
+      zur binären ``uplift_curve`` (gleiches Tie-Breaking, Seed 42).
+    - Gleichverteilte Arme: Gewichte ≡ 1.
+    - Dominanter Arm (Modell empfiehlt überall Arm k): identisch zur
+      One-vs-Control-Kurve ``uplift_curve_mt_per_arm(arm=k)``.
+
+    Hinweis zur Skala: fraction bezieht sich auf das Evidenz-Subset
+    (Controls + matched treated), analog zur per-Arm-Kurve. Bei K Armen mit
+    Gleichverteilung sind das ≈ (2/K)·n + Controls der Zeilen; das
+    Tuning-Signal ist entsprechend verrauschter als binär — dafür fließen
+    ALLE Arme in ein gemeinsames Ranking ein.
+    """
+    y = np.asarray(y).astype(int)
+    t = np.asarray(t).astype(int)
+    scores_2d = np.asarray(scores_2d, dtype=float)
+    _check_binary(y, "y")
+    _check_discrete(t, "t")
+    if scores_2d.ndim == 1:
+        scores_2d = scores_2d.reshape(-1, 1)
+    if scores_2d.ndim != 2 or scores_2d.shape[0] != len(y):
+        raise ValueError(f"scores_2d muss Shape (n, K-1) haben, gefunden: {scores_2d.shape}")
+    _max_arm = int(t.max())
+    if _max_arm >= 1 and scores_2d.shape[1] < _max_arm:
+        raise ValueError(
+            f"scores_2d hat {scores_2d.shape[1]} Spalte(n), aber Treatment-Arme bis "
+            f"T={_max_arm} beobachtet — erwartet mindestens {_max_arm} CATE-Spalten (Arm 1..K-1)."
+        )
+
+    # Bestes Ranking-Signal + empfohlener Arm pro Person
+    s = scores_2d.max(axis=1)
+    rec = scores_2d.argmax(axis=1) + 1  # Spalten 0..K-2 ↔ Arme 1..K-1
+
+    # Empirische Arm-Priors der Gesamtstichprobe (RCT: unabhängig von X)
+    arms, counts = np.unique(t, return_counts=True)
+    priors = {int(a): c / len(t) for a, c in zip(arms, counts)}
+
+    # Evidenz-Subset: Controls + matched treated
+    mask = (t == 0) | (t == rec)
+    y_sub = y[mask]
+    t_sub = t[mask]
+    s_sub = s[mask]
+    rec_sub = rec[mask]
+    n = len(y_sub)
+    if n == 0:
+        return UpliftCurve(
+            fraction=np.array([]), n_treat=np.array([]), n_control=np.array([]),
+            y_treat=np.array([]), y_control=np.array([]), uplift=np.array([]),
+        )
+
+    # HT-Gewichte der matched treated: w ∝ 1/P(T=rec), selbst-normalisiert.
+    treated_mask = t_sub > 0
+    w = np.ones(n, dtype=float)
+    if treated_mask.any():
+        inv_p = np.array([1.0 / max(priors.get(int(a), 0.0), 1e-12) for a in rec_sub[treated_mask]])
+        if np.all(inv_p == inv_p[0]):
+            # Uniforme Gewichte (K=2, dominanter Arm oder gleiche Priors):
+            # exakt 1.0 statt c·(n/(n·c)) — vermeidet ±1-ULP-Rundungsrauschen
+            # und garantiert BIT-exakte Äquivalenz zur binären uplift_curve.
+            pass  # w bleibt 1.0
+        else:
+            w[treated_mask] = inv_p * (treated_mask.sum() / inv_p.sum())  # Mittel = 1
+
+    # Sortierung wie in uplift_curve: absteigend nach Score mit skalen-
+    # relativem Tie-Breaking-Jitter (Seed 42) für exakte Binär-Konsistenz.
+    _rng = np.random.default_rng(42)
+    order = np.argsort(-(s_sub + tiebreak_jitter(s_sub, _rng)))
+    y_o = y_sub[order]
+    w_o = w[order]
+    treat_o = treated_mask[order].astype(float)
+    ctrl_o = (~treated_mask[order]).astype(float)
+
+    # Kumulative (gewichtete) Zähler — Struktur identisch zu uplift_curve;
+    # bei w ≡ 1 numerisch exakt gleich.
+    n_t = np.cumsum(w_o * treat_o)
+    n_c = np.cumsum(ctrl_o)
+    y_t = np.cumsum(y_o * w_o * treat_o)
+    y_c = np.cumsum(y_o * ctrl_o)
+
+    rate_t = y_t / np.maximum(n_t, 1.0)
+    rate_c = y_c / np.maximum(n_c, 1.0)
+    frac = np.arange(1, n + 1) / n
+    uplift = (rate_t - rate_c) * frac
+
+    return UpliftCurve(
+        fraction=frac,
+        n_treat=n_t,
+        n_control=n_c,
+        y_treat=y_t,
+        y_control=y_c,
+        uplift=uplift,
+    )
+
+
 def uplift_curve(y: np.ndarray, t: np.ndarray, score: np.ndarray) -> UpliftCurve:
     """Berechnet die Uplift-Kurve für Binary Treatment / Binary Outcome.
     Für Multi-Treatment siehe uplift_curve_mt_per_arm."""
