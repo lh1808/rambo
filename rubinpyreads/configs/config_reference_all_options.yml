@@ -270,6 +270,8 @@ shap_values:
   n_shap_values: 10000
   top_n_features: 20
   num_bins: 10
+  bin_strategy: quantile      # quantile = gleich besetzte Bins (Default, robust bei schiefen Verteilungen) | width = Equal-Width (Altverhalten)
+  value_labels: {}            # Rückbeschriftung kodierter Kategorien in Explainability-Plots, z.B. {GESCHLECHT: {1: männlich, 2: weiblich}}
 
 # --- Lokale Ausgaben ------------------------------------------
 optional_output:
