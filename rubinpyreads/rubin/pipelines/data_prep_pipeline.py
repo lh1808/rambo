@@ -850,6 +850,7 @@ class DataPrepPipeline:
 
             categorical_columns = validated_categorical
 
+
             if _converted_numeric_cat:
                 self._logger.info(
                     "Kategorische Spalten mit numerischem Dtype: %d Spalten "
@@ -863,6 +864,12 @@ class DataPrepPipeline:
                     "Auto-Typkonversion: %d object-Spalten als numerisch erkannt und konvertiert.",
                     _coerced_count,
                 )
+
+        # NaN in kategorischen Spalten → explizite Kategorie "fehlend"
+        # (CatBoost-Crash-Schutz; Details im Helper). Gilt für beide
+        # Konfigurationswege (explizite categorical_columns wie Auto-Erkennung).
+        from rubin.utils.data_utils import fill_missing_categories
+        fill_missing_categories(X, columns=categorical_columns, logger=self._logger)
 
         # Y, T, optional S
         if len(target_cols) == 1:

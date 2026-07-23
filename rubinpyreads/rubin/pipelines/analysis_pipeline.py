@@ -159,6 +159,12 @@ class AnalysisPipeline:
     def _load_inputs(self) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """Lädt X, T, Y, optional S und optional eval_mask."""
         X = self._read_table(self.cfg.data_files.x_file)
+        # NaN in kategorischen (category-/object-)Spalten → explizite Kategorie
+        # "fehlend": CatBoost akzeptiert keine None/NaN in cat_features (Crash
+        # im categorical_patch beim Pool-Aufbau). Der x_file-Pfad umgeht die
+        # DataPrep-Stufe, daher hier direkt nach dem Laden absichern.
+        from rubin.utils.data_utils import fill_missing_categories
+        fill_missing_categories(X, logger=self._logger)
         T_df = self._read_table(self.cfg.data_files.t_file)
         Y_df = self._read_table(self.cfg.data_files.y_file)
         T = T_df["T"].to_numpy()
@@ -1634,7 +1640,14 @@ class AnalysisPipeline:
                 if hist_score_eval is not None:
                     try:
                         from rubin.evaluation.score_plots import plot_score_redistribution
-                        fig_redist = plot_score_redistribution(cate_vals, hist_score_eval, model_name=mname)
+                        # Orientierung + Sanitization wie im Custom-Qini-/Eval-Pfad:
+                        # bei higher_is_better=false muss "Top" des historischen
+                        # Scores die NIEDRIGEN Werte meinen — sonst kippt das
+                        # Spearman-Vorzeichen und die Redistribution vergleicht
+                        # gegen das falsche Ende der historischen Rangliste.
+                        from rubin.evaluation.uplift_metrics import orient_historical_score
+                        _hist_oriented = orient_historical_score(hist_score_eval, cfg.historical_score.higher_is_better)
+                        fig_redist = plot_score_redistribution(cate_vals, _hist_oriented, model_name=mname)
                         _log_figure_fast(mlflow, fig_redist, f"score_redistribution__{mname}.png")
                         if hasattr(self, '_report'):
                             self._report.add_plot(mname, "score_redistribution", fig_redist)
@@ -1795,10 +1808,8 @@ class AnalysisPipeline:
         apply_rubin_theme()
 
         hist_name = cfg.historical_score.name
-        hist_score = np.asarray(hist_score_eval).astype(float)
-        hist_score = np.nan_to_num(hist_score, nan=0.0, posinf=0.0, neginf=0.0)
-        if not cfg.historical_score.higher_is_better:
-            hist_score = -hist_score
+        from rubin.evaluation.uplift_metrics import orient_historical_score
+        hist_score = orient_historical_score(hist_score_eval, cfg.historical_score.higher_is_better)
 
         # Bei eval_mask: X/T/Y auf Eval-Subset filtern (hist_score ist bereits gefiltert)
         use_mask = eval_mask is not None and holdout_data is None
@@ -1814,7 +1825,27 @@ class AnalysisPipeline:
             "uplift_at_50pct": float(uplift_at_k(curve_h, k_fraction=0.50)),
         }
         if getattr(cfg, "study_type", "rct") == "rct":
-            eval_summary[hist_name]["policy_value"] = float(policy_value(y=eval_y, t=eval_t, score=hist_score, threshold=0.0))
+            # Politik-Schwelle für den historischen Score: Median statt 0.
+            # threshold=0.0 ist nur für CATE-Skalen sinnvoll (natürlicher
+            # Nullpunkt "positiver Effekt"). Historische Scores haben keinen:
+            # rein positive Scores behandelten bisher ALLE (PV = ATE,
+            # nichtssagend), invertierte lower-better-Scores NIEMANDEN
+            # (PV = 0, irreführender Champion-Vorsprung im Report). Die
+            # Median-Politik "behandle die bessere Hälfte" ist orientierungs-
+            # symmetrisch und mit uplift_at_50pct interpretierbar verwandt.
+            # Tie-feste Top-50%-Politik: Bei diskreten Scores kann ein
+            # Median-Threshold degenerieren (dominante Klasse am schlechten
+            # Ende mit >=50% Masse → ">= Median" behandelt ALLE). Daher wird
+            # die Politik direkt über die Rangliste definiert — mit demselben
+            # seed-fixierten Tie-Jitter wie die Uplift-Kurven, wodurch die
+            # behandelte Menge exakt die obere Hälfte ist und policy_value
+            # konsistent zu uplift_at_50pct bleibt.
+            from rubin.evaluation.uplift_metrics import tiebreak_jitter
+            _rng_h = np.random.default_rng(42)
+            _order_h = np.argsort(-(hist_score + tiebreak_jitter(hist_score, _rng_h)))
+            _treat_mask = np.zeros(len(hist_score))
+            _treat_mask[_order_h[: len(hist_score) // 2]] = 1.0
+            eval_summary[hist_name]["policy_value"] = float(policy_value(y=eval_y, t=eval_t, score=_treat_mask, threshold=0.5))
         for key, val in eval_summary[hist_name].items():
             short = {"uplift_at_10pct": "uplift10", "uplift_at_20pct": "uplift20", "uplift_at_50pct": "uplift50"}.get(key, key)
             mlflow.log_metric(f"{short}__{hist_name}", val)
@@ -2449,6 +2480,14 @@ class AnalysisPipeline:
                 elif eval_mask is not None and S is not None:
                     hist_score_eval = S[eval_mask]
                 if hist_score_eval is not None:
+                    # Orientierung + Sanitization IDENTISCH zum Modell-Pfad
+                    # (siehe Custom-Qini-Block der Modelle): Ohne diese
+                    # Angleichung wird die historische Kurve im Surrogate-Plot
+                    # bei higher_is_better=false mit falscher Orientierung
+                    # gerechnet und verläuft anders als in den Modell-Plots —
+                    # gleiches S, gleiche Zeilen, aber ungespiegelter Score.
+                    from rubin.evaluation.uplift_metrics import orient_historical_score
+                    hist_score_eval = orient_historical_score(hist_score_eval, cfg.historical_score.higher_is_better)
                     pred_col_s = f"Predictions_{sname}"
                     if pred_col_s in surr_eval_df.columns:
                         cate_vals = surr_eval_df[pred_col_s].to_numpy(dtype=float)
@@ -3023,6 +3062,8 @@ class AnalysisPipeline:
                 shap_result = build_shap_plots(
                     model=model, X=X_expl, data=X_expl, cate=uplift,
                     top_n=top_n, num_bins=num_bins,
+                    bin_strategy=getattr(shap_cfg, "bin_strategy", "quantile"),
+                    value_labels=getattr(shap_cfg, "value_labels", None),
                 )
                 for plot_key, display_name, fig in [
                     ("summary", "SHAP Summary", shap_result.summary),
@@ -3064,6 +3105,8 @@ class AnalysisPipeline:
                     shap_result = build_generic_shap_plots(
                         shap_result=res, X=X_expl, cate=uplift,
                         top_n=top_n, num_bins=num_bins,
+                        bin_strategy=getattr(shap_cfg, "bin_strategy", "quantile"),
+                        value_labels=getattr(shap_cfg, "value_labels", None),
                     )
                     for plot_key, display_name, fig in [
                         ("summary", "SHAP Summary", shap_result.summary),
@@ -3443,6 +3486,9 @@ class AnalysisPipeline:
                 self._logger.info("Validierungsmodus: external – lade separate Eval-Daten.")
                 try:
                     X_eval = self._read_table(cfg.data_files.eval_x_file)
+                    # Konsistenz mit Trainings-Repräsentation: NaN-Kategorien → "fehlend"
+                    from rubin.utils.data_utils import fill_missing_categories
+                    fill_missing_categories(X_eval, logger=self._logger)
                     T_eval = self._read_table(cfg.data_files.eval_t_file)["T"].to_numpy()
                     Y_eval = self._read_table(cfg.data_files.eval_y_file)["Y"].to_numpy()
                 except FileNotFoundError as e:

@@ -68,6 +68,29 @@ def tiebreak_jitter(scores: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return rng.uniform(-eps, eps, n)
 
 
+def orient_historical_score(s, higher_is_better: bool = True) -> np.ndarray:
+    """Orientiert einen historischen Score für die Bewertungs-/Plot-Kette.
+
+    - higher_is_better=False → Vorzeichen invertieren (danach gilt überall:
+      höher = besser).
+    - Nicht-finite Werte (NaN/±inf) werden NACH der Orientierung auf
+      (min_finite − 1) gesetzt — also ans ENDE der Rangliste. Die frühere
+      Sanitization nan_to_num(0.0) VOR der Invertierung platzierte fehlende
+      Scores bei lower-better-Skalen (z. B. Klassen 1..10 → −10..−1) fälschlich
+      an die SPITZE der historischen Rangliste (0 > −1). Auch ±inf werden als
+      Datenfehler konservativ ans Ende sortiert.
+    Gibt immer eine Kopie zurück (mutiert den Input nicht).
+    """
+    s = np.asarray(s, dtype=float).copy()
+    if not higher_is_better:
+        s = -s
+    finite = np.isfinite(s)
+    if not finite.all():
+        worst = float(s[finite].min()) - 1.0 if finite.any() else 0.0
+        s[~finite] = worst
+    return s
+
+
 def uplift_curve_mt_argmax(
     y: np.ndarray,
     t: np.ndarray,

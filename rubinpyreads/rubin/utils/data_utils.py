@@ -141,3 +141,42 @@ def _smallest_int(series: "pd.Series", c_min: float, c_max: float) -> "pd.Series
 def load_dtypes_json(path: str) -> Dict[str, str]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def fill_missing_categories(X: "pd.DataFrame", columns=None, logger=None) -> list:
+    """Repräsentiert NaN in kategorischen (category-/object-)Spalten als
+    explizite Kategorie "fehlend".
+
+    Hintergrund: CatBoost akzeptiert keine None/NaN in cat_features — der
+    Pool-Aufbau crasht mit "must be real number, not NoneType" (via
+    categorical_patch._wrapped_fit). Für nominale Merkmale ist "fehlend" zudem
+    fachlich eine eigene Ausprägung und erscheint so konsistent in den
+    Explainability-Plots. Numerische Spalten bleiben unberührt (LightGBM/
+    CatBoost behandeln numerische NaN nativ).
+
+    Parameters
+    ----------
+    columns : optionale Eingrenzung; Default = alle category-/object-Spalten.
+    Returns: Liste der konvertierten Spaltennamen (für Logging/Tests).
+    """
+    import pandas as pd
+    cols = list(columns) if columns is not None else list(X.columns)
+    converted = []
+    for col in cols:
+        if col not in X.columns:
+            continue
+        if not (isinstance(X[col].dtype, pd.CategoricalDtype) or is_object_like_dtype(X[col].dtype)):
+            continue
+        if not X[col].isna().any():
+            continue
+        ser = X[col].astype("category")
+        if "fehlend" not in ser.cat.categories:
+            ser = ser.cat.add_categories(["fehlend"])
+        X[col] = ser.fillna("fehlend")
+        converted.append(col)
+    if converted and logger is not None:
+        logger.info(
+            "Kategorische Spalten mit fehlenden Werten: %s → als explizite "
+            "Kategorie 'fehlend' repräsentiert (CatBoost-Kompatibilität).",
+            converted,
+        )
+    return converted

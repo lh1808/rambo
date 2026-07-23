@@ -64,6 +64,8 @@ def main() -> None:
     num_bins = int(cfg.shap_values.num_bins) if cfg is not None else 10
 
     X_raw = read_table(args.x)
+    from rubin.utils.data_utils import fill_missing_categories
+    fill_missing_categories(X_raw)  # NaN-Kategorien wie im Training als "fehlend"
 
     pipe = ProductionPipeline(str(bundle_dir))
     model_name = _choose_model_name(bundle_dir, args.model_name)
@@ -109,6 +111,8 @@ def main() -> None:
             cate=uplift,
             top_n=top_n_features,
             num_bins=num_bins,
+            bin_strategy=(str(cfg.shap_values.bin_strategy) if cfg is not None and hasattr(cfg.shap_values, 'bin_strategy') else 'quantile'),
+            value_labels=(dict(cfg.shap_values.value_labels) if cfg is not None and getattr(cfg.shap_values, 'value_labels', None) else None),
         )
         shap_result.summary.savefig(out_dir / f"SHAP_summary_{model_name}.png", dpi=160, bbox_inches="tight")
         shap_result.cate_profiles.savefig(out_dir / f"SHAP_cate_profiles_{model_name}.png", dpi=160, bbox_inches="tight")

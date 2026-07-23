@@ -378,6 +378,19 @@ class ShapConfig(BaseModel):
     top_n_features: int = 20
     num_bins: int = 10
 
+    # Binning-Strategie für CATE-Profil-/Dependence-Plots:
+    # "quantile" (Default) = gleich besetzte Segmente — robust bei schiefen
+    # Verteilungen; "width" = Equal-Width (Altverhalten, Rand-Bins können bei
+    # Ausreißern fast leer sein und Rausch-Mittelwerte zeigen).
+    bin_strategy: Literal["quantile", "width"] = "quantile"
+
+    # Rückbeschriftung kodierter kategorischer Features in den Explainability-
+    # Plots (z. B. SAS-Format-Codes): {Spaltenname: {Code: Fachlabel}}.
+    # Codes tolerant gematcht ('1', 1, 1.0 identisch). Reine Anzeige-Option —
+    # hat keinerlei Einfluss auf Training oder Metriken.
+    # Beispiel: value_labels: {GESCHLECHT: {1: "männlich", 2: "weiblich"}}
+    value_labels: Dict[str, Dict[Union[int, float, str], str]] = Field(default_factory=dict)
+
     # Methode für Explainability: SHAP wird automatisch versucht; falls das
     # shap-Paket nicht verfügbar ist, wird auf Surrogate-basierte Erklärungen
     # zurückgefallen (siehe explainability/shap_uplift.py → shap_available()).

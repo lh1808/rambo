@@ -231,6 +231,13 @@ class ProductionPipeline:
                     except Exception:
                         pass
 
+        # NaN in kategorischen Spalten → explizite Kategorie "fehlend":
+        # identische Repräsentation wie im Training (fill_missing_categories in
+        # den Trainings-Ladepfaden). Ohne diesen Schritt würde CatBoost-Predict
+        # an None/NaN in cat_features scheitern bzw. Scoring-Zeilen mit
+        # fehlenden Kategorien anders behandelt als im Training.
+        from rubin.utils.data_utils import fill_missing_categories
+        fill_missing_categories(X_input, logger=self._logger if hasattr(self, "_logger") else None)
         try:
             if hasattr(self.preprocessor, "validate"):
                 res = self.preprocessor.validate(X_input, strict=False)

@@ -467,3 +467,32 @@ class TestUpliftCurveMtArgmax:
             q_rand = qini_coefficient(uplift_curve_mt_argmax(y, t, rng.normal(size=tau.shape)))
             assert q_true > q_swap, (seed, q_true, q_swap)
             assert q_true > q_rand, (seed, q_true, q_rand)
+
+
+class TestOrientHistoricalScore:
+    """Regression für den NaN-Platzierungs-Bug: nan_to_num(0.0) VOR der
+    Invertierung setzte fehlende Scores bei lower-better-Skalen an die
+    SPITZE der Rangliste (0 > -1). Der Helper platziert Nicht-Finites
+    orientiert ans ENDE."""
+
+    def test_lower_better_nan_goes_to_end_not_top(self):
+        from rubin.evaluation.uplift_metrics import orient_historical_score
+        s = np.array([1.0, 5.0, np.nan, 10.0])   # 1 = bester (lower-better)
+        o = orient_historical_score(s, higher_is_better=False)
+        assert o[0] == -1.0 and o[3] == -10.0
+        assert o[2] == -11.0                      # NaN → min-1 = ans Ende
+        assert np.argsort(-o).tolist()[0] == 0    # bester bleibt vorn
+        assert np.argsort(-o).tolist()[-1] == 2   # NaN ganz hinten
+
+    def test_higher_better_nan_and_inf_to_end(self):
+        from rubin.evaluation.uplift_metrics import orient_historical_score
+        s = np.array([3.0, np.nan, 7.0, np.inf, -np.inf])
+        o = orient_historical_score(s, higher_is_better=True)
+        assert o[2] == 7.0 and o[0] == 3.0
+        assert o[1] == o[3] == o[4] == 2.0        # min(3,7)-1 — alle ans Ende
+
+    def test_no_input_mutation_and_all_nan(self):
+        from rubin.evaluation.uplift_metrics import orient_historical_score
+        s = np.array([np.nan, np.nan])
+        o = orient_historical_score(s, higher_is_better=False)
+        assert np.all(o == 0.0) and np.isnan(s).all()  # Fallback + Input unverändert

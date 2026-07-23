@@ -724,6 +724,8 @@ Diese Einstellungen steuern die SHAP-Analyse in der Analyse-Pipeline. Bei `calcu
 - `n_shap_values`: maximale Stichprobe für SHAP (Performance; Default 10000)
 - `top_n_features`: wie viele Features im Report/Plot ausgegeben werden
 - `num_bins`: Standard‑Segmentierung (z. B. 10 = Dezile) für Dependency-Plots
+- `bin_strategy`: Binning der numerischen CATE-Profil-/Dependence-Plots. `quantile` (Default) bildet gleich besetzte Segmente — robust bei schiefen Verteilungen (Beiträge, Bestandsdauern); `width` stellt das alte Equal-Width-Verhalten bereit, bei dem Ausreißer fast leere Rand-Bins mit Rausch-Mittelwerten erzeugen können. Jeder Balken zeigt seine Besetzung (n=…); fehlende Werte erhalten einen eigenen „fehlend"-Balken statt still zu verschwinden.
+- `value_labels`: Rückbeschriftung kodierter kategorischer Features in allen Explainability-Plots (CATE-Profile, SHAP-Dependence, Scatter-Achsen): `{Spaltenname: {Code: Fachlabel}}`, z. B. `{GESCHLECHT: {1: männlich, 2: weiblich}}`. Codes werden tolerant gematcht (`1`, `1.0`, `"1"` identisch). String-Kategorien beschriften sich automatisch; reine Anzeige-Option ohne Einfluss auf Training oder Metriken.
 
 **Hinweis:**  
 Explainability ist bewusst als separater Schritt umgesetzt (kein Pflichtbestandteil eines Trainingslaufs).
