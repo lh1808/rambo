@@ -64,8 +64,9 @@ def main() -> None:
     num_bins = int(cfg.shap_values.num_bins) if cfg is not None else 10
 
     X_raw = read_table(args.x)
-    from rubin.utils.data_utils import fill_missing_categories
-    fill_missing_categories(X_raw)  # NaN-Kategorien wie im Training als "fehlend"
+    from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
+    decode_bytes_categories(X_raw)   # bytes → str wie im Training
+    fill_missing_categories(X_raw)   # NaN-Kategorien wie im Training als "fehlend"
 
     pipe = ProductionPipeline(str(bundle_dir))
     model_name = _choose_model_name(bundle_dir, args.model_name)

@@ -180,3 +180,49 @@ def fill_missing_categories(X: "pd.DataFrame", columns=None, logger=None) -> lis
             converted,
         )
     return converted
+
+def decode_bytes_categories(X: "pd.DataFrame", columns=None, logger=None) -> list:
+    """Dekodiert bytes-Werte in kategorischen (category-/object-)Spalten zu str
+    (UTF-8, errors="replace").
+
+    SAS-/pyreadstat-Importe liefern Textspalten teils als bytes (b'M\xc3\xbcnchener').
+    Ohne Dekodierung erscheinen solche Ausprägungen als "b'...'"-Labels in
+    Explainability-Plots und Encoding-Maps von Spalten ohne NaN; mit Umlauten
+    crashte zudem der category-astype(str)-Pfad im Preprocessing. Dekodierung
+    erfolgt effizient: bei category-Dtype nur über das Kategorien-Array
+    (rename_categories), bei object nur elementweise für bytes-Werte.
+    Returns: Liste der dekodierten Spaltennamen.
+    """
+    import pandas as pd
+    def _dec(v):
+        return v.decode("utf-8", errors="replace") if isinstance(v, (bytes, bytearray)) else v
+    cols = list(columns) if columns is not None else list(X.columns)
+    converted = []
+    for col in cols:
+        if col not in X.columns:
+            continue
+        ser = X[col]
+        if isinstance(ser.dtype, pd.CategoricalDtype):
+            cats = ser.cat.categories
+            if any(isinstance(c, (bytes, bytearray)) for c in cats):
+                decoded = [_dec(c) for c in cats]
+                if len(set(decoded)) == len(decoded):
+                    X[col] = ser.cat.rename_categories(decoded)
+                else:
+                    # Kollisions-Randfall: bytes- UND str-Repräsentation derselben
+                    # Ausprägung als getrennte Kategorien (b'Münchener' + 'Münchener')
+                    # → rename_categories würde an Duplikaten scheitern. Über den
+                    # object-Pfad dekodieren und Kategorien dabei vereinigen.
+                    X[col] = ser.astype("object").map(_dec).astype("category")
+                converted.append(col)
+        elif is_object_like_dtype(ser.dtype):
+            sample = ser.dropna().head(50)
+            if any(isinstance(v, (bytes, bytearray)) for v in sample):
+                X[col] = ser.map(_dec)
+                converted.append(col)
+    if converted and logger is not None:
+        logger.info(
+            "Bytes-Textspalten dekodiert (UTF-8): %s",
+            converted[:10] if len(converted) <= 10 else f"{converted[:5]}... (+{len(converted)-5})",
+        )
+    return converted

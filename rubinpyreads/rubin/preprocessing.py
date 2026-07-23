@@ -40,7 +40,14 @@ class FittedPreprocessor:
                 mp = self.encoding_maps.get(col, {})
                 # fillna("nan") vor map: object-dtype NaN wird von astype(str) nicht zu "nan".
                 # Ohne fillna würde NaN als -1 kodiert statt als gelernte "nan"-Kategorie.
-                mapped = X[col].astype(str).fillna("nan").map(mp)
+                # WICHTIG: astype("object") VOR astype(str) — exakt symmetrisch zu
+                # fit_preprocessor. Auf category-Dtype kastet astype(str) sonst das
+                # KATEGORIEN-Array über numpy (<U…): bytes-Kategorien (SAS-Importe
+                # mit UTF-8-Umlauten, z. B. b'M\xc3\xbcnchener') crashen dort mit
+                # UnicodeDecodeError/"Cannot cast object dtype to <U0". Der
+                # object-Pfad dekodiert bytes elementweise via UTF-8 — identisch
+                # zu fit, daher matchen die Encoding-Map-Keys exakt.
+                mapped = X[col].astype("object").astype(str).fillna("nan").map(mp)
                 X[col] = mapped.fillna(-1).astype("int32").astype("category")
 
         # Fehlende numerische Werte auffüllen

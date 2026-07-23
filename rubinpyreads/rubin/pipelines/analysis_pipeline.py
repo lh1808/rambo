@@ -163,7 +163,8 @@ class AnalysisPipeline:
         # "fehlend": CatBoost akzeptiert keine None/NaN in cat_features (Crash
         # im categorical_patch beim Pool-Aufbau). Der x_file-Pfad umgeht die
         # DataPrep-Stufe, daher hier direkt nach dem Laden absichern.
-        from rubin.utils.data_utils import fill_missing_categories
+        from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
+        decode_bytes_categories(X, logger=self._logger)
         fill_missing_categories(X, logger=self._logger)
         T_df = self._read_table(self.cfg.data_files.t_file)
         Y_df = self._read_table(self.cfg.data_files.y_file)
@@ -3486,8 +3487,9 @@ class AnalysisPipeline:
                 self._logger.info("Validierungsmodus: external – lade separate Eval-Daten.")
                 try:
                     X_eval = self._read_table(cfg.data_files.eval_x_file)
-                    # Konsistenz mit Trainings-Repräsentation: NaN-Kategorien → "fehlend"
-                    from rubin.utils.data_utils import fill_missing_categories
+                    # Konsistenz mit Trainings-Repräsentation: bytes → str, NaN-Kategorien → "fehlend"
+                    from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
+                    decode_bytes_categories(X_eval, logger=self._logger)
                     fill_missing_categories(X_eval, logger=self._logger)
                     T_eval = self._read_table(cfg.data_files.eval_t_file)["T"].to_numpy()
                     Y_eval = self._read_table(cfg.data_files.eval_y_file)["Y"].to_numpy()

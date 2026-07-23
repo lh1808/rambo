@@ -868,7 +868,8 @@ class DataPrepPipeline:
         # NaN in kategorischen Spalten → explizite Kategorie "fehlend"
         # (CatBoost-Crash-Schutz; Details im Helper). Gilt für beide
         # Konfigurationswege (explizite categorical_columns wie Auto-Erkennung).
-        from rubin.utils.data_utils import fill_missing_categories
+        from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
+        decode_bytes_categories(X, columns=categorical_columns, logger=self._logger)
         fill_missing_categories(X, columns=categorical_columns, logger=self._logger)
 
         # Y, T, optional S
