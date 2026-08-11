@@ -1326,7 +1326,22 @@ class AnalysisPipeline:
             dr_params_t = _cap_estimators(_best_clf_params_t)
             pj = 1 if cfg.constants.parallel_level <= 1 else -1
             model_reg = build_base_learner(cfg.base_learner.type, dr_params_y, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
-            model_prop = build_base_learner(cfg.base_learner.type, dr_params_t, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
+            # RCT: konstante Design-Propensity statt gelerntem Modell — konsistent
+            # zur Registry-Regel für die CATE-Estimatoren (model_registry:
+            # Propensity-Rollen → DummyClassifier(prior)). Ein gelernter
+            # Classifier kann auf randomisiertem Treatment nur Rauschen fitten;
+            # der Prior eliminiert diese Restvarianz aus den DR-Scores und
+            # macht den EconML-Propensity-Clip (0.01) strukturell zum No-Op.
+            if getattr(cfg, "study_type", "rct") == "rct":
+                from sklearn.dummy import DummyClassifier
+                model_prop = DummyClassifier(strategy="prior")
+                self._logger.info(
+                    "DRTester: RCT-Modus → konstante Propensity P(T|X) = mean(T) "
+                    "(DummyClassifier prior) statt getuntem Classifier — konsistent "
+                    "zu den CATE-Estimatoren; EconML-Propensity-Clip damit ohne Wirkung."
+                )
+            else:
+                model_prop = build_base_learner(cfg.base_learner.type, dr_params_t, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
 
             X_val = holdout_data[0] if holdout_data is not None else X
             T_val = holdout_data[1] if holdout_data is not None else T
@@ -1888,7 +1903,12 @@ class AnalysisPipeline:
                 params_t = dict(cfg.base_learner.fixed_params or {})
                 pj = 1 if cfg.constants.parallel_level <= 1 else -1
                 model_reg = build_base_learner(cfg.base_learner.type, params_y, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
-                model_prop = build_base_learner(cfg.base_learner.type, params_t, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
+                if getattr(cfg, "study_type", "rct") == "rct":
+                    from sklearn.dummy import DummyClassifier
+                    model_prop = DummyClassifier(strategy="prior")  # RCT: Design-Propensity (s. Haupt-Pfad)
+                    self._logger.info("DRTester (Fallback-Pfad): RCT-Modus → konstante Propensity (DummyClassifier prior).")
+                else:
+                    model_prop = build_base_learner(cfg.base_learner.type, params_t, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
                 bundle_h = evaluate_cate_with_plots(
                     model_regression=model_reg, model_propensity=model_prop,
                     X_val=eval_X, T_val=eval_t, Y_val=eval_y,
@@ -2566,7 +2586,12 @@ class AnalysisPipeline:
                     else:
                         pj = 1 if cfg.constants.parallel_level <= 1 else -1
                         model_reg = build_base_learner(cfg.base_learner.type, {}, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
-                        model_prop = build_base_learner(cfg.base_learner.type, {}, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
+                        if getattr(cfg, "study_type", "rct") == "rct":
+                            from sklearn.dummy import DummyClassifier
+                            model_prop = DummyClassifier(strategy="prior")  # RCT: Design-Propensity (s. Haupt-Pfad)
+                            self._logger.info("DRTester (External-Pfad): RCT-Modus → konstante Propensity (DummyClassifier prior).")
+                        else:
+                            model_prop = build_base_learner(cfg.base_learner.type, {}, seed=cfg.constants.random_seed, task="classifier", parallel_jobs=pj)
                         bundle_s = evaluate_cate_with_plots(
                             model_regression=model_reg, model_propensity=model_prop,
                             X_val=eval_X, T_val=t_s, Y_val=y_s,
