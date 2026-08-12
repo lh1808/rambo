@@ -440,19 +440,21 @@ class SurrogateTreeConfig(BaseModel):
     # symmetrischem Splitting (CatBoost) bessere Bäume als CART liefert.
     enabled: bool = False
 
-    # Mindestanzahl Samples pro Blatt. Stellt sicher, dass jedes Blatt
-    # statistisch belastbar ist.
-    # Wird auf min_child_samples (LightGBM) bzw. min_data_in_leaf (CatBoost)
-    # gemappt.
+    # Mindestanzahl Samples pro Blatt — für statistisch belastbare Segmente.
+    # Wird auf min_child_samples (LightGBM) bzw. min_data_in_leaf (CatBoost,
+    # via grow_policy=Lossguide) gemappt. Hinweis: LightGBM garantiert die
+    # Untergrenze hart; CatBoost nutzt sie als Split-Steuerung ohne harte
+    # Garantie — einzelne Blätter können darunter liegen.
     min_samples_leaf: int = 50
 
-    # Maximale Anzahl Blätter (nur LightGBM, leaf-wise Growth).
-    # Steuert die Baumkomplexität direkt. Bei CatBoost wird stattdessen
-    # max_depth verwendet.
+    # Maximale Anzahl Blätter (leaf-wise Growth). Wirkt bei BEIDEN
+    # Base-Learnern: LightGBM (num_leaves) und CatBoost (max_leaves via
+    # grow_policy=Lossguide). Steuert die Baumkomplexität direkt.
     num_leaves: int = 31
 
     # Maximale Baumtiefe. None = keine Begrenzung bei LightGBM (-1),
-    # bei CatBoost wird 6 als Default verwendet.
+    # bei CatBoost wird 16 verwendet (Maximum; Lossguide-Bäume werden
+    # primär über num_leaves/min_samples_leaf begrenzt).
     max_depth: Optional[int] = None
 
 

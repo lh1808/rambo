@@ -2119,8 +2119,18 @@ class AnalysisPipeline:
         elif base_type == "catboost":
             params = {
                 "iterations": 1,
+                # Lossguide (leaf-wise) statt SymmetricTree: NUR damit wirken
+                # min_data_in_leaf UND max_leaves überhaupt — beim CatBoost-
+                # Default SymmetricTree wird min_data_in_leaf STILL ignoriert
+                # (empirisch verifiziert: identische Bäume bei 50 vs. 900) und
+                # eine Blattzahl-Grenze existiert nicht. Lossguide macht den
+                # CatBoost-Surrogate strukturell zum LightGBM-Pendant
+                # (leaf-wise Einzelbaum) → alle drei Config-Parameter haben
+                # bei beiden Base-Learnern dieselbe Semantik.
+                "grow_policy": "Lossguide",
+                "max_leaves": tree_cfg.num_leaves,
                 "min_data_in_leaf": tree_cfg.min_samples_leaf,
-                "depth": tree_cfg.max_depth if tree_cfg.max_depth is not None else 6,
+                "depth": tree_cfg.max_depth if tree_cfg.max_depth is not None else 16,
                 "learning_rate": 1.0,
                 "bootstrap_type": "No",  # Kein Bootstrapping für Einzelbaum
                 "rsm": 1.0,
@@ -2154,9 +2164,15 @@ class AnalysisPipeline:
             elif base_type == "catboost":
                 all_params = tree_model.get_all_params()
                 depth = all_params.get("depth")
-                # CatBoost: symmetrischer Baum → 2^depth Blätter
-                if depth is not None:
-                    n_leaves = 2 ** int(depth)
+                # Echte Blattzahl aus dem Modell: Mit grow_policy=Lossguide ist
+                # der Baum asymmetrisch — die alte 2^depth-Formel (SymmetricTree)
+                # würde absurde Werte loggen (z. B. 65536 bei depth=16).
+                try:
+                    # Erster Baum (konsistent zum LGBM-Zweig tree_info[0]);
+                    # beim Surrogate-Einzelbaum ohnehin der einzige.
+                    n_leaves = int(tree_model.get_tree_leaf_counts()[0])
+                except Exception:
+                    n_leaves = 2 ** int(depth) if depth is not None else None
         except Exception:
             logging.getLogger("rubin.pipeline").debug("Surrogate-Bauminfo konnte nicht extrahiert werden (%s).", base_type, exc_info=True)
         return depth, n_leaves
@@ -2862,10 +2878,30 @@ class AnalysisPipeline:
                 # das gleichgewichtete Mitglieder-Mittel. Einheitlicher Aufruf für alle
                 # Champion-Typen (robust auch im Lean-Fall, in dem keine Mitglieder als
                 # Standalone-Eintrag in models_to_export liegen).
-                champion_preds_for_surr = _predict_effect(champion_fitted_obj, X_surr)
-                champion_preds_for_surr = np.asarray(champion_preds_for_surr)
+                # ── Konsistenz Report ↔ Produktion ──
+                # Der Analyse-Schritt hat den Surrogate bereits trainiert und
+                # evaluiert (models[SURROGATE_MODEL_NAME]); ALLE Report-
+                # Kennzahlen (Qini, Tiefe, Blätter, Regeln) beziehen sich auf
+                # genau diesen Baum. Der Bundle-Export übernimmt daher dieses
+                # Objekt, statt (wie früher) einen ZWEITEN Baum auf anderen
+                # Targets zu fitten — sonst scored die Produktion einen Baum,
+                # den kein Report je beschrieben hat. Neubau nur als Fallback,
+                # wenn der Analyse-Surrogate nicht vorliegt.
+                _analysis_surr = (models or {}).get(SURROGATE_MODEL_NAME)
+                if _analysis_surr is not None and getattr(_analysis_surr, "_is_surrogate", False):
+                    bundle_surrogate = _analysis_surr
+                    log_tree = _analysis_surr.tree if _analysis_surr.tree is not None else (_analysis_surr.trees or {}).get(0)
+                    champion_preds_for_surr = None
+                    self._logger.info(
+                        "Surrogate-Bundle: Analyse-Baum übernommen (identisch zu den Report-Kennzahlen), kein Neubau."
+                    )
+                else:
+                    self._logger.info(
+                        "Surrogate-Bundle: Kein Analyse-Surrogate verfügbar — Fallback-Neubau auf Champion-Predictions."
+                    )
+                    champion_preds_for_surr = np.asarray(_predict_effect(champion_fitted_obj, X_surr))
 
-                if champion_preds_for_surr.ndim == 2 and champion_preds_for_surr.shape[1] > 1:
+                if champion_preds_for_surr is not None and champion_preds_for_surr.ndim == 2 and champion_preds_for_surr.shape[1] > 1:
                     # MT: pro Arm einen Baum trainieren
                     n_effects = champion_preds_for_surr.shape[1]
                     bundle_trees = {}
@@ -2875,7 +2911,7 @@ class AnalysisPipeline:
                         bundle_trees[k] = tree_k
                     bundle_surrogate = SurrogateTreeWrapper(trees=bundle_trees, champion_name=champion)
                     log_tree = bundle_trees.get(0)
-                else:
+                elif champion_preds_for_surr is not None:
                     bundle_tree = self._build_surrogate_regressor(cfg)
                     bundle_tree.fit(X_surr, champion_preds_for_surr.reshape(-1))
                     bundle_surrogate = SurrogateTreeWrapper(tree=bundle_tree, champion_name=champion)
@@ -2895,9 +2931,10 @@ class AnalysisPipeline:
                 # Surrogate wurde mit Fallback "both"→"catboost" trainiert; gleiche Logik hier.
                 _surr_bt = cfg.base_learner.type if (cfg.base_learner.type or "").lower() != "both" else "catboost"
                 depth, n_leaves = self._log_surrogate_tree_info(log_tree, _surr_bt) if log_tree else (None, None)
+                _surr_origin = "Analyse-Schritt (Report-Baum)" if champion_preds_for_surr is None else f"Bundle-Neubau auf {len(X_surr)} Zeilen"
                 self._logger.info(
-                    "Surrogate-Einzelbaum exportiert (Typ=%s, Tiefe=%s, Blätter=%s, trainiert auf %d Zeilen).",
-                    _surr_bt, depth, n_leaves, len(X_surr),
+                    "Surrogate-Einzelbaum exportiert (Typ=%s, Tiefe=%s, Blätter=%s, Quelle: %s).",
+                    _surr_bt, depth, n_leaves, _surr_origin,
                 )
             except Exception:
                 self._logger.warning("Surrogate-Tree Bundle-Export fehlgeschlagen.", exc_info=True)

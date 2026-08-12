@@ -2975,8 +2975,8 @@ const PSelection = ({cfg,set}) => {
         <Info type="warn">Der Surrogate-Baum approximiert den Champion – er ist nicht das Champion-Modell selbst. Je weniger Blätter, desto interpretierbarer, aber auch ungenauer.</Info>
         <Row>
           <Col><Sld label="Min. Samples pro Blatt" min={10} max={500} step={10} value={cfg.surrMinLeaf||50} onChange={v=>set({...cfg,surrMinLeaf:v})} help="Verhindert zu kleine Segmente. Höher = stabilere Regeln."/></Col>
-          <Col><Sld label="Max. Blätter" min={2} max={128} step={1} value={cfg.surrLeaves||31} onChange={v=>set({...cfg,surrLeaves:v})} help="Komplexität des Baums. 8–16 für einfache Regeln, 31+ für mehr Detail."/></Col>
-          <Col><Sld label="Max. Tiefe (0=unbegrenzt)" min={0} max={20} step={1} value={cfg.surrDepth||0} onChange={v=>set({...cfg,surrDepth:v})} help="Alternative Komplexitätsbegrenzung. 0 = nur durch Blätter begrenzt."/></Col>
+          <Col><Sld label="Max. Blätter" min={2} max={128} step={1} value={cfg.surrLeaves||31} onChange={v=>set({...cfg,surrLeaves:v})} help="Komplexität des Baums (wirkt bei LightGBM und CatBoost). 8–16 für einfache Regeln, 31+ für mehr Detail."/></Col>
+          <Col><Sld label="Max. Tiefe (0=unbegrenzt)" min={0} max={20} step={1} value={cfg.surrDepth||0} onChange={v=>set({...cfg,surrDepth:v})} help="Alternative Komplexitätsbegrenzung. 0 = Standard: LightGBM unbegrenzt, CatBoost Tiefe 16 (Maximum) — Begrenzung dann über Blätter/Min-Samples."/></Col>
         </Row>
       </>}
     </Sec>
