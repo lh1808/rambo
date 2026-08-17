@@ -1508,6 +1508,17 @@ def _chart_sensitivitaet(sens: pd.DataFrame) -> plt.Figure:
 # ======================================================================================
 # Kernaussagen (automatisch aus den Zahlen abgeleitet)
 # ======================================================================================
+def _aufwandsquote(marge: float) -> float:
+    """
+    Aufwand in Prozent des Beitrags, abgeleitet aus Beitrag und Ergebnis: 100 % - Marge.
+
+    Bewusst NICHT aus ve_expected_claim_amount + ve_total_cost gerechnet - diese Felder
+    sind nicht durchgängig befüllt, sodass Aufwand und Marge sich sonst nicht zu 100 %
+    ergänzen würden.
+    """
+    return np.nan if marge is None or not np.isfinite(marge) else 1.0 - marge
+
+
 def _kernaussagen(erg: Dict[str, pd.DataFrame]) -> List[str]:
     """Befunde in Prioritätsreihenfolge; Formulierung richtet sich nach den Zahlen."""
     kz, kunden = erg["kennzahlen"], erg["kunden"]
@@ -1528,7 +1539,8 @@ def _kernaussagen(erg: Dict[str, pd.DataFrame]) -> List[str]:
     b_neg = kz.loc["Beitrag je Vertrag (gepoolt)", "negativ"]
     b_pos = kz.loc["Beitrag je Vertrag (gepoolt)", "positiv"]
     diff = b_neg / b_pos - 1 if b_pos else np.nan
-    cr_neg, cr_pos = kz.loc["CR gepoolt", "negativ"], kz.loc["CR gepoolt", "positiv"]
+    cr_neg = _aufwandsquote(kz.loc["Marge gepoolt (Profit/Beitrag)", "negativ"])
+    cr_pos = _aufwandsquote(kz.loc["Marge gepoolt (Profit/Beitrag)", "positiv"])
     if abs(diff) < 0.05:
         preis = (f"Beim Beitrag je Vertrag sind beide Segmente praktisch gleich "
                  f"({_eur(b_neg)} zu {_eur(b_pos)}).")
@@ -1742,11 +1754,17 @@ def erstelle_pdf(
         ("Profit gesamt", "Ergebnis gesamt", _eur_kurz),
         ("Profit je Kunde (Mittel)", "Ergebnis je Kunde (Mittel)", _eur),
         ("Marge gepoolt (Profit/Beitrag)", "Marge (gepoolt)", _pct),
-        ("CR gepoolt", "Aufwand in % des Beitrags", lambda x: _pct(x, 1)),
         ("Anteil Verlustverträge je Kunde (Mittel)", "Anteil defizitärer Verträge", _pct),
     ]
     zeilen = [[label, f(kz.loc[k, "negativ"]), f(kz.loc[k, "positiv"])]
               for k, label, f in auswahl if k in kz.index]
+    # Aufwand aus Beitrag und Ergebnis abgeleitet, damit er exakt zur Marge passt
+    marge_zeile = "Marge gepoolt (Profit/Beitrag)"
+    if marge_zeile in kz.index:
+        pos = next(i for i, z in enumerate(zeilen) if z[0] == "Marge (gepoolt)")
+        zeilen.insert(pos, ["Aufwand in % des Beitrags",
+                            _pct(_aufwandsquote(kz.loc[marge_zeile, "negativ"]), 1),
+                            _pct(_aufwandsquote(kz.loc[marge_zeile, "positiv"]), 1)])
     s.append(_tabelle(["Kennzahl", "nicht wertvoll", "wertvoll"], zeilen,
                       [breite * 0.5, breite * 0.25, breite * 0.25], st))
     s.append(Spacer(1, 14))
@@ -1786,12 +1804,14 @@ def erstelle_pdf(
     s.append(Spacer(1, 14))
 
     if bv is not None and len(bv):
-        zeilen = []
-        for k, label in (("combined_ratio", "Aufwand in Prozent des Beitrags"),
-                         ("ergebnisquote", "Ergebnisquote (Marge)")):
-            zeilen.append([label,
-                           _pct(bv.loc["negativ", k], 1) if "negativ" in bv.index else "n. v.",
-                           _pct(bv.loc["positiv", k], 1) if "positiv" in bv.index else "n. v."])
+        margen = {f: (bv.loc[f, "profit"] / bv.loc[f, "beitrag"]
+                      if f in bv.index and bv.loc[f, "beitrag"] else np.nan)
+                  for f in ("negativ", "positiv")}
+        zeilen = [["Aufwand in Prozent des Beitrags",
+                   _pct(_aufwandsquote(margen["negativ"]), 1),
+                   _pct(_aufwandsquote(margen["positiv"]), 1)],
+                  ["Ergebnisquote (Marge)",
+                   _pct(margen["negativ"], 1), _pct(margen["positiv"], 1)]]
         zeilen.append(["Beitragsvolumen des Segments",
                        _eur_kurz(kz.loc["Beitrag gesamt", "negativ"]),
                        _eur_kurz(kz.loc["Beitrag gesamt", "positiv"])])
@@ -1800,6 +1820,12 @@ def erstelle_pdf(
                        _eur_kurz(kz.loc["Profit gesamt", "positiv"])])
         s.append(_tabelle(["Beitrag und Aufwand", "nicht wertvoll", "wertvoll"], zeilen,
                           [breite * 0.5, breite * 0.25, breite * 0.25], st))
+        s.append(Spacer(1, 6))
+        s.append(Paragraph(
+            "Der Aufwand ist als Differenz aus Beitrag und Ergebnis abgeleitet "
+            "(100 % minus Marge). Er ergänzt sich damit exakt zur Marge und ist unabhängig "
+            "davon, wie vollständig die Schaden- und Kostenfelder befüllt sind.",
+            st["klein"]))
     s.append(PageBreak())
 
     # ------------------------- Seite 4: Wo der Verlust beim einzelnen Kunden sitzt
