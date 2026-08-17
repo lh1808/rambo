@@ -917,6 +917,7 @@ def exportiere_excel(erg: Dict[str, pd.DataFrame], pfad: str = "kundenwert_analy
 
 
 
+
 """
 kundenwert_report.py
 ====================
@@ -934,7 +935,7 @@ Verwendung:
                  untertitel="Segmentierung nach aggregierter Profitabilität",
                  quelle="Bestandsdaten Stichtag TT.MM.JJJJ")
 
-Aufbau des Dokuments:
+Aufbau des Dokuments (Seitenzahl variiert je Datenstand):
     1  Fragestellung, Eckwerte und Befunde
     2  Kundenstruktur im Vergleich
     3  Wie Kunden negativ werden (Beitragsverwendung, Margenverteilung)
@@ -1253,55 +1254,18 @@ def _chart_vertragsverteilung(vv: pd.DataFrame) -> plt.Figure:
     return fig
 
 
-def _chart_beitragsverwendung(bv: pd.DataFrame) -> plt.Figure:
-    """Gesamtaufwand je Segment gegen die 100-%-Linie des Beitrags."""
-    fig, ax = plt.subplots(figsize=(8.6, 2.1))
-    labels, y = [], []
-    for i, (flag, name) in enumerate([("negativ", "nicht wertvoll"), ("positiv", "wertvoll")]):
-        if flag not in bv.index:
-            continue
-        r = bv.loc[flag]
-        aufwand = r["combined_ratio"]
-        y.append(i)
-        labels.append(name)
-        farbe = MPL_NEGATIV if flag == "negativ" else MPL_POSITIV
-        # Anteil bis 100 % ist durch den Beitrag gedeckt, darüber hinaus entsteht Verlust
-        ax.barh(i, min(aufwand, 1.0), color=farbe, height=0.45)
-        if aufwand > 1.0:
-            ax.barh(i, aufwand - 1.0, left=1.0, height=0.45, color=farbe, alpha=0.45,
-                    hatch="///", edgecolor="white", linewidth=0)
-        ax.text(min(aufwand, 1.0) / 2, i, f"Aufwand {_pct(aufwand, 0)} des Beitrags",
-                ha="center", va="center", color="white", fontsize=8.5, fontweight="bold")
-        ergebnis = r["ergebnisquote"]
-        wort = "Verlust" if ergebnis < 0 else "Ergebnis"
-        ax.text(max(aufwand, 1.0) + 0.04, i,
-                f"{wort} {_pct(ergebnis, 0)} des Beitrags",
-                va="center", fontsize=8.5, color=MPL_PRIMAER, fontweight="bold")
-    ax.axvline(1.0, color=MPL_PRIMAER, ls="--", lw=1.2)
-    ax.text(1.0, -0.75, "Beitrag = 100 %", fontsize=8, color=MPL_PRIMAER, ha="center")
-    ax.set_yticks(y, labels, fontsize=9)
-    ax.set_xlim(0, max(1.65, bv["combined_ratio"].max() * 1.45))
-    ax.invert_yaxis()
-    ax.set_xticks([])
-    ax.grid(False)
-    for s in ax.spines.values():
-        s.set_visible(False)
-    fig.tight_layout()
-    return fig
-
-
 def _chart_marge_streuung(kunden: pd.DataFrame, schwelle: float = 0.20,
-                          max_punkte: int = 4000) -> plt.Figure:
+                          max_punkte: int = 6000, breit: bool = False) -> plt.Figure:
     """Streudiagramm: Beitrag je Kunde gegen Marge - wo genau liegen die negativen Kunden?"""
     d = kunden[(kunden["beitrag_sum"] > 0) & kunden["marge"].notna()]
     if len(d) > max_punkte:
         d = d.sample(max_punkte, random_state=0)
-    fig, ax = plt.subplots(figsize=(4.2, 2.7))
+    fig, ax = plt.subplots(figsize=(8.6, 2.9) if breit else (4.2, 2.7))
     for flag, farbe in (("positiv", MPL_POSITIV), ("negativ", MPL_NEGATIV)):
         t = d[d["wert_flag"] == flag]
-        ax.scatter(t["beitrag_sum"], t["marge"].clip(-2, 1.5), s=4, alpha=0.35,
-                   color=farbe, linewidths=0, label="wertvoll" if flag == "positiv"
-                   else "nicht wertvoll")
+        ax.scatter(t["beitrag_sum"], t["marge"].clip(-2, 1.5), s=5 if breit else 4,
+                   alpha=0.35, color=farbe, linewidths=0,
+                   label="wertvoll" if flag == "positiv" else "nicht wertvoll")
     ax.axhline(-schwelle, color=MPL_PRIMAER, ls="--", lw=1.1)
     ax.text(d["beitrag_sum"].min(), -schwelle - 0.04, f"Grenze {_pct(-schwelle, 0)}",
             fontsize=7.5, color=MPL_PRIMAER, va="top", ha="left")
@@ -1317,18 +1281,24 @@ def _chart_marge_streuung(kunden: pd.DataFrame, schwelle: float = 0.20,
     return fig
 
 
-def _chart_margen_histogramm(kunden: pd.DataFrame, schwelle: float = 0.20) -> plt.Figure:
+def _chart_margen_histogramm(kunden: pd.DataFrame, schwelle: float = 0.20,
+                             breit: bool = False) -> plt.Figure:
     """Wie weit unter der Grenze liegen die negativen Kunden?"""
-    d = kunden["marge"].dropna().clip(-1.5, 1.0)
-    fig, ax = plt.subplots(figsize=(4.2, 2.7))
-    kanten = np.linspace(-1.5, 1.0, 51)
+    fig, ax = plt.subplots(figsize=(8.6, 2.7) if breit else (4.2, 2.7))
+    kanten = np.linspace(-1.5, 1.0, 76 if breit else 51)
     neg = kunden.loc[kunden["wert_flag"] == "negativ", "marge"].dropna().clip(-1.5, 1.0)
     pos = kunden.loc[kunden["wert_flag"] == "positiv", "marge"].dropna().clip(-1.5, 1.0)
     ax.hist([neg, pos], bins=kanten, stacked=True, color=[MPL_NEGATIV, MPL_POSITIV],
             label=["nicht wertvoll", "wertvoll"])
     ax.axvline(-schwelle, color=MPL_PRIMAER, ls="--", lw=1.2)
-    ax.text(-schwelle - 0.03, ax.get_ylim()[1] * 0.95, f"Grenze {_pct(-schwelle, 0)}",
+    ax.text(-schwelle - 0.02, ax.get_ylim()[1] * 0.95, f"Grenze {_pct(-schwelle, 0)}",
             fontsize=7.5, color=MPL_PRIMAER, ha="right", va="top")
+    if breit and len(neg):
+        median_neg = float(neg.median())
+        ax.axvline(median_neg, color=MPL_NEGATIV, ls=":", lw=1.2)
+        ax.text(median_neg - 0.02, ax.get_ylim()[1] * 0.72,
+                f"Median nicht wertvoll {_pct(median_neg, 0)}", fontsize=7.5,
+                color=MPL_NEGATIV, ha="right", va="top")
     ax.set_xlabel("Marge des Kunden", fontsize=8)
     ax.set_ylabel("Kunden", fontsize=8)
     ax.xaxis.set_major_formatter(lambda v, p: _pct(v, 0))
@@ -1796,19 +1766,32 @@ def erstelle_pdf(
     s.append(Paragraph("Wie Kunden negativ werden", st["h1"]))
     s.append(Paragraph(
         "Ein Kunde wird nicht dadurch negativ, dass er zu wenig Beitrag zahlt, sondern "
-        "dadurch, dass der Aufwand seinen Beitrag übersteigt. Die Grafik stellt den "
-        "Gesamtaufwand beider Segmente dem Beitrag gegenüber.", st["lead"]))
+        "dadurch, dass der Aufwand seinen Beitrag übersteigt. Die beiden Grafiken zeigen, "
+        "wie weit die Kunden dabei auseinanderliegen: wie sich die Margen über den "
+        "Bestand verteilen und ob es dabei um kleine oder um beitragsstarke Kunden geht.",
+        st["lead"]))
+
+    s.append(_bild(_chart_margen_histogramm(kunden, schwelle, breit=True), breite))
+    s.append(Paragraph("Verteilung der Kundenmargen. Die gestrichelte Linie markiert die "
+                       "Segmentgrenze; alles links davon zählt als nicht wertvoll. Der "
+                       "Abstand zur Grenze zeigt, wie knapp oder wie deutlich ein Kunde "
+                       "darunter liegt.", st["klein"]))
+    s.append(Spacer(1, 14))
+
+    s.append(_bild(_chart_marge_streuung(kunden, schwelle, breit=True), breite))
+    s.append(Paragraph("Marge gegen Beitragsvolumen je Kunde. Liegen die roten Punkte "
+                       "gleichmäßig über die Beitragsachse verteilt, betrifft das Problem "
+                       "nicht nur Kleinkunden, sondern auch beitragsstarke Kunden.",
+                       st["klein"]))
+    s.append(Spacer(1, 14))
+
     if bv is not None and len(bv):
-        s.append(_bild(_chart_beitragsverwendung(bv), breite))
-        s.append(Paragraph("Alles rechts der gestrichelten Linie übersteigt den Beitrag "
-                           "und ist Verlust.", st["klein"]))
-        s.append(Spacer(1, 10))
         zeilen = []
-        for k, label in (("combined_ratio", "Aufwand in Prozent des Beitrags (Combined Ratio)"),
+        for k, label in (("combined_ratio", "Aufwand in Prozent des Beitrags"),
                          ("ergebnisquote", "Ergebnisquote (Marge)")):
-            f = _pct if k == "ergebnisquote" else (lambda x: _pct(x, 1))
-            zeilen.append([label, f(bv.loc["negativ", k]) if "negativ" in bv.index else "n. v.",
-                           f(bv.loc["positiv", k]) if "positiv" in bv.index else "n. v."])
+            zeilen.append([label,
+                           _pct(bv.loc["negativ", k], 1) if "negativ" in bv.index else "n. v.",
+                           _pct(bv.loc["positiv", k], 1) if "positiv" in bv.index else "n. v."])
         zeilen.append(["Beitragsvolumen des Segments",
                        _eur_kurz(kz.loc["Beitrag gesamt", "negativ"]),
                        _eur_kurz(kz.loc["Beitrag gesamt", "positiv"])])
@@ -1817,15 +1800,6 @@ def erstelle_pdf(
                        _eur_kurz(kz.loc["Profit gesamt", "positiv"])])
         s.append(_tabelle(["Beitrag und Aufwand", "nicht wertvoll", "wertvoll"], zeilen,
                           [breite * 0.5, breite * 0.25, breite * 0.25], st))
-    s.append(Spacer(1, 14))
-
-    s.append(_zwei_bilder(
-        _chart_margen_histogramm(kunden, schwelle),
-        _chart_marge_streuung(kunden, schwelle), breite))
-    s.append(Paragraph("Links: Verteilung der Kundenmargen mit der Segmentgrenze. "
-                       "Rechts: Marge gegen Beitragsvolumen je Kunde - zeigt, ob negative "
-                       "Kunden eher kleine oder auch beitragsstarke Kunden sind.",
-                       st["klein"]))
     s.append(PageBreak())
 
     # ------------------------- Seite 4: Wo der Verlust beim einzelnen Kunden sitzt
@@ -2049,11 +2023,25 @@ def erstelle_pdf(
                            breite * 0.20], st, text_spalten=(1,)))
         s.append(Spacer(1, 12))
 
-    s.append(Paragraph("Sensitivität der 20-Prozent-Grenze", st["h2"]))
+    s.append(PageBreak())
+    s.append(Paragraph("Sensitivität der Segmentgrenze", st["h1"]))
     s.append(Paragraph(
-        "Die Grenze ist eine Setzung. Die Grafik zeigt, wie stark Segmentgröße und "
-        "gebundenes Beitragsvolumen auf eine andere Wahl reagieren.", st["text"]))
-    s.append(_bild(_chart_sensitivitaet(erg["sensitivitaet"]), breite * 0.62))
+        "Die 20-Prozent-Grenze ist eine Setzung. Die Grafik zeigt, wie stark Segmentgröße "
+        "und gebundenes Beitragsvolumen auf eine andere Wahl reagieren - und damit, wie "
+        "robust die Befunde gegenüber dieser Setzung sind.", st["lead"]))
+    s.append(_bild(_chart_sensitivitaet(erg["sensitivitaet"]), breite * 0.72))
+    s.append(Spacer(1, 10))
+
+    sens = erg.get("sensitivitaet")
+    if sens is not None and len(sens):
+        zeilen = [[_pct(i, 0), _fmt(r["kunden_negativ"]),
+                   _pct(r["anteil_kunden_negativ"], 1), _pct(r["anteil_beitrag_negativ"], 1),
+                   _eur_kurz(r["profit_negativ"])]
+                  for i, r in sens.iterrows()]
+        s.append(_tabelle(["Schwellenwert", "Kunden", "Anteil Kunden", "Anteil Beitrag",
+                           "Ergebnis des Segments"], zeilen,
+                          [breite * 0.18, breite * 0.16, breite * 0.20, breite * 0.20,
+                           breite * 0.26], st))
 
     doc.build(s)
     return pfad
