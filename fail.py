@@ -1530,61 +1530,50 @@ def _kernaussagen(erg: Dict[str, pd.DataFrame]) -> List[str]:
     verlust = kz.loc["Profit gesamt", "negativ"]
     gewinn = kz.loc["Profit gesamt", "positiv"]
     quote = abs(verlust) / gewinn if gewinn else np.nan
-    a.append(f"<b>{_pct(anteil_k, 1)} der Kunden binden {_pct(anteil_b, 1)} des "
-             f"Beitragsvolumens und kosten {_eur_kurz(abs(verlust))}.</b> Dem stehen "
-             f"{_eur_kurz(gewinn)} aus dem wertvollen Segment gegenüber - der Verlust "
-             f"zehrt damit {_pct(quote, 0)} des positiven Ergebnisses auf.")
+    a.append(f"<b>{_pct(anteil_k, 1)} der Kunden binden {_pct(anteil_b, 1)} des Beitrags "
+             f"und kosten {_eur_kurz(abs(verlust))}</b> - das entspricht {_pct(quote, 0)} "
+             f"des Ergebnisses aus dem wertvollen Segment ({_eur_kurz(gewinn)}).")
 
-    # 2) Preis oder Risiko?
+    # 2) Preis oder Aufwand?
     b_neg = kz.loc["Beitrag je Vertrag (gepoolt)", "negativ"]
     b_pos = kz.loc["Beitrag je Vertrag (gepoolt)", "positiv"]
     diff = b_neg / b_pos - 1 if b_pos else np.nan
     cr_neg = _aufwandsquote(kz.loc["Marge gepoolt (Profit/Beitrag)", "negativ"])
     cr_pos = _aufwandsquote(kz.loc["Marge gepoolt (Profit/Beitrag)", "positiv"])
     if abs(diff) < 0.05:
-        preis = (f"Beim Beitrag je Vertrag sind beide Segmente praktisch gleich "
-                 f"({_eur(b_neg)} zu {_eur(b_pos)}).")
+        preis = (f"Der Beitrag je Vertrag ist in beiden Segmenten praktisch gleich "
+                 f"({_eur(b_neg)} zu {_eur(b_pos)})")
     else:
-        hoeher = "höher" if diff > 0 else "niedriger"
-        preis = (f"Der Beitrag je Vertrag liegt im negativen Segment mit {_eur(b_neg)} sogar "
-                 f"{_pct(abs(diff), 1)} {hoeher} als im wertvollen ({_eur(b_pos)}).")
-    a.append(f"{preis} Der Aufwand im Verhältnis zum Beitrag unterscheidet sich dagegen "
-             f"deutlich: <b>{_pct(cr_neg, 1)} gegenüber {_pct(cr_pos, 1)}</b>. Der "
-             f"Ergebnisunterschied entsteht damit nicht über den Preis, sondern über den "
-             f"Aufwand.")
+        preis = (f"Der Beitrag je Vertrag liegt bei nicht wertvollen Kunden mit "
+                 f"{_eur(b_neg)} sogar {_pct(abs(diff), 1)} "
+                 f"{'über' if diff > 0 else 'unter'} dem wertvollen Segment "
+                 f"({_eur(b_pos)})")
+    a.append(f"{preis}. Der Aufwand dagegen liegt bei <b>{_pct(cr_neg, 1)} des Beitrags "
+             f"gegenüber {_pct(cr_pos, 1)}</b>.")
 
-    # 3) Ebene 1: PKW vs. HUS
+    # 3) Verbund und Bereichsgewichtung
     bk = erg.get("bereichs_kombination")
     if bk is not None and len(bk) > 1 and "negativ_quote" in bk.columns:
-        beste = bk["negativ_quote"].idxmin()
-        schlechteste = bk["negativ_quote"].idxmax()
-        if beste != schlechteste:
-            a.append(f"Der Verbund macht den Unterschied: Von den Kunden mit "
-                     f"<b>{schlechteste}</b> sind {_pct(bk.loc[schlechteste, 'negativ_quote'], 1)} "
-                     f"nicht wertvoll, bei <b>{beste}</b> nur "
-                     f"{_pct(bk.loc[beste, 'negativ_quote'], 1)} - bei "
-                     f"{_fmt(bk.loc[beste, 'vertraege_je_kunde_positiv'], 2)} gegenüber "
-                     f"{_fmt(bk.loc[schlechteste, 'vertraege_je_kunde_positiv'], 2)} Verträgen "
-                     f"je wertvollem Kunden.")
+        d = bk.sort_values("negativ_quote", ascending=False)
+        if d["negativ_quote"].max() - d["negativ_quote"].min() > 0.02:
+            teile = [f"<b>{i}</b> {_pct(r['negativ_quote'], 1)}" for i, r in d.iterrows()]
+            a.append("Negativ-Quote je Verbundtyp: " + ", ".join(teile) + ".")
 
     bm = erg.get("bereich_mix")
     if bm is not None and len(bm) > 1 and "PKW" in bm.index:
         r = bm.loc["PKW"]
-        richtung = ("stärker" if r["delta_anteil_vertraege"] > 0 else "schwächer")
-        a.append(f"Auf der obersten Ebene sind nicht wertvolle Kunden {richtung} im Bereich "
-                 f"<b>PKW</b> gewichtet: {_pct(r['anteil_vertraege_negativ'], 1)} ihres "
-                 f"Vertragsbestands gegenüber {_pct(r['anteil_vertraege_positiv'], 1)} bei "
-                 f"wertvollen Kunden. Die PKW-Marge liegt bei "
+        a.append(f"<b>PKW</b> macht bei nicht wertvollen Kunden "
+                 f"{_pct(r['anteil_vertraege_negativ'], 1)} des Vertragsbestands aus, bei "
+                 f"wertvollen {_pct(r['anteil_vertraege_positiv'], 1)}; PKW-Marge "
                  f"{_pct(r['marge_negativ'], 1)} zu {_pct(r['marge_positiv'], 1)}.")
 
-    # 4) Ebene 2: größter Ergebnistreiber
+    # 4) Größter Verlusttreiber
     vt = erg.get("verlusttreiber_zweig")
     if vt is not None and len(vt):
         r = vt.iloc[0]
-        a.append(f"Den größten absoluten Verlustbeitrag liefert der Zweig "
-                 f"<b>{vt.index[0]}</b> mit {_eur_kurz(r['profit'])} bei einer Marge von "
-                 f"{_pct(r['marge'], 1)} - {_pct(r['anteil_am_gesamtverlust'], 0)} des "
-                 f"gesamten Segmentverlusts.")
+        a.append(f"Größter Verlusttreiber ist der Zweig <b>{vt.index[0]}</b>: "
+                 f"{_eur_kurz(r['profit'])} bei einer Marge von {_pct(r['marge'], 1)}, "
+                 f"{_pct(r['anteil_am_gesamtverlust'], 0)} des Segmentverlusts.")
 
     # 5) Wie tief sitzt der Verlust beim einzelnen Kunden?
     vv = kz.loc["Anteil Verlustverträge je Kunde (Mittel)", "negativ"]
@@ -1594,27 +1583,25 @@ def _kernaussagen(erg: Dict[str, pd.DataFrame]) -> List[str]:
         teile = []
         if "1 von mehreren Verträgen" in sv.index and sv.loc["1 von mehreren Verträgen", "kunden"]:
             teile.append(f"bei <b>{_pct(sv.loc['1 von mehreren Verträgen', 'anteil_kunden'], 0)}"
-                         f"</b> würde die Korrektur des schlechtesten Vertrags genügen")
+                         f"</b> genügt die Korrektur des schlechtesten Vertrags")
         if "Einvertragskunde" in sv.index and sv.loc["Einvertragskunde", "kunden"]:
-            teile.append(f"{_pct(sv.loc['Einvertragskunde', 'anteil_kunden'], 0)} halten "
-                         f"ohnehin nur einen Vertrag")
+            teile.append(f"{_pct(sv.loc['Einvertragskunde', 'anteil_kunden'], 0)} halten nur "
+                         f"einen Vertrag")
         if teile:
-            zusatz = (" Für die Einstufung reicht dennoch meist ein einzelner Hebel: "
-                      + " und ".join(teile) + ".")
-    a.append(f"Im Mittel sind <b>{_pct(vv, 0)} der Verträge</b> eines nicht wertvollen Kunden "
-             f"einzeln defizitär (wertvolles Segment: "
-             f"{_pct(kz.loc['Anteil Verlustverträge je Kunde (Mittel)', 'positiv'], 0)}) - "
-             f"der Verlust zieht sich also durch die Kundenbeziehung.{zusatz}")
+            zusatz = " Ansatzpunkte: " + ", ".join(teile) + "."
+    a.append(f"<b>{_pct(vv, 0)} der Verträge</b> eines nicht wertvollen Kunden sind einzeln "
+             f"defizitär, im wertvollen Segment "
+             f"{_pct(kz.loc['Anteil Verlustverträge je Kunde (Mittel)', 'positiv'], 0)}."
+             f"{zusatz}")
 
     # 6) Konzentration
     konz = erg.get("konzentration")
     if konz is not None and 0.10 in konz.index:
         z10 = konz.loc[0.10]
         anteil10 = z10["anteil_am_negativen_profit"]
-        deutung = ("Eine Maßnahme kann damit eng auf diese Kunden fokussiert werden."
+        deutung = ("Maßnahmen lassen sich eng auf diese Kunden fokussieren."
                    if anteil10 >= 0.40 else
-                   "Der Verlust ist damit breit gestreut - eine Steuerung über Einzelfälle "
-                   "greift zu kurz, es braucht eine Regel für das Segment.")
+                   "Der Verlust streut damit breit - Einzelfallsteuerung greift zu kurz.")
         a.append(f"Die {_fmt(z10['kunden'])} verlustreichsten Kunden (10 % des Segments) "
                  f"verantworten <b>{_pct(anteil10, 0)} des negativen Ergebnisses</b>. "
                  f"{deutung}")
@@ -1705,12 +1692,10 @@ def erstelle_pdf(
     # ------------------------------------------- Seite 1: Fragestellung und Befunde
     s.append(Paragraph("Fragestellung", st["h1"]))
     s.append(Paragraph(
-        "Untersucht wird, worin sich Kunden mit deutlich negativem Ergebnisbeitrag von "
-        "den übrigen Kunden unterscheiden. Dazu werden Beitrag und Ergebnis je Kunde "
-        "über alle Verträge aggregiert; ein Kunde gilt als <b>nicht wertvoll</b>, wenn "
-        "sein aggregiertes Ergebnis negativ ist und betragsmäßig mindestens 20 Prozent "
-        "seines Bestandsjahresnettobeitrags erreicht. Die Auswertung vergleicht beide "
-        "Gruppen nach Vertragszahl, Beitrag, Portfoliostruktur und Ergebnisentstehung.",
+        "Worin unterscheiden sich Kunden mit deutlich negativem Ergebnisbeitrag von den "
+        "übrigen? Beitrag und Ergebnis werden je Kunde über alle Verträge aggregiert. "
+        "<b>Nicht wertvoll</b> heißt: aggregiertes Ergebnis negativ und betragsmäßig "
+        "mindestens 20 Prozent des Bestandsjahresnettobeitrags.",
         st["lead"]))
 
     eckwerte = [
@@ -1732,8 +1717,8 @@ def erstelle_pdf(
 
     # ------------------------------------------------ Seite 2: Kundenstruktur
     s.append(Paragraph("Kundenstruktur im Vergleich", st["h1"]))
-    s.append(Paragraph("Anzahl der Verträge, Beitragsvolumen und Ergebnis je Segment.",
-                       st["lead"]))
+    s.append(Paragraph("Verträge, Beitragsvolumen und Ergebnis beider Segmente im "
+                       "direkten Vergleich.", st["lead"]))
 
     auswahl = [
         ("Kunden (Anzahl)", "Kunden", _fmt),
@@ -1774,32 +1759,28 @@ def erstelle_pdf(
         _chart_vertragsanzahl_bereich(kunden)
         if "n_vertraege_pkw" in kunden.columns else _chart_bereichsmix(erg["bereich_mix"]),
         breite))
-    s.append(Paragraph("Links: Verteilung der Kunden nach Anzahl ihrer Verträge (ve_id). "
-                       "Rechts: durchschnittliche Vertragszahl getrennt nach PKW und HUS.",
+    s.append(Paragraph("Links: Kunden nach Anzahl ihrer Verträge (ve_id). "
+                       "Rechts: Verträge je Kunde, getrennt nach PKW und HUS.",
                        st["klein"]))
     s.append(PageBreak())
 
     # ---------------------------------- Seite 3: Wie Kunden negativ werden
     bv = erg.get("beitragsverwendung")
-    s.append(Paragraph("Wie Kunden negativ werden", st["h1"]))
+    s.append(Paragraph("Verteilung der Kundenmargen", st["h1"]))
     s.append(Paragraph(
-        "Ein Kunde wird nicht dadurch negativ, dass er zu wenig Beitrag zahlt, sondern "
-        "dadurch, dass der Aufwand seinen Beitrag übersteigt. Die beiden Grafiken zeigen, "
-        "wie weit die Kunden dabei auseinanderliegen: wie sich die Margen über den "
-        "Bestand verteilen und ob es dabei um kleine oder um beitragsstarke Kunden geht.",
+        "Wie weit liegen die Kunden auseinander, und wie weit reicht das negative Segment "
+        "unter die Grenze? Darunter: dieselbe Marge gegen das Beitragsvolumen je Kunde.",
         st["lead"]))
 
     s.append(_bild(_chart_margen_histogramm(kunden, schwelle, breit=True), breite))
-    s.append(Paragraph("Verteilung der Kundenmargen. Die gestrichelte Linie markiert die "
-                       "Segmentgrenze; alles links davon zählt als nicht wertvoll. Der "
-                       "Abstand zur Grenze zeigt, wie knapp oder wie deutlich ein Kunde "
-                       "darunter liegt.", st["klein"]))
+    s.append(Paragraph("Alles links der gestrichelten Grenze zählt als nicht wertvoll. "
+                       "Der Abstand zur Grenze zeigt, wie knapp oder wie deutlich.",
+                       st["klein"]))
     s.append(Spacer(1, 14))
 
     s.append(_bild(_chart_marge_streuung(kunden, schwelle, breit=True), breite))
-    s.append(Paragraph("Marge gegen Beitragsvolumen je Kunde. Liegen die roten Punkte "
-                       "gleichmäßig über die Beitragsachse verteilt, betrifft das Problem "
-                       "nicht nur Kleinkunden, sondern auch beitragsstarke Kunden.",
+    s.append(Paragraph("Jeder Punkt ein Kunde. Verteilen sich die roten Punkte über die "
+                       "gesamte Beitragsachse, sind auch beitragsstarke Kunden betroffen.",
                        st["klein"]))
     s.append(Spacer(1, 14))
 
@@ -1822,28 +1803,26 @@ def erstelle_pdf(
                           [breite * 0.5, breite * 0.25, breite * 0.25], st))
         s.append(Spacer(1, 6))
         s.append(Paragraph(
-            "Der Aufwand ist als Differenz aus Beitrag und Ergebnis abgeleitet "
-            "(100 % minus Marge). Er ergänzt sich damit exakt zur Marge und ist unabhängig "
-            "davon, wie vollständig die Schaden- und Kostenfelder befüllt sind.",
+            "Aufwand = 100 % minus Marge, abgeleitet aus Beitrag und Ergebnis. Damit "
+            "unabhängig davon, wie vollständig die Schaden- und Kostenfelder befüllt sind.",
             st["klein"]))
     s.append(PageBreak())
 
     # ------------------------- Seite 4: Wo der Verlust beim einzelnen Kunden sitzt
     s.append(Paragraph("Wo der Verlust beim einzelnen Kunden sitzt", st["h1"]))
     s.append(Paragraph(
-        "Entscheidend für jede Maßnahme ist, ob der Verlust eines Kunden an einem "
-        "einzelnen Vertrag hängt oder sich über seinen gesamten Bestand zieht. Dazu "
-        "werden je nicht wertvollem Kunden die Verträge nach Ergebnis sortiert und "
-        "geprüft, wie viele der schlechtesten Verträge korrigiert werden müssten, damit "
-        "der Kunde die Negativ-Grenze verlässt.", st["lead"]))
+        "Hängt der Verlust an einzelnen Verträgen oder am gesamten Bestand des Kunden? "
+        "Je nicht wertvollem Kunden werden die Verträge nach Ergebnis sortiert und "
+        "geprüft, wie viele der schlechtesten korrigiert werden müssten, damit er die "
+        "Negativ-Grenze verlässt.", st["lead"]))
 
     s.append(_zwei_bilder(
         _chart_verlustvertraege(kunden),
         _chart_sanierung(erg["sanierung_verteilung"])
         if len(erg.get("sanierung_verteilung", [])) else None, breite))
     s.append(Paragraph("Links: Anteil der Verträge eines Kunden, die für sich genommen "
-                       "defizitär sind. Rechts: Anzahl der Verträge, deren Korrektur je "
-                       "Kunde nötig wäre.", st["klein"]))
+                       "defizitär sind. Rechts: notwendige Zahl an Korrekturen je Kunde.",
+                       st["klein"]))
     s.append(Spacer(1, 14))
 
     sv = erg.get("sanierung_verteilung")
@@ -1859,19 +1838,19 @@ def erstelle_pdf(
                            breite * 0.16, breite * 0.20], st))
         s.append(Spacer(1, 8))
         s.append(_hinweis(
-            "„Einvertragskunde“ bedeutet: Der Kunde hält nur einen Vertrag - eine "
-            "Teilsanierung ist nicht möglich, die Entscheidung betrifft die gesamte "
-            "Kundenbeziehung. „Kein Teilbestand reicht“ heißt: Auch nach Korrektur der "
-            "schlechtesten Verträge bliebe der Rest über der Negativ-Grenze.", st))
+            "<b>Einvertragskunde:</b> nur ein Vertrag, eine Teilsanierung ist nicht "
+            "möglich - die Entscheidung betrifft die gesamte Kundenbeziehung. "
+            "<b>Kein Teilbestand reicht:</b> auch der verbleibende Bestand läge noch "
+            "unter der Negativ-Grenze.", st))
     s.append(PageBreak())
 
     # ------------------------------------ Seite 5: Portfolio - Bereiche und Zweige
     bm, zjb = erg["bereich_mix"], erg.get("zweig_je_bereich")
     s.append(Paragraph("Portfoliostruktur: Bereiche und Zweige", st["h1"]))
     s.append(Paragraph(
-        "Oberste Unterscheidung ist der Bereich PKW gegenüber HUS. Innerhalb PKW wird "
-        "nach Sparte weiter aufgeteilt, innerhalb HUS nach Produkt - beides liegt damit "
-        "auf derselben Ebene und ist vergleichbar.", st["lead"]))
+        "Ebene 1 ist PKW gegenüber HUS. Ebene 2 teilt PKW nach Sparte und HUS nach "
+        "Produkt auf - beides liegt damit auf derselben Ebene und ist vergleichbar.",
+        st["lead"]))
 
     zeilen = [[str(i), _pct(r["anteil_vertraege_negativ"], 1),
                _pct(r["anteil_vertraege_positiv"], 1), _pct(r["delta_anteil_vertraege"], 1),
@@ -1890,8 +1869,8 @@ def erstelle_pdf(
 
     if zjb is not None and len(zjb):
         s.append(Paragraph("Ebene 2: Zweige innerhalb des Bereichs", st["h2"]))
-        s.append(Paragraph("Die Anteile beziehen sich auf die Verträge des jeweiligen "
-                           "Bereichs und addieren sich je Bereich und Segment auf 100 %.",
+        s.append(Paragraph("Anteile bezogen auf die Verträge des jeweiligen Bereichs; "
+                           "sie addieren sich je Bereich und Segment auf 100 %.",
                            st["text"]))
         zeilen, fett = [], []
         for bereich, block in zjb.groupby(level=0, observed=True, sort=False):
@@ -1922,13 +1901,13 @@ def erstelle_pdf(
         s.append(Paragraph("Verbund und Deckungsumfang", st["h1"]))
         s.append(Paragraph(
             "Hält ein Kunde nur PKW, nur HUS oder beides - und wie oft ist er dann nicht "
-            "wertvoll? Die Negativ-Quote ist der Anteil nicht wertvoller Kunden innerhalb "
-            "der jeweiligen Gruppe und damit direkt vergleichbar.", st["lead"]))
+            "wertvoll? Die Negativ-Quote misst den Anteil nicht wertvoller Kunden "
+            "innerhalb jeder Gruppe.", st["lead"]))
 
         s.append(_zwei_bilder(_chart_bereichskombination(bk),
                               _chart_bereichsmix(erg["bereich_mix"]), breite))
-        s.append(Paragraph("Links: Negativ-Quote je Kundengruppe. Rechts: mittlerer Anteil "
-                           "von PKW und HUS am Vertragsbestand des Kunden.", st["klein"]))
+        s.append(Paragraph("Links: Negativ-Quote je Kundengruppe. Rechts: Anteil von PKW "
+                           "und HUS am Vertragsbestand des Kunden.", st["klein"]))
         s.append(Spacer(1, 12))
 
         zeilen = [[str(i), _fmt(r["kunden_gesamt"]), _pct(r["negativ_quote"], 1),
@@ -1951,10 +1930,8 @@ def erstelle_pdf(
     if vp is not None and len(vp):
         s.append(Paragraph("Deckungsprofile innerhalb der PKW-Verträge", st["h2"]))
         s.append(Paragraph(
-            "Ein PKW-Vertrag (eine ve_id) kann mehrere Deckungen enthalten. Die Tabelle "
-            "vergleicht, welche Kombinationen in den Segmenten wie häufig vorkommen und "
-            "wie sie sich rechnen; die Anteile beziehen sich auf alle PKW-Verträge des "
-            "jeweiligen Segments.", st["text"]))
+            "Ein PKW-Vertrag (eine ve_id) kann mehrere Deckungen enthalten. Anteile "
+            "bezogen auf alle PKW-Verträge des jeweiligen Segments.", st["text"]))
         zeilen = [[str(i)[:34], _fmt(r["vertraege_negativ"] + r["vertraege_positiv"]),
                    _pct(r["anteil_vertraege_negativ"], 1),
                    _pct(r["anteil_vertraege_positiv"], 1),
@@ -1970,14 +1947,14 @@ def erstelle_pdf(
         s.append(PageBreak())
     s.append(Paragraph("Verlusttreiber und Konzentration", st["h1"]))
     s.append(Paragraph(
-        "In welchen Zweigen entsteht der negative Ergebnisbeitrag - und wie breit ist er "
-        "über die Kunden gestreut? Die Antwort bestimmt, ob eine Maßnahme breit ansetzen "
-        "muss oder auf wenige Kunden fokussiert werden kann.", st["lead"]))
+        "In welchen Zweigen entsteht der Verlust, und wie breit streut er über die "
+        "Kunden? Davon hängt ab, ob eine Maßnahme breit ansetzen muss oder auf wenige "
+        "Kunden fokussiert werden kann.", st["lead"]))
 
     s.append(_zwei_bilder(_chart_verlusttreiber(erg["verlusttreiber_zweig"]),
                           _chart_konzentration(kunden), breite))
-    s.append(Paragraph("Links: Zweige mit dem größten negativen Ergebnisbeitrag im "
-                       "Segment. Rechts: Konzentration des Verlusts (Lorenzkurve).",
+    s.append(Paragraph("Links: Zweige mit dem größten Verlustbeitrag. Rechts: "
+                       "Konzentration des Verlusts über die Kunden (Lorenzkurve).",
                        st["klein"]))
     s.append(Spacer(1, 14))
 
@@ -2011,19 +1988,19 @@ def erstelle_pdf(
     s.append(Paragraph("Methodik und Robustheit", st["h1"]))
     s.append(Paragraph("Definition der Segmentierung", st["h2"]))
     s.append(_hinweis(
-        f"Je Kunde (vn_partner_id) werden Beitrag und Ergebnis über alle Verträge "
-        f"summiert. Ein Kunde gilt als <b>nicht wertvoll</b>, wenn das aggregierte Ergebnis "
-        f"negativ ist <b>und</b> betragsmäßig mindestens 20 Prozent des aggregierten "
-        f"Bestandsjahresnettobeitrags erreicht. Formal: {regel}. Alle übrigen Kunden "
-        f"gelten als wertvoll.", st))
+        f"Beitrag und Ergebnis werden je vn_partner_id über alle Verträge summiert. "
+        f"<b>Nicht wertvoll</b>, wenn das aggregierte Ergebnis negativ ist <b>und</b> "
+        f"betragsmäßig mindestens 20 Prozent des aggregierten Bestandsjahresnetto"
+        f"beitrags erreicht - formal: {regel}. Alle übrigen Kunden gelten als wertvoll.",
+        st))
     s.append(Spacer(1, 10))
 
     s.append(Paragraph("Zählweise von Verträgen", st["h2"]))
     s.append(_hinweis(
         f"Eine ve_id kann mehrere Zeilen umfassen, wenn ein Vertrag mehrere Deckungen "
         f"enthält (z. B. Haftpflicht und Teilkasko in einem PKW-Vertrag). "
-        f"<b>Beiträge und Ergebnisse werden über alle Zeilen summiert, Verträge dagegen "
-        f"dedupliziert auf ve_id gezählt.</b> Im vorliegenden Datenstand entfallen "
+        f"<b>Beiträge und Ergebnisse werden über alle Zeilen summiert, Verträge "
+        f"dedupliziert auf ve_id gezählt.</b> Aktuell entfallen "
         f"{_fmt(kunden['n_positionen'].sum())} Positionen auf "
         f"{_fmt(kunden['n_vertraege'].sum())} Verträge "
         f"({_fmt(kunden['n_positionen'].sum() / max(kunden['n_vertraege'].sum(), 1), 2)} "
@@ -2032,10 +2009,9 @@ def erstelle_pdf(
 
     s.append(Paragraph("Aufbau der Auswertungsebenen", st["h2"]))
     s.append(_hinweis(
-        "<b>Ebene 1 (ve_bereich):</b> PKW gegenüber HUS - alles, was nicht dem "
-        "PKW-Produkt zugeordnet ist, zählt zu HUS. <b>Ebene 2 (ve_zweig):</b> innerhalb "
-        "PKW die ve_sparte, innerhalb HUS das ve_produkt. Dadurch stehen sich nur "
-        "gleichrangige Einheiten gegenüber.", st))
+        "<b>Ebene 1 (ve_bereich):</b> PKW gegenüber HUS - alles, was nicht PKW ist, "
+        "zählt zu HUS. <b>Ebene 2 (ve_zweig):</b> innerhalb PKW die ve_sparte, innerhalb "
+        "HUS das ve_produkt. So stehen sich nur gleichrangige Einheiten gegenüber.", st))
     s.append(Spacer(1, 10))
 
     eu = erg.get("ebenen_uebersicht")
@@ -2052,9 +2028,8 @@ def erstelle_pdf(
     s.append(PageBreak())
     s.append(Paragraph("Sensitivität der Segmentgrenze", st["h1"]))
     s.append(Paragraph(
-        "Die 20-Prozent-Grenze ist eine Setzung. Die Grafik zeigt, wie stark Segmentgröße "
-        "und gebundenes Beitragsvolumen auf eine andere Wahl reagieren - und damit, wie "
-        "robust die Befunde gegenüber dieser Setzung sind.", st["lead"]))
+        "Die 20-Prozent-Grenze ist eine Setzung. Wie stark reagieren Segmentgröße und "
+        "gebundenes Beitragsvolumen auf eine andere Wahl?", st["lead"]))
     s.append(_bild(_chart_sensitivitaet(erg["sensitivitaet"]), breite * 0.72))
     s.append(Spacer(1, 10))
 
