@@ -916,6 +916,7 @@ def exportiere_excel(erg: Dict[str, pd.DataFrame], pfad: str = "kundenwert_analy
 
 
 
+
 """
 kundenwert_report.py
 ====================
@@ -1253,31 +1254,33 @@ def _chart_vertragsverteilung(vv: pd.DataFrame) -> plt.Figure:
 
 
 def _chart_beitragsverwendung(bv: pd.DataFrame) -> plt.Figure:
-    """Wofür geht der Beitrag drauf? Schaden + Kosten gegen die 100-%-Linie."""
+    """Gesamtaufwand je Segment gegen die 100-%-Linie des Beitrags."""
     fig, ax = plt.subplots(figsize=(8.6, 2.1))
     labels, y = [], []
     for i, (flag, name) in enumerate([("negativ", "nicht wertvoll"), ("positiv", "wertvoll")]):
         if flag not in bv.index:
             continue
         r = bv.loc[flag]
+        aufwand = r["combined_ratio"]
         y.append(i)
         labels.append(name)
-        ax.barh(i, r["schadenquote"], color=MPL_NEGATIV if flag == "negativ" else MPL_POSITIV,
-                height=0.45)
-        ax.barh(i, r["kostenquote"], left=r["schadenquote"], height=0.45,
-                color="#8FA8B8" if flag == "negativ" else "#9FBFAE")
-        ax.text(r["schadenquote"] / 2, i, f"Schaden {_pct(r['schadenquote'], 0)}",
-                ha="center", va="center", color="white", fontsize=8, fontweight="bold")
-        ax.text(r["schadenquote"] + r["kostenquote"] / 2, i,
-                f"Kosten {_pct(r['kostenquote'], 0)}", ha="center", va="center",
-                color="white", fontsize=8, fontweight="bold")
-        ax.text(max(r["combined_ratio"], 1.0) + 0.04, i,
-                f"CR {_fmt(r['combined_ratio'], 2)}  →  Ergebnis {_pct(r['ergebnisquote'], 0)}",
+        farbe = MPL_NEGATIV if flag == "negativ" else MPL_POSITIV
+        # Anteil bis 100 % ist durch den Beitrag gedeckt, darüber hinaus entsteht Verlust
+        ax.barh(i, min(aufwand, 1.0), color=farbe, height=0.45)
+        if aufwand > 1.0:
+            ax.barh(i, aufwand - 1.0, left=1.0, height=0.45, color=farbe, alpha=0.45,
+                    hatch="///", edgecolor="white", linewidth=0)
+        ax.text(min(aufwand, 1.0) / 2, i, f"Aufwand {_pct(aufwand, 0)} des Beitrags",
+                ha="center", va="center", color="white", fontsize=8.5, fontweight="bold")
+        ergebnis = r["ergebnisquote"]
+        wort = "Verlust" if ergebnis < 0 else "Ergebnis"
+        ax.text(max(aufwand, 1.0) + 0.04, i,
+                f"{wort} {_pct(ergebnis, 0)} des Beitrags",
                 va="center", fontsize=8.5, color=MPL_PRIMAER, fontweight="bold")
     ax.axvline(1.0, color=MPL_PRIMAER, ls="--", lw=1.2)
     ax.text(1.0, -0.75, "Beitrag = 100 %", fontsize=8, color=MPL_PRIMAER, ha="center")
     ax.set_yticks(y, labels, fontsize=9)
-    ax.set_xlim(0, max(1.55, bv["combined_ratio"].max() * 1.35))
+    ax.set_xlim(0, max(1.65, bv["combined_ratio"].max() * 1.45))
     ax.invert_yaxis()
     ax.set_xticks([])
     ax.grid(False)
@@ -1563,9 +1566,10 @@ def _kernaussagen(erg: Dict[str, pd.DataFrame]) -> List[str]:
         hoeher = "höher" if diff > 0 else "niedriger"
         preis = (f"Der Beitrag je Vertrag liegt im negativen Segment mit {_eur(b_neg)} sogar "
                  f"{_pct(abs(diff), 1)} {hoeher} als im wertvollen ({_eur(b_pos)}).")
-    a.append(f"{preis} Die Combined Ratio unterscheidet sich dagegen deutlich: "
-             f"<b>{_fmt(cr_neg, 2)} gegenüber {_fmt(cr_pos, 2)}</b>. Der Ergebnisunterschied "
-             f"ist damit kein Preis-, sondern ein Risiko- und Kostenproblem.")
+    a.append(f"{preis} Der Aufwand im Verhältnis zum Beitrag unterscheidet sich dagegen "
+             f"deutlich: <b>{_pct(cr_neg, 1)} gegenüber {_pct(cr_pos, 1)}</b>. Der "
+             f"Ergebnisunterschied entsteht damit nicht über den Preis, sondern über den "
+             f"Aufwand.")
 
     # 3) Ebene 1: PKW vs. HUS
     bk = erg.get("bereichs_kombination")
@@ -1768,7 +1772,7 @@ def erstelle_pdf(
         ("Profit gesamt", "Ergebnis gesamt", _eur_kurz),
         ("Profit je Kunde (Mittel)", "Ergebnis je Kunde (Mittel)", _eur),
         ("Marge gepoolt (Profit/Beitrag)", "Marge (gepoolt)", _pct),
-        ("CR gepoolt", "Combined Ratio", lambda x: _fmt(x, 2)),
+        ("CR gepoolt", "Aufwand in % des Beitrags", lambda x: _pct(x, 1)),
         ("Anteil Verlustverträge je Kunde (Mittel)", "Anteil defizitärer Verträge", _pct),
     ]
     zeilen = [[label, f(kz.loc[k, "negativ"]), f(kz.loc[k, "positiv"])]
@@ -1792,23 +1796,26 @@ def erstelle_pdf(
     s.append(Paragraph("Wie Kunden negativ werden", st["h1"]))
     s.append(Paragraph(
         "Ein Kunde wird nicht dadurch negativ, dass er zu wenig Beitrag zahlt, sondern "
-        "dadurch, dass Schaden und Kosten seinen Beitrag übersteigen. Die Grafik zerlegt "
-        "den Beitrag beider Segmente in Schadenaufwand, Kosten und verbleibendes Ergebnis.",
-        st["lead"]))
+        "dadurch, dass der Aufwand seinen Beitrag übersteigt. Die Grafik stellt den "
+        "Gesamtaufwand beider Segmente dem Beitrag gegenüber.", st["lead"]))
     if bv is not None and len(bv):
         s.append(_bild(_chart_beitragsverwendung(bv), breite))
         s.append(Paragraph("Alles rechts der gestrichelten Linie übersteigt den Beitrag "
                            "und ist Verlust.", st["klein"]))
         s.append(Spacer(1, 10))
         zeilen = []
-        for k, label in (("schadenquote", "Schadenquote (erwarteter Schaden / Beitrag)"),
-                         ("kostenquote", "Kostenquote (Kosten / Beitrag)"),
-                         ("combined_ratio", "Combined Ratio"),
+        for k, label in (("combined_ratio", "Aufwand in Prozent des Beitrags (Combined Ratio)"),
                          ("ergebnisquote", "Ergebnisquote (Marge)")):
-            f = (lambda x: _fmt(x, 2)) if k == "combined_ratio" else _pct
+            f = _pct if k == "ergebnisquote" else (lambda x: _pct(x, 1))
             zeilen.append([label, f(bv.loc["negativ", k]) if "negativ" in bv.index else "n. v.",
                            f(bv.loc["positiv", k]) if "positiv" in bv.index else "n. v."])
-        s.append(_tabelle(["Verwendung des Beitrags", "nicht wertvoll", "wertvoll"], zeilen,
+        zeilen.append(["Beitragsvolumen des Segments",
+                       _eur_kurz(kz.loc["Beitrag gesamt", "negativ"]),
+                       _eur_kurz(kz.loc["Beitrag gesamt", "positiv"])])
+        zeilen.append(["Ergebnis des Segments",
+                       _eur_kurz(kz.loc["Profit gesamt", "negativ"]),
+                       _eur_kurz(kz.loc["Profit gesamt", "positiv"])])
+        s.append(_tabelle(["Beitrag und Aufwand", "nicht wertvoll", "wertvoll"], zeilen,
                           [breite * 0.5, breite * 0.25, breite * 0.25], st))
     s.append(Spacer(1, 14))
 
@@ -2050,4 +2057,3 @@ def erstelle_pdf(
 
     doc.build(s)
     return pfad
-    drucke_report(analysiere_kundenwert(demo))
