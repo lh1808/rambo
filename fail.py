@@ -348,6 +348,138 @@ def treiber_zweig(df: pd.DataFrame, k: pd.DataFrame,
     return wide.sort_values("durchdringung_alle_zusatz", ascending=False)
 
 
+def wertvergleich(k: pd.DataFrame) -> pd.DataFrame:
+    """
+    Der Kundenwert selbst - unabhängig von jeder Schwelle. Je Sicht das aggregierte
+    Ergebnis, das Ergebnis je Kunde und die Marge.
+    """
+    zeilen = []
+    for sicht, name in (("pkw", "PKW-Sicht"), ("kfz", "KFZ-Sicht"),
+                        ("gesamt", "Gesamtsicht")):
+        beitrag, profit = k[f"beitrag_{sicht}"].sum(), k[f"profit_{sicht}"].sum()
+        zeilen.append({
+            "sicht": name,
+            "beitrag": beitrag,
+            "profit": profit,
+            "marge": profit / beitrag if beitrag else np.nan,
+            "profit_je_kunde_mittel": k[f"profit_{sicht}"].mean(),
+            "profit_je_kunde_median": k[f"profit_{sicht}"].median(),
+            "marge_je_kunde_median": k[f"marge_{sicht}"].median(),
+            "kunden_mit_negativem_wert": float((k[f"profit_{sicht}"] < 0).mean()),
+        })
+    return pd.DataFrame(zeilen).set_index("sicht")
+
+
+def wertdelta(k: pd.DataFrame) -> pd.DataFrame:
+    """
+    Verteilung der Wertunterschiede je Kunde - in Euro und in Margenpunkten.
+    Positiv heißt: In der PKW-Sicht steht der Kunde besser da als in der Gesamtsicht.
+    """
+    q = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
+    paare = {
+        "PKW minus KFZ": (k["profit_pkw"] - k["profit_kfz"], k["delta_marge_pkw_kfz"]),
+        "KFZ minus gesamt": (k["profit_kfz"] - k["profit_gesamt"],
+                             k["delta_marge_kfz_gesamt"]),
+        "PKW minus gesamt": (k["profit_pkw"] - k["profit_gesamt"], k["delta_marge"]),
+    }
+    zeilen = {}
+    for name, (eur, marge) in paare.items():
+        werte = {"mittel_eur": eur.mean(), "median_eur": eur.median(),
+                 "median_marge": marge.median(),
+                 "anteil_ueber_100_eur": float((eur.abs() > 100).mean()),
+                 "anteil_ueber_10_pp": float((marge.abs() > 0.10).mean())}
+        for qq in q:
+            werte[f"eur_p{int(qq * 100)}"] = eur.quantile(qq)
+        zeilen[name] = werte
+    return pd.DataFrame(zeilen).T
+
+
+def dezil_matrix(k: pd.DataFrame, sicht_a: str = "pkw", sicht_b: str = "gesamt",
+                 groesse: str = "marge", n: int = 10) -> pd.DataFrame:
+    """
+    Wanderung zwischen den Dezilen: Wo landet ein Kunde, der in Sicht A im Dezil X
+    liegt, wenn man nach Sicht B sortiert? Dezil 1 = schlechteste Kunden.
+    Werte sind Zeilenanteile.
+    """
+    d = k[[f"{groesse}_{sicht_a}", f"{groesse}_{sicht_b}"]].dropna()
+    if d.empty:
+        return pd.DataFrame()
+    labels = list(range(1, n + 1))
+    da = pd.qcut(d[f"{groesse}_{sicht_a}"].rank(method="first"), n, labels=labels)
+    db = pd.qcut(d[f"{groesse}_{sicht_b}"].rank(method="first"), n, labels=labels)
+    m = pd.crosstab(da, db, normalize="index")
+    m.index.name = f"Dezil {sicht_a}"
+    m.columns.name = f"Dezil {sicht_b}"
+    return m
+
+
+def rangkennzahlen(k: pd.DataFrame, groesse: str = "marge", n: int = 10) -> pd.DataFrame:
+    """
+    Wie stabil ist die Reihenfolge zwischen den Sichten? Rangkorrelation,
+    durchschnittliche Perzentilverschiebung und Dezilwanderung je Sichtpaar.
+    """
+    zeilen = {}
+    for a, b, name in (("pkw", "kfz", "PKW gegen KFZ"),
+                       ("kfz", "gesamt", "KFZ gegen gesamt"),
+                       ("pkw", "gesamt", "PKW gegen gesamt")):
+        d = k[[f"{groesse}_{a}", f"{groesse}_{b}"]].dropna()
+        if d.empty:
+            continue
+        ra = d[f"{groesse}_{a}"].rank(pct=True, method="first")
+        rb = d[f"{groesse}_{b}"].rank(pct=True, method="first")
+        da = pd.qcut(ra, n, labels=range(1, n + 1)).astype(int)
+        db = pd.qcut(rb, n, labels=range(1, n + 1)).astype(int)
+        sprung = (da - db).abs()
+        werte = {
+            "kunden": len(d),
+            "spearman": float(ra.corr(rb, method="spearman")),
+            "perzentilverschiebung_mittel": float((ra - rb).abs().mean()),
+            "perzentilverschiebung_p90": float((ra - rb).abs().quantile(0.90)),
+            "gleiches_dezil": float((sprung == 0).mean()),
+            "sprung_1_dezil": float((sprung == 1).mean()),
+            "sprung_2_plus": float((sprung >= 2).mean()),
+            "sprung_3_plus": float((sprung >= 3).mean()),
+        }
+        try:
+            from scipy.stats import kendalltau
+            werte["kendall"] = float(kendalltau(ra, rb).statistic)
+        except ImportError:
+            pass
+        zeilen[name] = werte
+    return pd.DataFrame(zeilen).T
+
+
+def auswahlueberlappung(k: pd.DataFrame, groesse: str = "marge",
+                        anteile: Sequence[float] = (0.05, 0.10, 0.15, 0.20, 0.30, 0.50)
+                        ) -> pd.DataFrame:
+    """
+    Überlappung der Auswahllisten: Wie viele Kunden stehen auf beiden Listen, wenn
+    man die schlechtesten X Prozent nach der jeweiligen Sicht auswählt?
+    """
+    d = k[[f"{groesse}_pkw", f"{groesse}_kfz", f"{groesse}_gesamt",
+           "profit_gesamt", "beitrag_gesamt"]].dropna(
+        subset=[f"{groesse}_pkw", f"{groesse}_kfz", f"{groesse}_gesamt"])
+    if d.empty:
+        return pd.DataFrame()
+    zeilen = []
+    for a in anteile:
+        n = max(1, int(round(len(d) * a)))
+        listen = {s: set(d[f"{groesse}_{s}"].nsmallest(n).index)
+                  for s in ("pkw", "kfz", "gesamt")}
+        nur_pkw = listen["pkw"] - listen["gesamt"]
+        zeilen.append({
+            "auswahl": a,
+            "kunden_je_liste": n,
+            "pkw_vs_kfz": len(listen["pkw"] & listen["kfz"]) / n,
+            "kfz_vs_gesamt": len(listen["kfz"] & listen["gesamt"]) / n,
+            "pkw_vs_gesamt": len(listen["pkw"] & listen["gesamt"]) / n,
+            "nur_in_pkw_liste": len(nur_pkw),
+            "ergebnis_nur_pkw_liste": d.loc[list(nur_pkw), "profit_gesamt"].sum(),
+            "beitrag_nur_pkw_liste": d.loc[list(nur_pkw), "beitrag_gesamt"].sum(),
+        })
+    return pd.DataFrame(zeilen).set_index("auswahl")
+
+
 def rangvergleich(k: pd.DataFrame, anteile: Sequence[float] = (0.05, 0.10, 0.20)) -> pd.DataFrame:
     """
     Für Priorisierungen: Wählt man die schlechtesten X % nach PKW-Sicht oder nach
@@ -409,6 +541,14 @@ def analysiere_sichten(df: pd.DataFrame, schwelle: float = 0.20,
     erg = {
         "kunden": k,
         "eckwerte": eckwerte(k),
+        # Werte und Reihenfolge - unabhängig von der Schwelle
+        "wertvergleich": wertvergleich(k),
+        "wertdelta": wertdelta(k),
+        "rangkennzahlen": rangkennzahlen(k),
+        "auswahlueberlappung": auswahlueberlappung(k),
+        "dezil_matrix_pkw_gesamt": dezil_matrix(k, "pkw", "gesamt"),
+        "dezil_matrix_pkw_kfz": dezil_matrix(k, "pkw", "kfz"),
+        # Binäre Einstufung (nachrangig)
         "sichtstufen": sichtstufen(k),
         "stufenwechsel": stufenwechsel(k),
         "bestandsprofile": (k.groupby("bestandsprofil", observed=True)
@@ -454,6 +594,94 @@ def drucke_sichtreport(erg: Dict[str, pd.DataFrame]) -> None:
 # ======================================================================================
 # Grafiken
 # ======================================================================================
+def _chart_dezilmatrix(m: pd.DataFrame, sicht_a: str = "PKW-Sicht",
+                       sicht_b: str = "Gesamtsicht") -> plt.Figure:
+    """Dezilwanderung als Matrix - die Diagonale zeigt Kunden, die ihren Rang halten."""
+    fig, ax = plt.subplots(figsize=(4.6, 3.6))
+    werte = m.values * 100
+    ax.imshow(werte, cmap="Blues", vmin=0, vmax=max(werte.max(), 1))
+    for i in range(werte.shape[0]):
+        for j in range(werte.shape[1]):
+            v = werte[i, j]
+            if v >= 1:
+                ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=6.5,
+                        color="white" if v > werte.max() * 0.55 else MPL_PRIMAER)
+    ax.set_xticks(range(len(m.columns)), [str(c) for c in m.columns], fontsize=7)
+    ax.set_yticks(range(len(m.index)), [str(i) for i in m.index], fontsize=7)
+    ax.set_xlabel(f"Dezil in der {sicht_b}", fontsize=8)
+    ax.set_ylabel(f"Dezil in der {sicht_a}", fontsize=8)
+    ax.set_title("Zeilenanteile in Prozent - Dezil 1 = schlechteste Kunden",
+                 loc="left", fontsize=8, color=MPL_GRAU, pad=6)
+    ax.grid(False)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _chart_ueberlappung(au: pd.DataFrame) -> plt.Figure:
+    """Überlappung der Auswahllisten über verschiedene Auswahlgrößen."""
+    fig, ax = plt.subplots(figsize=(4.2, 3.0))
+    ax.plot(au.index, au["pkw_vs_kfz"], marker="o", color=MPL_GRAU, lw=1.8,
+            label="PKW gegen KFZ")
+    ax.plot(au.index, au["pkw_vs_gesamt"], marker="s", color=MPL_NEGATIV, lw=1.8,
+            label="PKW gegen gesamt")
+    ax.plot(au.index, au["kfz_vs_gesamt"], marker="^", color=MPL_AKZENT, lw=1.8, ls="--",
+            label="KFZ gegen gesamt")
+    ax.set_xlabel("Größe der Auswahl (schlechteste ... Prozent)", fontsize=8)
+    ax.set_ylabel("Anteil gemeinsamer Kunden", fontsize=8)
+    ax.xaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    ax.yaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    ax.set_ylim(0, 1)
+    ax.legend(frameon=False, fontsize=8, loc="lower right")
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _chart_wertdelta(k: pd.DataFrame) -> plt.Figure:
+    """Wertunterschied je Kunde in Euro - wie weit liegen die Sichten auseinander?"""
+    d = (k["profit_pkw"] - k["profit_gesamt"]).dropna()
+    grenze = float(d.abs().quantile(0.98)) or 1.0
+    fig, ax = plt.subplots(figsize=(4.2, 3.0))
+    ax.hist(d.clip(-grenze, grenze), bins=61, color=MPL_AKZENT)
+    ax.axvline(0, color=MPL_PRIMAER, lw=1.1)
+    ax.set_xlabel("Ergebnis in PKW-Sicht minus Ergebnis gesamt (EUR je Kunde)", fontsize=8)
+    ax.set_ylabel("Kunden", fontsize=8)
+    ax.xaxis.set_major_formatter(lambda v, p: _fmt(v, 0))
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _chart_werte_je_sicht(wv: pd.DataFrame) -> plt.Figure:
+    """Ergebnis je Kunde und Marge über die drei Sichten."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.6, 2.5))
+    x = np.arange(len(wv))
+    for ax, spalte, titel, fmt in (
+            (ax1, "profit_je_kunde_median", "Ergebnis je Kunde (Median)",
+             lambda v: _eur(v)),
+            (ax2, "marge_je_kunde_median", "Marge je Kunde (Median)",
+             lambda v: _pct(v, 1))):
+        farben = [MPL_NEGATIV if v < 0 else MPL_POSITIV for v in wv[spalte]]
+        b = ax.bar(x, wv[spalte], color=farben, width=0.55)
+        ax.bar_label(b, labels=[fmt(v) for v in wv[spalte]], fontsize=8, padding=3,
+                     color=MPL_PRIMAER, fontweight="bold")
+        ax.set_xticks(x, [str(i) for i in wv.index], fontsize=8.5)
+        ax.set_title(titel, loc="left", fontsize=9.5, fontweight="bold",
+                     color=MPL_PRIMAER, pad=8)
+        ax.axhline(0, color=MPL_GRAU, lw=0.8)
+        ax.set_yticks([])
+        ax.margins(y=0.30)
+        ax.grid(False)
+        for s in ax.spines.values():
+            s.set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
 def _chart_streuung_sichten(k: pd.DataFrame, schwelle: float,
                             max_punkte: int = 6000) -> plt.Figure:
     """Marge in PKW-Sicht gegen Marge in Gesamtsicht, Quadranten durch die Grenze."""
@@ -593,71 +821,64 @@ def _chart_sensitivitaet_sichten(sens: pd.DataFrame) -> plt.Figure:
 # ======================================================================================
 def _befunde(erg: Dict[str, pd.DataFrame]) -> List[str]:
     k, ew = erg["kunden"], erg["eckwerte"]["wert"]
-    ss, sw = erg["sichtstufen"], erg["stufenwechsel"]
+    wv, wd, rk = erg["wertvergleich"], erg["wertdelta"], erg["rangkennzahlen"]
     a: List[str] = []
 
     a.append(f"Von {_fmt(ew['PKW-Kunden gesamt'])} PKW-Kunden halten "
              f"<b>{_pct(ew['Anteil mit Zusatzgeschäft'], 1)}</b> weitere Verträge - "
              f"{_fmt(ew['davon mit KFZ_Rest'])} im übrigen KFZ, "
-             f"{_fmt(ew['davon mit HUS'])} in HUS. Nur bei ihnen können sich die Sichten "
-             f"unterscheiden; für reine PKW-Kunden sind alle drei identisch.")
+             f"{_fmt(ew['davon mit HUS'])} in HUS. Nur bei ihnen unterscheiden sich die "
+             f"Sichten; für reine PKW-Kunden sind alle drei identisch.")
 
-    a.append(f"Die Negativ-Quote sinkt mit jeder Erweiterung der Perspektive: "
-             f"<b>{_pct(ss.loc['PKW-Sicht', 'negativ_quote'], 1)}</b> in der PKW-Sicht, "
-             f"{_pct(ss.loc['KFZ-Sicht', 'negativ_quote'], 1)} in der KFZ-Sicht, "
-             f"{_pct(ss.loc['Gesamtsicht', 'negativ_quote'], 1)} in der Gesamtsicht. "
-             f"Die Marge des betrachteten Bestands steigt entsprechend von "
-             f"{_pct(ss.loc['PKW-Sicht', 'marge'], 1)} auf "
-             f"{_pct(ss.loc['Gesamtsicht', 'marge'], 1)}.")
+    a.append(f"Der Kundenwert selbst verschiebt sich deutlich: Das Ergebnis je Kunde "
+             f"(Median) liegt bei <b>{_eur(wv.loc['PKW-Sicht', 'profit_je_kunde_median'])}</b> "
+             f"in der PKW-Sicht, {_eur(wv.loc['KFZ-Sicht', 'profit_je_kunde_median'])} in "
+             f"der KFZ-Sicht und {_eur(wv.loc['Gesamtsicht', 'profit_je_kunde_median'])} "
+             f"in der Gesamtsicht; die Marge des betrachteten Bestands steigt von "
+             f"{_pct(wv.loc['PKW-Sicht', 'marge'], 1)} auf "
+             f"{_pct(wv.loc['Gesamtsicht', 'marge'], 1)}.")
 
-    a.append(f"Der größere Schritt ist HUS, nicht KFZ_Rest: Von PKW- auf KFZ-Sicht ändert "
-             f"sich die Einstufung bei <b>{_pct(sw.loc['PKW-Sicht zu KFZ-Sicht', 'anteil'], 1)}</b> "
-             f"der Kunden, von KFZ- auf Gesamtsicht bei "
-             f"<b>{_pct(sw.loc['KFZ-Sicht zu Gesamtsicht', 'anteil'], 1)}</b>. Insgesamt "
-             f"weichen PKW-Sicht und Gesamtsicht bei "
-             f"{_pct(sw.loc['PKW-Sicht zu Gesamtsicht', 'anteil'], 1)} der Kunden ab "
-             f"({_fmt(sw.loc['PKW-Sicht zu Gesamtsicht', 'kunden'])} Kunden).")
+    if "PKW minus gesamt" in wd.index:
+        r = wd.loc["PKW minus gesamt"]
+        a.append(f"Je Kunde weichen die Werte im Median um "
+                 f"{_eur(r['median_eur'])} ab, bei einem Zehntel der Kunden um mehr als "
+                 f"{_eur(abs(r['eur_p10']))} nach unten oder {_eur(r['eur_p90'])} nach "
+                 f"oben. Bei <b>{_pct(r['anteil_ueber_100_eur'], 1)}</b> der Kunden liegt "
+                 f"der Unterschied über 100 EUR, bei "
+                 f"{_pct(r['anteil_ueber_10_pp'], 1)} über 10 Margenpunkten.")
 
-    wg = erg["wechselgruppen"]
-    if WECHSLER[0] in wg.index and wg.loc[WECHSLER[0], "kunden"] > 0:
-        r = wg.loc[WECHSLER[0]]
-        a.append(f"<b>{_fmt(r['kunden'])} Kunden ({_pct(r['anteil_kunden'], 1)})</b> sind nur "
-                 f"in der PKW-Sicht negativ: Ihr Zusatzgeschäft trägt im Schnitt "
-                 f"{_eur(r['profit_zusatz_je_kunde'])} Ergebnis je Kunde bei und hebt sie "
-                 f"in der Gesamtsicht über die Grenze. Median-Marge "
-                 f"{_pct(r['marge_pkw'], 1)} im PKW gegenüber {_pct(r['marge_gesamt'], 1)} "
-                 f"gesamt.")
-    if WECHSLER[1] in wg.index and wg.loc[WECHSLER[1], "kunden"] > 0:
-        r = wg.loc[WECHSLER[1]]
-        a.append(f"Umgekehrt sind <b>{_fmt(r['kunden'])} Kunden ({_pct(r['anteil_kunden'], 1)})</b> "
-                 f"nur in der Gesamtsicht negativ - hier zieht das Zusatzgeschäft mit "
-                 f"{_eur(r['profit_zusatz_je_kunde'])} je Kunde einen im PKW auskömmlichen "
-                 f"Kunden ins Minus.")
+    if "PKW gegen gesamt" in rk.index and "PKW gegen KFZ" in rk.index:
+        rg, rk2 = rk.loc["PKW gegen gesamt"], rk.loc["PKW gegen KFZ"]
+        a.append(f"Für die Reihenfolge ist der Sprung zur Gesamtsicht der entscheidende: "
+                 f"Die Rangkorrelation beträgt <b>{_fmt(rg['spearman'], 2)}</b> zwischen "
+                 f"PKW und gesamt, aber {_fmt(rk2['spearman'], 2)} zwischen PKW und KFZ. "
+                 f"Nur {_pct(rg['gleiches_dezil'], 1)} der Kunden bleiben im selben Dezil, "
+                 f"<b>{_pct(rg['sprung_2_plus'], 1)}</b> springen um zwei Dezile oder mehr.")
+
+    au = erg.get("auswahlueberlappung")
+    if au is not None and len(au) and 0.10 in au.index:
+        r = au.loc[0.10]
+        a.append(f"Konkret für eine Auswahl der schlechtesten 10 %: Von "
+                 f"{_fmt(r['kunden_je_liste'])} Kunden je Liste stehen "
+                 f"<b>{_pct(r['pkw_vs_gesamt'], 0)}</b> auf beiden. "
+                 f"{_fmt(r['nur_in_pkw_liste'])} Kunden würden nur nach PKW-Sicht "
+                 f"ausgewählt - sie tragen über alle Verträge zusammen "
+                 f"{_eur_kurz(r['ergebnis_nur_pkw_liste'])} Ergebnis bei "
+                 f"{_eur_kurz(r['beitrag_nur_pkw_liste'])} Beitrag.")
 
     th = erg.get("treiber_husanteil")
     if th is not None and len(th) > 1:
-        oben, unten = th["wechselquote"].idxmax(), th["wechselquote"].idxmin()
-        a.append(f"Das Delta hängt am Gewicht des Zusatzgeschäfts: Macht es "
-                 f"<b>{oben}</b> des Beitrags aus, weichen "
-                 f"{_pct(th.loc[oben, 'wechselquote'], 1)} der Einstufungen ab, bei "
-                 f"<b>{unten}</b> nur {_pct(th.loc[unten, 'wechselquote'], 1)}.")
+        oben, unten = th["delta_marge_median"].abs().idxmax(), th["delta_marge_median"].abs().idxmin()
+        a.append(f"Der Unterschied wächst mit dem Gewicht des Zusatzgeschäfts: Macht es "
+                 f"<b>{oben}</b> des Beitrags aus, liegt der Margenunterschied im Median "
+                 f"bei {_pct(th.loc[oben, 'delta_marge_median'], 1)}, bei <b>{unten}</b> "
+                 f"nur bei {_pct(th.loc[unten, 'delta_marge_median'], 1)}.")
 
-    rv = erg.get("rangvergleich")
-    if rv is not None and len(rv) and 0.10 in rv.index:
-        r = rv.loc[0.10]
-        sp, sp_kfz = rv.attrs.get("spearman"), rv.attrs.get("spearman_pkw_kfz")
-        zusatz = ""
-        if sp is not None and sp_kfz is not None:
-            zusatz = (f" Rangkorrelation der Margen: {_fmt(sp_kfz, 2)} zwischen PKW und "
-                      f"KFZ, {_fmt(sp, 2)} zwischen PKW und gesamt.")
-        a.append(f"Für eine Priorisierung: Bei den schlechtesten 10 % überlappen PKW- und "
-                 f"KFZ-Liste zu <b>{_pct(r['pkw_vs_kfz'], 0)}</b>, PKW- und Gesamtliste nur "
-                 f"zu <b>{_pct(r['pkw_vs_gesamt'], 0)}</b> - "
-                 f"{_fmt(r['nur_in_pkw_liste'])} Kunden stünden nur auf der PKW-Liste."
-                 f"{zusatz}")
+    a.append(f"Legt man zusätzlich eine Negativ-Grenze an, ändert sich die Einstufung bei "
+             f"{_pct(ew['Anteil an allen PKW-Kunden'], 1)} der Kunden - diese Zahl hängt "
+             f"aber an der gewählten Schwelle und ist nur ein Ausschnitt der oben "
+             f"gezeigten Wertverschiebung.")
     return a
-
-
 # ======================================================================================
 # PDF
 # ======================================================================================
@@ -704,26 +925,28 @@ def erstelle_pkw_report(
     # ------------------------------------------------------------ Fragestellung
     s.append(Paragraph("Fragestellung", st["h1"]))
     s.append(Paragraph(
-        f"Für PKW-Use-Cases lässt sich der Kundenwert auf drei Arten aggregieren: nur "
-        f"über die PKW-Verträge, über alle KFZ-Verträge (PKW und KFZ_Rest wie Kraftrad, "
-        f"LKW oder Anhänger) oder über den gesamten Kompositbestand. Verglichen wird, wie "
-        f"stark sich die Sichten unterscheiden und woran das liegt. Die Regel ist überall "
-        f"dieselbe: negativ, wenn das aggregierte Ergebnis negativ ist und betragsmäßig "
-        f"mindestens {_pct(schwelle, 0)} des aggregierten Beitrags erreicht.", st["lead"]))
+        "Für PKW-Use-Cases lässt sich der Kundenwert auf drei Arten aggregieren: nur "
+        "über die PKW-Verträge, über alle KFZ-Verträge (PKW und KFZ_Rest wie Kraftrad, "
+        "LKW oder Anhänger) oder über den gesamten Kompositbestand. Verglichen werden die "
+        "Werte selbst und die Reihenfolge, die sich daraus ergibt - denn für Auswahl und "
+        "Priorisierung zählt, welcher Kunde vor welchem steht, nicht ob er eine Grenze "
+        "reißt.", st["lead"]))
 
+    wv, rk = erg["wertvergleich"], erg["rangkennzahlen"]
     s.append(_eckwerte([
         (_fmt(ew["PKW-Kunden gesamt"]), "PKW-Kunden"),
         (_pct(ew["Anteil mit Zusatzgeschäft"], 1), "mit weiteren Verträgen"),
-        (_pct(ew["davon bereits durch KFZ_Rest (PKW vs. KFZ)"], 1), "Wechsel PKW zu KFZ"),
-        (_pct(ew["davon erst durch HUS (KFZ vs. gesamt)"], 1), "Wechsel KFZ zu gesamt"),
-        (_pct(ew["Anteil an allen PKW-Kunden"], 1), "Wechsel PKW zu gesamt"),
+        (_eur(wv.loc["PKW-Sicht", "profit_je_kunde_median"]), "Ergebnis je Kunde, PKW"),
+        (_eur(wv.loc["Gesamtsicht", "profit_je_kunde_median"]), "Ergebnis je Kunde, gesamt"),
+        (_fmt(rk.loc["PKW gegen gesamt", "spearman"], 2)
+         if "PKW gegen gesamt" in rk.index else "n. v.", "Rangkorrelation"),
     ], breite, st))
     s.append(Spacer(1, 12))
 
-    s.append(_bild(_chart_sichtstufen(erg["sichtstufen"]), breite))
+    s.append(_bild(_chart_werte_je_sicht(wv), breite))
     s.append(Paragraph(
-        "Die drei Sichten im Vergleich: links der Anteil nicht wertvoller Kunden, rechts "
-        "die Marge des jeweils betrachteten Bestands.", st["klein"]))
+        "Der Kundenwert über die drei Sichten, jeweils als Median über alle PKW-Kunden.",
+        st["klein"]))
     s.append(Spacer(1, 12))
 
     s.append(Paragraph("Befunde", st["h2"]))
@@ -731,19 +954,115 @@ def erstelle_pkw_report(
         s.append(Paragraph(b, st["bullet"], bulletText="\u25aa"))
     s.append(PageBreak())
 
-    s.append(Paragraph("PKW-Sicht gegen Gesamtsicht im Detail", st["h1"]))
+    # ------------------------------------------------- Seite: Werte je Kunde
+    s.append(Paragraph("Der Kundenwert in den drei Sichten", st["h1"]))
     s.append(Paragraph(
-        "Die beiden äußeren Sichten nebeneinander: Wie viele Kunden werden gleich "
-        "eingestuft, und wie weit liegen ihre Margen auseinander?", st["lead"]))
-    s.append(_zwei_bilder(_chart_gruppen(k), _chart_streuung_sichten(k, schwelle), breite))
-    s.append(Paragraph(
-        "Links: Aufteilung der PKW-Kunden nach Übereinstimmung. Rechts: Marge je Kunde in "
-        "beiden Sichten. Punkte auf der Diagonale sind reine PKW-Kunden - bei ihnen sind "
-        "alle Sichten identisch. Die gestrichelten Linien markieren die Segmentgrenze; "
-        "farbige Punkte liegen auf verschiedenen Seiten davon.", st["klein"]))
+        "Wie weit liegen die Werte desselben Kunden auseinander, je nachdem welchen "
+        "Bestand man aggregiert?", st["lead"]))
+
+    wd = erg["wertdelta"]
+    teiler, einheit = _skala(list(wv["beitrag"]) + list(wv["profit"]))
+    zeilen = []
+    for i, r in wv.iterrows():
+        zeilen.append([str(i), _fmt(r["beitrag"] / teiler, 1), _fmt(r["profit"] / teiler, 1),
+                       _pct(r["marge"], 1), _eur(r["profit_je_kunde_mittel"]),
+                       _eur(r["profit_je_kunde_median"]),
+                       _pct(r["marge_je_kunde_median"], 1),
+                       _pct(r["kunden_mit_negativem_wert"], 1)])
+    s.append(_tabelle(["Sicht", f"Beitrag<br/>({einheit})", f"Ergebnis<br/>({einheit})",
+                       "Marge", "Ergebnis je<br/>Kunde (Ø)",
+                       "Ergebnis je<br/>Kunde (Median)", "Marge je Kunde<br/>(Median)",
+                       "Kunden mit<br/>Verlust"], zeilen,
+                      [breite * 0.135, breite * 0.115, breite * 0.115, breite * 0.09,
+                       breite * 0.135, breite * 0.15, breite * 0.15, breite * 0.11], st))
     s.append(Spacer(1, 14))
 
+    s.append(_zwei_bilder(_chart_wertdelta(k), _chart_streuung_sichten(k, schwelle), breite))
+    s.append(Paragraph(
+        "Links: Wertunterschied je Kunde in Euro (PKW-Sicht minus Gesamtsicht), auf das "
+        "98-Prozent-Quantil beschnitten. Rechts: Marge je Kunde in beiden Sichten - "
+        "Punkte auf der Diagonale sind reine PKW-Kunden, bei ihnen sind alle Sichten "
+        "identisch.", st["klein"]))
+    s.append(Spacer(1, 14))
+
+    zeilen = []
+    for i, r in wd.iterrows():
+        zeilen.append([str(i), _eur(r["median_eur"]), _eur(r["eur_p10"]),
+                       _eur(r["eur_p90"]), _pct(r["median_marge"], 1),
+                       _pct(r["anteil_ueber_100_eur"], 1), _pct(r["anteil_ueber_10_pp"], 1)])
+    s.append(_tabelle(["Wertunterschied je Kunde", "Median", "10-%-<br/>Quantil",
+                       "90-%-<br/>Quantil", "Median in<br/>Margenpunkten",
+                       "über<br/>100 EUR", "über<br/>10 Punkte"], zeilen,
+                      [breite * 0.21, breite * 0.10, breite * 0.125, breite * 0.125,
+                       breite * 0.17, breite * 0.135, breite * 0.135], st))
+    s.append(PageBreak())
+
+    # ------------------------------------------------- Seite: Reihenfolge
+    s.append(Paragraph("Die Reihenfolge der Kunden", st["h1"]))
+    s.append(Paragraph(
+        "Für Auswahl und Priorisierung zählt die Rangfolge. Die Matrix zeigt, wo ein "
+        "Kunde landet, wenn man ihn statt nach PKW-Marge nach Gesamtmarge sortiert - "
+        "die Diagonale sind Kunden, die ihr Dezil halten.", st["lead"]))
+
+    dm = erg.get("dezil_matrix_pkw_gesamt")
+    au = erg.get("auswahlueberlappung")
+    if dm is not None and len(dm):
+        s.append(_zwei_bilder(_chart_dezilmatrix(dm), _chart_ueberlappung(au)
+                              if au is not None and len(au) else None, breite))
+        s.append(Paragraph(
+            "Links: Dezilwanderung von der PKW- zur Gesamtsicht, Zeilenanteile in Prozent. "
+            "Rechts: Anteil gemeinsamer Kunden, wenn man nach beiden Sichten jeweils die "
+            "schlechtesten X Prozent auswählt.", st["klein"]))
+        s.append(Spacer(1, 14))
+
+    if len(rk):
+        zeilen = [[str(i), _fmt(r["spearman"], 2),
+                   _fmt(r.get("kendall", np.nan), 2),
+                   _pct(r["perzentilverschiebung_mittel"], 1),
+                   _pct(r["gleiches_dezil"], 1), _pct(r["sprung_1_dezil"], 1),
+                   _pct(r["sprung_2_plus"], 1), _pct(r["sprung_3_plus"], 1)]
+                  for i, r in rk.iterrows()]
+        s.append(_tabelle(["Sichtpaar", "Spearman", "Kendall",
+                           "Rang-<br/>verschiebung", "gleiches<br/>Dezil",
+                           "1 Dezil", "2 Dezile<br/>und mehr", "3 Dezile<br/>und mehr"],
+                          zeilen,
+                          [breite * 0.17, breite * 0.11, breite * 0.10, breite * 0.15,
+                           breite * 0.12, breite * 0.10, breite * 0.13, breite * 0.12], st))
+        s.append(Spacer(1, 6))
+        s.append(Paragraph(
+            "Die Rangverschiebung ist der mittlere Abstand der Perzentilränge desselben "
+            "Kunden zwischen beiden Sichten.", st["klein"]))
+        s.append(Spacer(1, 14))
+
+    if au is not None and len(au):
+        zeilen = [[f"schlechteste {_pct(i, 0)}", _fmt(r["kunden_je_liste"]),
+                   _pct(r["pkw_vs_kfz"], 1), _pct(r["kfz_vs_gesamt"], 1),
+                   _pct(r["pkw_vs_gesamt"], 1), _fmt(r["nur_in_pkw_liste"]),
+                   _eur_kurz(r["ergebnis_nur_pkw_liste"])]
+                  for i, r in au.iterrows()]
+        s.append(Paragraph("Überlappung der Auswahllisten", st["h2"]))
+        s.append(_tabelle(["Auswahl", "Kunden<br/>je Liste", "PKW gegen<br/>KFZ",
+                           "KFZ gegen<br/>gesamt", "PKW gegen<br/>gesamt",
+                           "nur in<br/>PKW-Liste", "deren Ergebnis<br/>gesamt"], zeilen,
+                          [breite * 0.19, breite * 0.12, breite * 0.13, breite * 0.13,
+                           breite * 0.13, breite * 0.12, breite * 0.18], st))
+        s.append(Spacer(1, 6))
+        s.append(Paragraph(
+            "Die letzte Spalte zeigt, welches Gesamtergebnis hinter den Kunden steht, die "
+            "nur die PKW-Sicht auf die Liste bringt - je positiver, desto teurer wäre eine "
+            "Maßnahme, die sie fälschlich trifft.", st["klein"]))
+    s.append(PageBreak())
+
     # ------------------------------------------------------------ Kreuztabelle
+    s.append(Paragraph("Anhang: Wirkung auf eine binäre Einstufung", st["h1"]))
+    s.append(Paragraph(
+        f"Legt man zusätzlich eine Negativ-Grenze an - Ergebnis negativ und betragsmäßig "
+        f"mindestens {_pct(schwelle, 0)} des Beitrags -, entstehen aus den Werten vier "
+        f"Gruppen. Diese Zahlen hängen an der gewählten Schwelle und sind deshalb "
+        f"nachrangig zu den Wert- und Rangunterschieden.", st["lead"]))
+    s.append(_zwei_bilder(_chart_gruppen(k), _chart_ueberlappung(au)
+                          if False else None, breite))
+    s.append(Spacer(1, 8))
     s.append(Paragraph("Einstufung in beiden Sichten", st["h2"]))
     s.append(Paragraph(
         "Jede Zeile steht für eine Kombination aus PKW-Sicht und Gesamtsicht. Die beiden "
