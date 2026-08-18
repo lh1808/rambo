@@ -1310,20 +1310,45 @@ def _chart_margen_histogramm(kunden: pd.DataFrame, schwelle: float = 0.20,
 
 
 def _chart_verlustvertraege(kunden: pd.DataFrame) -> plt.Figure:
-    """Wie viele Verträge eines Kunden sind selbst defizitär?"""
+    """
+    Wie viele Verträge eines Kunden sind selbst defizitär - in klaren Klassen statt als
+    stetige Verteilung. Der Anteil kann bei wenigen Verträgen nur wenige Stufen annehmen
+    (bei einem Vertrag nur 0 % oder 100 %), deshalb Klassen statt Histogramm.
+    """
+    def klasse(v):
+        if v <= 0:
+            return "kein Vertrag"
+        if v < 0.5:
+            return "unter der Hälfte"
+        if v < 1:
+            return "mindestens die Hälfte"
+        return "alle Verträge"
+
+    reihenfolge = ["kein Vertrag", "unter der Hälfte", "mindestens die Hälfte",
+                   "alle Verträge"]
+    k = kunden.assign(kl=kunden["anteil_verlustvertraege"].map(klasse))
+    anteile = (k.groupby(["wert_flag", "kl"], observed=True).size()
+               .unstack(fill_value=0).reindex(columns=reihenfolge, fill_value=0))
+    anteile = anteile.div(anteile.sum(axis=1), axis=0)
+
     fig, ax = plt.subplots(figsize=(4.2, 2.7))
-    kanten = np.linspace(0, 1, 11)
-    neg = kunden.loc[kunden["wert_flag"] == "negativ", "anteil_verlustvertraege"].dropna()
-    pos = kunden.loc[kunden["wert_flag"] == "positiv", "anteil_verlustvertraege"].dropna()
-    ax.hist(neg, bins=kanten, weights=np.ones(len(neg)) / max(len(neg), 1),
-            color=MPL_NEGATIV, alpha=0.85, label="nicht wertvoll")
-    ax.hist(pos, bins=kanten, weights=np.ones(len(pos)) / max(len(pos), 1),
-            color=MPL_POSITIV, alpha=0.55, label="wertvoll")
-    ax.set_xlabel("Anteil defizitärer Verträge am Bestand des Kunden", fontsize=8)
+    x = np.arange(len(reihenfolge))
+    for i, (flag, name, farbe) in enumerate([("negativ", "nicht wertvoll", MPL_NEGATIV),
+                                             ("positiv", "wertvoll", MPL_POSITIV)]):
+        if flag not in anteile.index:
+            continue
+        werte = anteile.loc[flag].values
+        b = ax.bar(x + (i - 0.5) * 0.38, werte, width=0.36, color=farbe, label=name)
+        ax.bar_label(b, labels=[_pct(v, 0) for v in werte], fontsize=7,
+                     padding=2, color=MPL_PRIMAER)
+    ax.set_xticks(x, ["kein\nVertrag", "unter der\nHälfte", "mind. die\nHälfte",
+                      "alle\nVerträge"], fontsize=7.5)
     ax.set_ylabel("Anteil der Kunden", fontsize=8)
-    ax.xaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    ax.set_xlabel("davon defizitäre Verträge", fontsize=8)
     ax.yaxis.set_major_formatter(lambda v, p: _pct(v, 0))
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.legend(frameon=False, fontsize=8, loc="upper center",
+              bbox_to_anchor=(0.5, -0.30), ncol=2)
+    ax.margins(y=0.20)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     fig.tight_layout()
@@ -1344,6 +1369,68 @@ def _chart_sanierung(sv: pd.DataFrame) -> plt.Figure:
     ax.set_xlim(0, min(1.35, d["anteil_kunden"].max() * 2.1))
     ax.set_xlabel("Anteil der nicht wertvollen Kunden", fontsize=8)
     ax.xaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _chart_zweig_delta(zjb: pd.DataFrame, top: int = 12) -> plt.Figure:
+    """
+    Welche Zweige sind bei nicht wertvollen Kunden über- oder unterrepräsentiert?
+    Differenz der Anteile in Prozentpunkten, nach Betrag sortiert.
+    """
+    d = zjb.copy()
+    d["label"] = [f"{i[0]} · {i[1]}" for i in d.index]
+    d = d.reindex(d["delta_anteil_im_bereich"].abs().sort_values(ascending=False).index)
+    d = d.head(top).sort_values("delta_anteil_im_bereich")
+
+    fig, ax = plt.subplots(figsize=(8.6, max(1.8, 0.27 * len(d) + 0.75)))
+    y = np.arange(len(d))
+    farben = [MPL_NEGATIV if v > 0 else MPL_POSITIV for v in d["delta_anteil_im_bereich"]]
+    ax.barh(y, d["delta_anteil_im_bereich"], color=farben, height=0.6)
+    spanne = max(d["delta_anteil_im_bereich"].abs().max(), 0.01)
+    for yi, (_, r) in zip(y, d.iterrows()):
+        v = r["delta_anteil_im_bereich"]
+        ax.text(v + np.sign(v) * spanne * 0.03, yi,
+                f"{_pct(v, 1)}   (Marge {_pct(r['marge_negativ'], 0)} zu "
+                f"{_pct(r['marge_positiv'], 0)})",
+                va="center", ha="left" if v > 0 else "right", fontsize=7.5,
+                color=MPL_PRIMAER)
+    ax.set_yticks(y, [str(l) for l in d["label"]], fontsize=8.5)
+    ax.axvline(0, color=MPL_GRAU, lw=0.9)
+    ax.set_xlim(-spanne * 2.4, spanne * 2.4)
+    ax.set_xlabel("Anteilsunterschied in Prozentpunkten: rechts = bei nicht wertvollen "
+                  "Kunden häufiger", fontsize=8)
+    ax.xaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _chart_negativquote_vertragsanzahl(kunden: pd.DataFrame) -> plt.Figure:
+    """Negativ-Quote nach Anzahl der Verträge - der Gegenprobe-Chart zum Verbund."""
+    bins = [0, 1, 2, 3, 5, 10, np.inf]
+    labels = ["1", "2", "3", "4-5", "6-10", ">10"]
+    k = kunden.assign(kl=pd.cut(kunden["n_vertraege"], bins=bins, labels=labels))
+    g = k.groupby("kl", observed=True)["wert_flag"].agg(
+        kunden="size", quote=lambda s: float((s == "negativ").mean()))
+    g = g[g["kunden"] > 0]
+
+    fig, ax = plt.subplots(figsize=(4.2, 2.7))
+    x = np.arange(len(g))
+    ax.bar(x, g["quote"], color=MPL_NEGATIV, width=0.6)
+    for xi, (_, r) in zip(x, g.iterrows()):
+        ax.text(xi, r["quote"] + 0.008, _pct(r["quote"], 0), ha="center", fontsize=7.5,
+                color=MPL_PRIMAER, fontweight="bold")
+        ax.text(xi, 0.004, f"n={_fmt(r['kunden'])}", ha="center", va="bottom", fontsize=6.5,
+                color="white")
+    ax.set_xticks(x, [str(i) for i in g.index], fontsize=8.5)
+    ax.set_xlabel("Verträge je Kunde", fontsize=8)
+    ax.set_ylabel("Anteil nicht wertvoller Kunden", fontsize=8)
+    ax.yaxis.set_major_formatter(lambda v, p: _pct(v, 0))
+    ax.margins(y=0.18)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     fig.tight_layout()
@@ -1812,17 +1899,18 @@ def erstelle_pdf(
     s.append(Paragraph("Wo der Verlust beim einzelnen Kunden sitzt", st["h1"]))
     s.append(Paragraph(
         "Hängt der Verlust an einzelnen Verträgen oder am gesamten Bestand des Kunden? "
-        "Je nicht wertvollem Kunden werden die Verträge nach Ergebnis sortiert und "
-        "geprüft, wie viele der schlechtesten korrigiert werden müssten, damit er die "
-        "Negativ-Grenze verlässt.", st["lead"]))
+        "Links, wie viele Verträge eines Kunden für sich genommen defizitär sind. Rechts, "
+        "wie viele der schlechtesten Verträge korrigiert werden müssten, damit ein nicht "
+        "wertvoller Kunde die Negativ-Grenze verlässt.", st["lead"]))
 
     s.append(_zwei_bilder(
         _chart_verlustvertraege(kunden),
         _chart_sanierung(erg["sanierung_verteilung"])
         if len(erg.get("sanierung_verteilung", [])) else None, breite))
-    s.append(Paragraph("Links: Anteil der Verträge eines Kunden, die für sich genommen "
-                       "defizitär sind. Rechts: notwendige Zahl an Korrekturen je Kunde.",
-                       st["klein"]))
+    s.append(Paragraph(
+        "Bei Kunden mit nur einem Vertrag sind links nur die beiden äußeren Klassen "
+        "möglich. Rechts in Klammern der Anteil am Gesamtverlust des Segments - er zeigt, "
+        "wie viel Ergebnis hinter der jeweiligen Kundengruppe steht.", st["klein"]))
     s.append(Spacer(1, 14))
 
     sv = erg.get("sanierung_verteilung")
@@ -1845,20 +1933,31 @@ def erstelle_pdf(
     s.append(PageBreak())
 
     # ------------------------------------ Seite 5: Portfolio - Bereiche und Zweige
+    # ------------------------------------ Seite 5: Portfolio - Bereiche und Zweige
     bm, zjb = erg["bereich_mix"], erg.get("zweig_je_bereich")
     s.append(Paragraph("Portfoliostruktur: Bereiche und Zweige", st["h1"]))
     s.append(Paragraph(
-        "Ebene 1 ist PKW gegenüber HUS. Ebene 2 teilt PKW nach Sparte und HUS nach "
-        "Produkt auf - beides liegt damit auf derselben Ebene und ist vergleichbar.",
-        st["lead"]))
+        "Woraus besteht der Bestand der beiden Segmente? Ebene 1 trennt PKW von HUS, "
+        "Ebene 2 teilt PKW nach Sparte und HUS nach Produkt auf. Anteile beziehen sich "
+        "auf den Vertragsbestand des Kunden, Durchdringung auf den Anteil der Kunden mit "
+        "mindestens einem solchen Vertrag.", st["lead"]))
 
+    if zjb is not None and len(zjb):
+        s.append(_bild(_chart_zweig_delta(zjb), breite))
+        s.append(Paragraph(
+            "Jeder Balken zeigt, um wie viele Prozentpunkte ein Zweig bei nicht wertvollen "
+            "Kunden häufiger (rot, rechts) oder seltener (grün, links) vorkommt als bei "
+            "wertvollen. In Klammern die Marge des Zweigs in beiden Segmenten.",
+            st["klein"]))
+        s.append(Spacer(1, 12))
+
+    s.append(Paragraph("Ebene 1: PKW gegenüber HUS", st["h2"]))
     zeilen = [[str(i), _pct(r["anteil_vertraege_negativ"], 1),
                _pct(r["anteil_vertraege_positiv"], 1), _pct(r["delta_anteil_vertraege"], 1),
                _pct(r["penetration_negativ"], 0), _pct(r["penetration_positiv"], 0),
                _eur(r["beitrag_je_vertrag_negativ"]),
                _pct(r["marge_negativ"], 1), _pct(r["marge_positiv"], 1)]
               for i, r in bm.iterrows()]
-    s.append(Paragraph("Ebene 1: Bereiche", st["h2"]))
     s.append(_tabelle(["Bereich", "Anteil<br/>n. wertv.", "Anteil<br/>wertvoll", "Delta",
                        "Durchdr.<br/>n. wertv.", "Durchdr.<br/>wertvoll",
                        "Beitrag je<br/>Vertrag", "Marge<br/>n. wertv.", "Marge<br/>wertvoll"],
@@ -1866,12 +1965,22 @@ def erstelle_pdf(
                       [breite * 0.17, breite * 0.095, breite * 0.095, breite * 0.08,
                        breite * 0.12, breite * 0.12, breite * 0.11, breite * 0.105,
                        breite * 0.105], st))
+    s.append(Spacer(1, 10))
 
     if zjb is not None and len(zjb):
+        mehrfach = (zjb.groupby(level=0, observed=True)["anteil_im_bereich_negativ"]
+                    .sum().round(2) > 1.05)
+        mehrfach_bereiche = [str(b) for b, v in mehrfach.items() if v]
         s.append(Paragraph("Ebene 2: Zweige innerhalb des Bereichs", st["h2"]))
-        s.append(Paragraph("Anteile bezogen auf die Verträge des jeweiligen Bereichs; "
-                           "sie addieren sich je Bereich und Segment auf 100 %.",
-                           st["text"]))
+        hinweis_mehrfach = ""
+        if mehrfach_bereiche:
+            hinweis_mehrfach = (
+                f" In {', '.join(mehrfach_bereiche)} kann ein Vertrag mehrere Deckungen "
+                f"enthalten - die Anteile addieren sich dort auf über 100 %.")
+        s.append(Paragraph(
+            "Anteil der Verträge eines Bereichs, die diesen Zweig enthalten." +
+            hinweis_mehrfach + " Der Beitrag ist der auf den Zweig entfallende Anteil, "
+            "nicht der volle Vertragsbeitrag.", st["text"]))
         zeilen, fett = [], []
         for bereich, block in zjb.groupby(level=0, observed=True, sort=False):
             zeilen.append([str(bereich)[:26], "", "", "", "", "", ""])
@@ -1885,12 +1994,12 @@ def erstelle_pdf(
                     _eur(r["beitrag_je_vertrag_negativ"]),
                     _pct(r["marge_negativ"], 1),
                     _pct(r["marge_positiv"], 1)])
-        s.append(_tabelle(["Bereich / Zweig", "Anteil im Bereich<br/>n. wertv.",
-                           "Anteil im Bereich<br/>wertvoll", "Delta",
-                           "Beitrag je Vertrag<br/>n. wertv.",
+        s.append(_tabelle(["Bereich / Zweig", "Verträge mit Zweig<br/>n. wertv.",
+                           "Verträge mit Zweig<br/>wertvoll", "Delta",
+                           "Beitrag des Zweigs<br/>je Vertrag",
                            "Marge<br/>n. wertv.", "Marge<br/>wertvoll"], zeilen,
-                          [breite * 0.24, breite * 0.145, breite * 0.145, breite * 0.085,
-                           breite * 0.145, breite * 0.12, breite * 0.12], st,
+                          [breite * 0.22, breite * 0.15, breite * 0.15, breite * 0.085,
+                           breite * 0.155, breite * 0.12, breite * 0.12], st,
                           hervorheben=fett))
     s.append(PageBreak())
 
@@ -1900,38 +2009,50 @@ def erstelle_pdf(
     if bk is not None and len(bk):
         s.append(Paragraph("Verbund und Deckungsumfang", st["h1"]))
         s.append(Paragraph(
-            "Hält ein Kunde nur PKW, nur HUS oder beides - und wie oft ist er dann nicht "
-            "wertvoll? Die Negativ-Quote misst den Anteil nicht wertvoller Kunden "
-            "innerhalb jeder Gruppe.", st["lead"]))
+            "Jeder Kunde wird danach eingeteilt, ob er nur PKW, nur HUS oder beides hält. "
+            "Die <b>Negativ-Quote</b> ist der Anteil nicht wertvoller Kunden innerhalb "
+            "dieser Gruppe.", st["lead"]))
 
         s.append(_zwei_bilder(_chart_bereichskombination(bk),
-                              _chart_bereichsmix(erg["bereich_mix"]), breite))
-        s.append(Paragraph("Links: Negativ-Quote je Kundengruppe. Rechts: Anteil von PKW "
-                           "und HUS am Vertragsbestand des Kunden.", st["klein"]))
+                              _chart_negativquote_vertragsanzahl(kunden), breite))
+        s.append(Paragraph(
+            "Links: Negativ-Quote je Verbundtyp. Rechts: dieselbe Quote nach Anzahl der "
+            "Verträge. Beide Bilder zeigen denselben Zusammenhang aus zwei Richtungen - "
+            "Verbundkunden haben mehr Verträge, und mit steigender Vertragszahl sinkt die "
+            "Negativ-Quote. Welcher der beiden Effekte ursächlich ist, lässt sich daraus "
+            "nicht ableiten.", st["klein"]))
         s.append(Spacer(1, 12))
 
-        zeilen = [[str(i), _fmt(r["kunden_gesamt"]), _pct(r["negativ_quote"], 1),
-                   _fmt(r["vertraege_je_kunde_negativ"], 2),
-                   _fmt(r["vertraege_je_kunde_positiv"], 2),
-                   _eur(r["beitrag_je_kunde_negativ"]), _eur(r["beitrag_je_kunde_positiv"]),
-                   _pct(r["marge_negativ"], 1), _pct(r["marge_positiv"], 1)]
-                  for i, r in bk.iterrows()]
-        s.append(_tabelle(["Kundengruppe", "Kunden", "Negativ-<br/>Quote",
-                           "Verträge je Kunde<br/>n. wertv.",
-                           "Verträge je Kunde<br/>wertvoll",
-                           "Beitrag je Kunde<br/>n. wertv.",
-                           "Beitrag je Kunde<br/>wertvoll",
-                           "Marge<br/>n. wertv.", "Marge<br/>wertvoll"], zeilen,
-                          [breite * 0.155, breite * 0.085, breite * 0.09, breite * 0.12,
-                           breite * 0.12, breite * 0.12, breite * 0.12, breite * 0.095,
-                           breite * 0.095], st))
+        zeilen = []
+        for i, r in bk.iterrows():
+            kunden_ges = r["kunden_gesamt"]
+            vertraege_ges = r["vertraege_negativ"] + r["vertraege_positiv"]
+            beitrag_ges = r["beitrag_negativ"] + r["beitrag_positiv"]
+            zeilen.append([str(i), _fmt(kunden_ges), _fmt(r["kunden_negativ"]),
+                           _pct(r["negativ_quote"], 1),
+                           _fmt(vertraege_ges / kunden_ges, 2) if kunden_ges else "n. v.",
+                           _eur(beitrag_ges / kunden_ges) if kunden_ges else "n. v.",
+                           _pct(r["marge_negativ"], 1), _pct(r["marge_positiv"], 1)])
+        s.append(_tabelle(["Verbundtyp", "Kunden", "davon nicht<br/>wertvoll",
+                           "Negativ-<br/>Quote", "Verträge<br/>je Kunde",
+                           "Beitrag<br/>je Kunde", "Marge<br/>n. wertv.",
+                           "Marge<br/>wertvoll"], zeilen,
+                          [breite * 0.17, breite * 0.10, breite * 0.13, breite * 0.11,
+                           breite * 0.12, breite * 0.12, breite * 0.125, breite * 0.125],
+                          st))
+        s.append(Spacer(1, 6))
+        s.append(Paragraph(
+            "Verträge und Beitrag je Kunde beziehen sich auf alle Kunden der Gruppe, die "
+            "beiden Margenspalten jeweils auf das Segment innerhalb der Gruppe.",
+            st["klein"]))
         s.append(Spacer(1, 14))
 
     if vp is not None and len(vp):
         s.append(Paragraph("Deckungsprofile innerhalb der PKW-Verträge", st["h2"]))
         s.append(Paragraph(
-            "Ein PKW-Vertrag (eine ve_id) kann mehrere Deckungen enthalten. Anteile "
-            "bezogen auf alle PKW-Verträge des jeweiligen Segments.", st["text"]))
+            "Ein PKW-Vertrag (eine ve_id) kann mehrere Deckungen enthalten. Der Anteil "
+            "gibt an, wie viele der PKW-Verträge eines Segments dieses Profil haben; die "
+            "Spalten addieren sich je Segment auf 100 %.", st["text"]))
         zeilen = [[str(i)[:34], _fmt(r["vertraege_negativ"] + r["vertraege_positiv"]),
                    _pct(r["anteil_vertraege_negativ"], 1),
                    _pct(r["anteil_vertraege_positiv"], 1),
@@ -1939,13 +2060,13 @@ def erstelle_pdf(
                    _eur(r["beitrag_je_vertrag_negativ"]),
                    _pct(r["marge_negativ"], 1), _pct(r["marge_positiv"], 1)]
                   for i, r in vp.iterrows()]
-        s.append(_tabelle(["Deckungsprofil", "Verträge", "Anteil<br/>n. wertv.",
-                           "Anteil<br/>wertvoll", "Delta", "Beitrag je<br/>Vertrag",
+        s.append(_tabelle(["Deckungsprofil", "Verträge", "Anteil an PKW<br/>n. wertv.",
+                           "Anteil an PKW<br/>wertvoll", "Delta", "Beitrag je<br/>Vertrag",
                            "Marge<br/>n. wertv.", "Marge<br/>wertvoll"], zeilen,
-                          [breite * 0.25, breite * 0.10, breite * 0.11, breite * 0.11,
-                           breite * 0.08, breite * 0.12, breite * 0.115, breite * 0.115], st))
+                          [breite * 0.22, breite * 0.10, breite * 0.13, breite * 0.13,
+                           breite * 0.075, breite * 0.115, breite * 0.115, breite * 0.115],
+                          st))
         s.append(PageBreak())
-    s.append(Paragraph("Verlusttreiber und Konzentration", st["h1"]))
     s.append(Paragraph(
         "In welchen Zweigen entsteht der Verlust, und wie breit streut er über die "
         "Kunden? Davon hängt ab, ob eine Maßnahme breit ansetzen muss oder auf wenige "
