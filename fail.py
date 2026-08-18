@@ -1,3 +1,10 @@
+erg = analysiere_sichten(df)
+erstelle_pkw_report(erg, "PKW_Sichtvergleich.pdf",
+                    quelle="Datenbasis: Bestand Stichtag TT.MM.JJJJ",
+                    verfasser="Data Science")
+
+
+
 """
 pkw_sichtvergleich.py
 =====================
