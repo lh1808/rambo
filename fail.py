@@ -1,3 +1,22 @@
+with db2_connect() as conn:
+    schemata = pd.read_sql("""
+        SELECT s.SCHEMANAME,
+               s.OWNER,
+               s.CREATE_TIME,
+               (SELECT COUNT(*) FROM SYSCAT.TABLES t
+                 WHERE t.TABSCHEMA = s.SCHEMANAME AND t.TYPE = 'T') AS TABELLEN,
+               (SELECT COUNT(*) FROM SYSCAT.TABLES t
+                 WHERE t.TABSCHEMA = s.SCHEMANAME AND t.TYPE = 'V') AS VIEWS
+          FROM SYSCAT.SCHEMATA s
+         WHERE s.SCHEMANAME NOT LIKE 'SYS%'
+           AND s.SCHEMANAME NOT IN ('NULLID', 'SQLJ', 'DB2QP')
+         ORDER BY TABELLEN DESC, s.SCHEMANAME
+    """, conn)
+
+schemata[schemata["TABELLEN"] > 0]
+
+
+
 # ============================================================================
 # ZELLE 2 - Anwendung
 # ============================================================================
