@@ -1,3 +1,58 @@
+# ============================================================================
+# ZELLE 3 - Testzeilen entfernen und voll laden
+# ============================================================================
+with db2_connect() as conn:
+    conn.set_autocommit(False)
+    cur = conn.cursor()
+
+    cur.execute('SELECT COUNT(*) FROM "%s"."%s"' % (SCHEMA, TABLE))
+    vorher = cur.fetchone()[0]
+    print("Zeilen in der Tabelle:", vorher)
+
+    if vorher > 100:
+        cur.close()
+        raise RuntimeError(
+            "Unerwartet viele Zeilen (%d). Da steckt mehr drin als die 10 Testzeilen "
+            "- bitte erst ansehen, statt blind zu löschen." % vorher
+        )
+
+    cur.execute('DELETE FROM "%s"."%s"' % (SCHEMA, TABLE))
+    cur.close()
+    print("Testzeilen zum Löschen vorgemerkt (noch kein Commit).")
+
+    # write_dataframe committet am Ende -- DELETE und INSERT gehen zusammen durch
+    n = write_dataframe(df, table=TABLE, schema=SCHEMA, conn=conn, chunksize=10000)
+
+print("Geschrieben:", n)
+
+
+
+
+
+
+with db2_connect() as conn:
+    display(pd.read_sql("""
+        SELECT COUNT(*) AS ZEILEN,
+               MIN(VERSANDDATUM) AS VON,
+               MAX(VERSANDDATUM) AS BIS,
+               COUNT(DISTINCT VERSANDDATUM) AS ANZ_TAGE
+          FROM "%s"."%s"
+    """ % (SCHEMA, TABLE), conn))
+
+    display(pd.read_sql("""
+        SELECT VERSANDDATUM, COUNT(*) AS ANZ
+          FROM "%s"."%s"
+         GROUP BY VERSANDDATUM
+         ORDER BY VERSANDDATUM
+    """ % (SCHEMA, TABLE), conn))
+
+
+
+
+
+
+
+
 with db2_connect() as conn:
     schemata = pd.read_sql("""
         SELECT s.SCHEMANAME,
