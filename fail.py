@@ -1,3 +1,30 @@
+# --- Fix SSH key permissions ---
+echo "--- Git Prepare ---"
+chmod 600 ~/.ssh/id_rsa
+
+# --- Git Credentials ---
+whereis git
+git --version
+git config --global user.email "marc.langhauser@lan.huk-coburg.de"
+git config --global user.name "Langhauser, Marc"
+
+# --- Git Clone Repo ---
+echo "--- Git Clone Repo ---"
+pushd /home/ubuntu/
+git clone ssh://tfs.lan.huk-coburg.de:22/web/DefaultCollection/GIT_Projects/_git/da-hf1-rubin
+popd
+
+# -- Install Environment With Pixi ---
+echo "--- Init Pixi ---"
+whereis pixi
+pixi --version
+
+# Go To Pixi .toml Dir 
+pushd /home/ubuntu/da-hf1-rubin
+
+
+
+
 # ============================================================================
 # Tabelle komplett leeren
 # ============================================================================
