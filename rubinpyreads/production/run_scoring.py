@@ -202,8 +202,10 @@ def load_scoring_config(path: str) -> Dict[str, Any]:
         raw = yaml.safe_load(f) or {}
     if raw.get("runner") not in (None, "file"):
         raise ValueError(
-            f"{path} deklariert runner: {raw.get('runner')!r} — diese Config gehört zu "
-            "production/run_scoring_saspy.py (run_scoring.sh routet automatisch anhand des runner-Keys)."
+            f"{path} deklariert runner: {raw.get('runner')!r} — diese Config gehört zum "
+            "saspy-Flow. Der Einstieg production/run_scoring.py delegiert saspy-Configs "
+            "automatisch; dieser Fehler erscheint nur bei direkter programmatischer "
+            "Nutzung von load_scoring_config()."
         )
     _reject_unknown_keys(raw, _DEFAULTS,
                          extra_top_level={"name", "runner", "bundle", "scores"},
@@ -644,6 +646,20 @@ def main() -> None:
     ap.add_argument("--bundle", default=None, help="Override: bundle")
     ap.add_argument("--output", default=None, help="Override: output.xpt_path")
     args = ap.parse_args()
+
+    # ── Runner-Dispatch: EIN Einstieg für alle Configs ──
+    # Der Top-Level-Key `runner:` der YAML entscheidet den Transport. saspy-
+    # Configs werden an run_scoring_saspy.main() delegiert (Lazy-Import — der
+    # Datei-Flow braucht kein saspy); dessen argparse übernimmt sys.argv und
+    # lehnt Datei-Flow-Flags (--input/--bundle/--output) selbst ab.
+    with open(args.config, encoding="utf-8") as _f:
+        _runner = (yaml.safe_load(_f) or {}).get("runner") or "file"
+    if _runner == "saspy":
+        from run_scoring_saspy import main as _saspy_main  # noqa: PLC0415
+        _saspy_main()
+        return
+    if _runner != "file":
+        raise SystemExit(f"Unbekannter runner: {_runner!r} in {args.config} (erlaubt: file, saspy).")
 
     cfg = load_scoring_config(args.config)
     if args.input:

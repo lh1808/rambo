@@ -164,19 +164,41 @@ synchronisieren. Steuerung über **Env-Variablen der Job-Definition**:
 | `SCORING_CONFIGS` | `production/scoring_ph.yml` | Leerzeichen-Liste der Configs — **hier** kommen neue Use-Cases dazu. Jeder Score läuft in einem eigenen Python-Prozess (Speicher wird zwischen Scores vollständig freigegeben) |
 | `GIT_REF` | `main` | **Für Prod pinnen** — annotiertes Tag empfohlen (Shallow-Clone, schnell); Commit-SHAs funktionieren über den automatischen Fallback (voller Clone + Checkout, langsamer). Pinnt Code **und** `pixi.lock` als Einheit, `--frozen` installiert exakt diesen Stand |
 | `CONTINUE_ON_ERROR` | `0` | `1`: alle Scores versuchen; Exit ≠ 0, wenn einer scheitert |
-| `RUNNER_SCRIPT` | — | Erzwingt einen Einstieg für alle Configs (normal: `runner:`-Key pro YAML) |
-| `BUNDLE/INPUT/OUTPUT_OVERRIDE` | — | Nur im Ein-Score-Datei-Fall erlaubt |
+| `REQUIRE_PINNED_REF` | `0` | `1` **für Prod-Jobs empfohlen**: Abbruch (Exit 2), wenn `GIT_REF` ein Branch ist — statt nur Warnung |
 | `PIXI_ENV`, `WORKDIR`, `GIT_URL` | s. Skript | Umgebung; selten anzufassen |
 
 Gemischte Jobs (Datei- und saspy-Scores in einem Lauf) sind möglich — der
-`runner:`-Key jeder Config entscheidet. Config-Pfade dürfen keine
-Leerzeichen enthalten (Leerzeichen trennt die Liste).
+`runner:`-Key jeder Config entscheidet; das Routing übernimmt
+`run_scoring.py` selbst (die Shell kennt nur diesen einen Einstieg).
+Config-Pfade dürfen keine Leerzeichen enthalten (Leerzeichen trennt die Liste).
+
+### Mentales Modell der Steuerung
+
+Das Job-Skript ist ein **vorausgefülltes Formular**: Jede Zeile der Form
+`VAR="${VAR:-default}"` ist ein Feld, das die Domino-Job-Definition per
+Env-Variable übertippen kann — sonst gilt der Default. Es gibt zwei
+Präzedenz-Ebenen, mehr nicht:
+
+1. **Job-Ebene (Env > Skript-Default):** *Was* läuft (`SCORING_CONFIGS`),
+   *welcher Code-Stand* (`GIT_REF`), *Fehlerpolitik* (`CONTINUE_ON_ERROR`).
+   Das sind die drei Variablen, die man tatsächlich setzt — der Rest ist
+   Umgebungskonstante (`GIT_URL`, `WORKDIR`, `PIXI_ENV`) oder Testwerkzeug
+   (`SKIP_SETUP`, `RUN_CMD`).
+2. **Score-Ebene (CLI > YAML):** *Wie* ein einzelner Score läuft, steht
+   vollständig in seiner `scoring_<usecase>.yml`. Die CLI-Flags von
+   `run_scoring.py` (`--input/--bundle/--output`) übersteuern einzelne
+   YAML-Werte — gedacht für lokale Tests, nicht für Job-Definitionen.
+
+Der Use-Case lebt damit versioniert im Repo (Config-Datei), der Job kennt nur
+Listen von Configs und einen gepinnten Code-Stand.
 
 **Exit-Codes des Job-Skripts** (für Domino-Alerting): `0` = alle Scores OK ·
-`2` = Konfigurationsfehler vor dem Scoren (unbekannter `runner:`, unzulässige
-Overrides) · bei Score-Fehlern: Fail-Fast (Default) propagiert den Exit-Code
-des fehlgeschlagenen Runners; mit `CONTINUE_ON_ERROR=1` laufen alle Scores
-und das Skript endet mit `1`, wenn mindestens einer fehlschlug (Summary im Log).
+`2` = Abbruch vor dem Scoren durch den Reproduzierbarkeits-Guard
+(`REQUIRE_PINNED_REF=1` bei Branch-Ref) · bei Score-/Config-Fehlern
+(inkl. unbekanntem `runner:` — das prüft jetzt `run_scoring.py` selbst):
+Fail-Fast (Default) propagiert den Exit-Code des fehlgeschlagenen
+Python-Prozesses; mit `CONTINUE_ON_ERROR=1` laufen alle Scores und das Skript
+endet mit `1`, wenn mindestens einer fehlschlug (Summary im Log).
 
 ### saspy-Voraussetzungen (einmalig pro Umgebung)
 

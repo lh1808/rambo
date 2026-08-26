@@ -10,7 +10,7 @@
 # ============================================================================
 
 name: <usecase>             # PFLICHT — bestimmt die Monitoring-Dateinamen
-runner: file                # Transport-Deklaration für run_scoring.sh:
+runner: file                # Transport (run_scoring.py routet automatisch):
                             # file (dieser Flow) | saspy (SAS-Library-Flow)
 bundle: <pfad/zum/bundle>   # PFLICHT — rubin-Bundle-Verzeichnis (Analysis-Export)
 

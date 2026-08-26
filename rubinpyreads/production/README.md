@@ -9,12 +9,14 @@ anlegen/anpassen, Pflicht- vs. Kann-Felder, Erstlauf-Checkliste, Betrieb):
 
 ## Nutzung
 
-Zwei Einstiege, gleicher Scoring-Kern (`score_dataframe`):
+**Ein Einstieg** (`run_scoring.py`), zwei Transporte — der `runner:`-Key der
+Config entscheidet, saspy-Configs werden intern delegiert. Gleicher
+Scoring-Kern (`score_dataframe`) für beide:
 
-| Einstieg | Input | Output | Vorlage | Beispiel-Use-Case |
+| `runner:` | Input | Output | Vorlage | Beispiel-Use-Case |
 |---|---|---|---|---|
-| `run_scoring.py` | Datei (parquet/csv/sas7bdat) | SAS-XPT (+ optional CSV) | `scoring_template_file.yml` | `scoring_ph.yml` |
-| `run_scoring_saspy.py` | SAS-Library (via saspy `sd2df`) | SAS-Library (via `df2sd` + `PROC APPEND`) | `scoring_template_saspy.yml` | — |
+| `file` (Default) | Datei (parquet/csv/sas7bdat) | SAS-XPT (+ optional CSV) | `scoring_template_file.yml` | `scoring_ph.yml` |
+| `saspy` | SAS-Library (via saspy `sd2df`) | SAS-Library (via `df2sd` + `PROC APPEND`) | `scoring_template_saspy.yml` | — |
 
 Pro Use-Case entsteht eine `scoring_<usecase>.yml` in diesem Ordner als
 Kopie der passenden Vorlage — versioniert und reviewbar wie Code. Die
@@ -46,12 +48,11 @@ Repo: `--frozen`, exakter Lockfile-Stand ohne Re-Solve; ohne Lockfile — aktuel
 Stand, `pixi.lock` ist gitignored — löst pixi anhand der Version-Pins, mit
 Warnung im Log; **Empfehlung: `pixi.lock` für Prod-Reproduzierbarkeit
 committen**, dann greift automatisch `--frozen`; kein `pixi add` auf dem Executor) →
-Scoring-Schleife (ein eigener Python-Prozess pro Config; Einstieg laut
-`runner:`-Key der jeweiligen YAML). Parameter per Env: `SCORING_CONFIGS`
-(Leerzeichen-Liste; `SCORING_CONFIG` singular bleibt als Alias), `GIT_REF`,
-`CONTINUE_ON_ERROR`, `RUNNER_SCRIPT` (erzwingt einen Einstieg für alle),
-`BUNDLE_OVERRIDE`/`INPUT_OVERRIDE`/`OUTPUT_OVERRIDE` (nur im
-Ein-Score-Datei-Fall). Läuft unter einem
+Scoring-Schleife (ein eigener Python-Prozess pro Config; ein Einstieg —
+`run_scoring.py` routet intern anhand des `runner:`-Keys). Parameter per Env:
+`SCORING_CONFIGS` (Leerzeichen-Liste; `SCORING_CONFIG` singular bleibt als
+Alias), `GIT_REF` (+ `REQUIRE_PINNED_REF=1` für Prod-Jobs empfohlen),
+`CONTINUE_ON_ERROR`. Läuft unter einem
 Service-User: nur dessen SSH-Deploy-Key wird gebraucht, keine Git-Identity
 (die ist nur für Commits nötig). `set -euo pipefail` propagiert jeden Fehler
 als roten Domino-Job.
@@ -113,8 +114,8 @@ einen OOM laufen.
 SCORING_CONFIGS="production/scoring_ph.yml production/scoring_kfz.yml" \
   bash production/run_scoring.sh
 # Transport pro Config: Top-Level-Key `runner:` in der YAML (file | saspy) —
-# gemischte Jobs (Datei- und SAS-Library-Scores) sind möglich.
-# RUNNER_SCRIPT (Env) erzwingt einen Einstieg für alle Configs.
+# gemischte Jobs (Datei- und SAS-Library-Scores) sind möglich; das Routing
+# übernimmt run_scoring.py selbst (die Shell kennt einen Einstieg).
 # Fehlerpolitik: CONTINUE_ON_ERROR=1 → alle versuchen, Exit ≠ 0 wenn einer scheitert
 # Lokaler Trockenlauf ohne Clone/Pixi: SKIP_SETUP=1 RUN_CMD="python"
 ```

@@ -62,7 +62,7 @@ def test_loaders_reject_invalid_configs(tmp_path):
     assert load_scoring_config(w("t3.yml", ok))["output"]["meta_columns"]["BELIEBIG"] == 1
 
     # Kreuz-Runner → nennt den richtigen Einstieg (beide Richtungen)
-    with pytest.raises(ValueError, match="run_scoring_saspy.py"):
+    with pytest.raises(ValueError, match="saspy-Flow"):
         load_scoring_config(str(PROD / "scoring_template_saspy.yml"))
     with pytest.raises(ValueError, match="run_scoring.py"):
         load_saspy_scoring_config(str(PROD / "scoring_ph.yml"))

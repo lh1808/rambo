@@ -6,7 +6,8 @@
 # (production/scoring_<usecase>.yml): SCORING_CONFIGS listet, was gefahren
 # wird (Default: scoring_ph.yml). Jede Config deklariert ihren Transport
 # selbst über den Top-Level-Key `runner:` (file = Datei-Flow/XPT, Default;
-# saspy = SAS-Library-Flow) — gemischte Jobs sind damit möglich.
+# saspy = SAS-Library-Flow); run_scoring.py liest den Key selbst und delegiert
+# saspy-Configs intern — gemischte Jobs möglich, die Shell kennt EINEN Einstieg.
 #
 # Master dieser Datei liegt VERSIONIERT im Repo (production/run_scoring.sh).
 # Die ausgeführte Kopie muss auf dem Domino File System liegen (Job-Einstieg),
@@ -47,28 +48,9 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
 WORKDIR="${WORKDIR:-/home/ubuntu/rubin_scoring}"
 PIXI_ENV="${PIXI_ENV:-prod}"               # schlankes Scoring-Env (gleiche solve-group wie default)
 # Transport pro Config: Der Top-Level-Key `runner:` in der jeweiligen YAML
-# wählt den Einstieg (file → run_scoring.py, saspy → run_scoring_saspy.py).
-# RUNNER_SCRIPT (Env) erzwingt einen Einstieg für ALLE Configs (Override).
-RUNNER_SCRIPT="${RUNNER_SCRIPT:-}"
-
-runner_for_config() {
-  # Liest den Top-Level-Key `runner:` (nur Spaltenanfang → keine Treffer in
-  # verschachtelten Sektionen). Default: Datei-Flow.
-  local cfg="$1"
-  if [[ -n "${RUNNER_SCRIPT}" ]]; then echo "${RUNNER_SCRIPT}"; return; fi
-  local val
-  val=$(grep -E '^runner:' "${cfg}" 2>/dev/null | head -1 | sed -E 's/^runner:[[:space:]]*//; s/[[:space:]]*(#.*)?$//')
-  case "${val}" in
-    saspy) echo "production/run_scoring_saspy.py" ;;
-    ""|file) echo "production/run_scoring.py" ;;
-    *) echo "UNBEKANNT:${val}" ;;
-  esac
-}
-# Optionale Overrides (leer = Werte aus der YAML-Config):
-BUNDLE_OVERRIDE="${BUNDLE_OVERRIDE:-}"
-INPUT_OVERRIDE="${INPUT_OVERRIDE:-}"
-OUTPUT_OVERRIDE="${OUTPUT_OVERRIDE:-}"
-
+# entscheidet (file = Datei-Flow/XPT, Default; saspy = SAS-Library-Flow).
+# Das Routing übernimmt run_scoring.py selbst (robustes YAML statt
+# Shell-Parsing) — die Shell kennt nur EINEN Einstieg.
 # Trockenlauf/Test: SKIP_SETUP=1 überspringt SSH/Clone/Pixi-Install und führt
 # die Scoring-Schleife im aktuellen Verzeichnis aus; RUN_CMD ersetzt dabei den
 # Python-Aufruf (Default: pixi-Env).
@@ -81,6 +63,23 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 log "=== rubin Production-Scoring: Start (ref=${GIT_REF}, env=${PIXI_ENV}) ==="
 
 if [[ "${SKIP_SETUP}" != "1" ]]; then
+
+# ── Reproduzierbarkeits-Guard ───────────────────────────────────────────────
+# Branch-Refs ziehen bei jedem Lauf stillschweigend den neuesten Commit — der
+# teuerste stille Fehler in Prod. Default: laute Warnung. In produktiven
+# Job-Definitionen REQUIRE_PINNED_REF=1 setzen → harter Abbruch, bis GIT_REF
+# auf ein annotiertes Tag (empfohlen) oder eine Commit-SHA gepinnt ist.
+case "${GIT_REF}" in
+  main|master|develop|HEAD)
+    if [[ "${REQUIRE_PINNED_REF:-0}" == "1" ]]; then
+      log "FEHLER: GIT_REF='${GIT_REF}' ist ein Branch (nicht reproduzierbar) und REQUIRE_PINNED_REF=1 ist gesetzt."
+      log "        GIT_REF auf ein annotiertes Tag oder eine Commit-SHA pinnen."
+      exit 2
+    fi
+    log "WARNUNG: GIT_REF='${GIT_REF}' ist ein Branch — jeder Lauf zieht den jeweils neuesten Commit."
+    log "         Für reproduzierbare Prod-Läufe GIT_REF auf Tag/SHA pinnen (und REQUIRE_PINNED_REF=1 setzen)."
+    ;;
+esac
 
 # ── SSH-Key des Service-Users ───────────────────────────────────────────────
 log "--- SSH vorbereiten ---"
@@ -134,33 +133,11 @@ read -r -a CONFIGS <<< "${SCORING_CONFIGS}"
 N_CONFIGS=${#CONFIGS[@]}
 log "--- Scoring: ${N_CONFIGS} Config(s): ${SCORING_CONFIGS} ---"
 
-# Overrides gelten nur im Ein-Score-Fall mit Datei-Flow — bei mehreren Configs
-# wären sie mehrdeutig, und der saspy-Runner kennt --input/--output nicht.
-if [[ ${N_CONFIGS} -gt 1 && ( -n "${BUNDLE_OVERRIDE}" || -n "${INPUT_OVERRIDE}" || -n "${OUTPUT_OVERRIDE}" ) ]]; then
-  log "FEHLER: BUNDLE/INPUT/OUTPUT_OVERRIDE sind bei mehreren Configs nicht erlaubt."
-  exit 2
-fi
-
 FAILED=()
 for CFG in "${CONFIGS[@]}"; do
   SCORE_TS=$(date +%s)
-  RUNNER=$(runner_for_config "${CFG}")
-  if [[ "${RUNNER}" == UNBEKANNT:* ]]; then
-    log "FEHLER: unbekannter runner '${RUNNER#UNBEKANNT:}' in ${CFG} (erlaubt: file, saspy)."
-    exit 2
-  fi
-  if [[ "${RUNNER}" == *saspy* && ( -n "${INPUT_OVERRIDE}" || -n "${OUTPUT_OVERRIDE}" ) ]]; then
-    log "FEHLER: INPUT/OUTPUT_OVERRIDE gelten nur für den Datei-Runner — der"
-    log "        saspy-Runner adressiert Tabellen über die Config (bzw. --table-in/--table-out)."
-    exit 2
-  fi
-  log "--- Score starten: ${CFG} (${RUNNER}) ---"
-  ARGS=(--config "${CFG}")
-  [[ -n "${BUNDLE_OVERRIDE}" ]] && ARGS+=(--bundle "${BUNDLE_OVERRIDE}")
-  [[ -n "${INPUT_OVERRIDE}"  ]] && ARGS+=(--input  "${INPUT_OVERRIDE}")
-  [[ -n "${OUTPUT_OVERRIDE}" ]] && ARGS+=(--output "${OUTPUT_OVERRIDE}")
-
-  if ${RUN_CMD:-pixi run -e "${PIXI_ENV}" python} "${RUNNER}" "${ARGS[@]}"; then
+  log "--- Score starten: ${CFG} ---"
+  if ${RUN_CMD:-pixi run -e "${PIXI_ENV}" python} production/run_scoring.py --config "${CFG}"; then
     log "--- Score OK: ${CFG} ($(( $(date +%s) - SCORE_TS ))s) ---"
   else
     RC=$?
