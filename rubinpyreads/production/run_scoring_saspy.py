@@ -6,9 +6,11 @@ Für Umgebungen, in denen Scoring-Input und -Output als SAS-Datasets in
 Libraries liegen (statt als Dateien): Der Input wird per ``sd2df`` aus einer
 SAS-Library gezogen, gegen das Bundle gescort (gemeinsamer Kern
 ``score_dataframe`` aus run_scoring) und per ``df2sd`` + ``PROC APPEND`` in
-die Ziel-Library zurückgeschrieben. Monitoring-JSON wie beim Datei-Einstieg.
+die Ziel-Library zurückgeschrieben. Monitoring-JSON wie beim Datei-Flow.
 
-Aufruf (Config-getrieben, CLI nur für Overrides):
+Kein eigener Einstieg: Der reguläre Weg läuft über production/run_scoring.py,
+das saspy-Configs anhand des runner:-Keys automatisch hierher delegiert.
+Direktaufruf nur für Entwicklung/Sonderfälle:
 
     python production/run_scoring_saspy.py --config production/scoring_<usecase>.yml
 

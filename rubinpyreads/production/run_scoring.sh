@@ -101,6 +101,9 @@ JOB_CONF="$1"; shift
 if [[ ! -f "${JOB_CONF}" ]]; then
   echo "FEHLER: Job-Conf nicht gefunden: ${JOB_CONF}"; exit 2
 fi
+# Absolute Pfade für den späteren Drift-Check sichern (vor jedem cd):
+JOB_CONF="$(realpath "${JOB_CONF}")"
+_SELF="$(realpath "${BASH_SOURCE[0]}")"
 _bad=$(grep -Ev '^[[:space:]]*(#|$|(SCORING_CONFIGS|GIT_REF|GIT_URL|WORKDIR|PIXI_ENV|CONTINUE_ON_ERROR|REQUIRE_PINNED_REF|GIT_USER_EMAIL|GIT_USER_NAME|SKIP_SETUP|RUN_CMD)=)' "${JOB_CONF}" || true)
 if [[ -n "${_bad}" ]]; then
   echo "FEHLER: Job-Conf ${JOB_CONF} enthält unzulässige Zeilen (erlaubt: KEY=\"wert\" der bekannten Parameter, Kommentare):"
@@ -179,6 +182,22 @@ git clone --depth 1 --branch "${GIT_REF}" "${GIT_URL}" "${WORKDIR}" \
        git clone "${GIT_URL}" "${WORKDIR}";
        git -C "${WORKDIR}" checkout --detach "${GIT_REF}"; }
 cd "${WORKDIR}"
+
+# ── Drift-Check: FS-Kopien gegen den geklonten Repo-Master ──────────────────
+# run_scoring.sh und job_<uc>.conf sind die EINZIGEN doppelt abliegenden
+# Dateien (Bootstrap-Kopien am Startort; Master im Repo). Eine veraltete
+# Kopie liefe sonst still mit alter Logik — hier wird laut gewarnt.
+check_copy_drift() {
+  local running="$1" master="$2" label="$3"
+  [[ -f "${master}" ]] || return 0
+  if ! cmp -s "${running}" "${master}"; then
+    log "WARNUNG: ${label} weicht vom Repo-Master (${GIT_REF}) ab — FS-Kopie bitte synchronisieren:"
+    log "         laufend: ${running}"
+    log "         Master:  ${master}"
+  fi
+}
+check_copy_drift "${_SELF}" "${WORKDIR}/production/run_scoring.sh" "Gestartetes Skript"
+check_copy_drift "${JOB_CONF}" "${WORKDIR}/production/jobs/$(basename "${JOB_CONF}")" "Job-Datei $(basename "${JOB_CONF}")"
 log "Repo-Stand: $(git rev-parse --short HEAD) ($(git log -1 --format=%cd --date=short))"
 
 # ── pixi-Environment aus dem Lockfile (deterministisch, kein Solver) ────────

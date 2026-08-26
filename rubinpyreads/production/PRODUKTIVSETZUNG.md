@@ -64,6 +64,26 @@ bleiben unverändert; der Job wählt per `SCORING_CONFIGS`, was läuft.
 
 ---
 
+## Ablage-Landkarte: Was liegt wo — und was nur einmal
+
+| Artefakt | Ablageort | Anzahl |
+|---|---|---|
+| Bundle | `/mnt/Production/<usecase>/bundle/` | **1×** (außerhalb des Repos) |
+| `scoring_<usecase>.yml` | Repo (`production/`) — wird aus dem **Clone** gelesen | **1×** — **nicht** aufs FS kopieren! |
+| `run_scoring.py`, `run_scoring_saspy.py` | Repo — laufen aus dem Clone | **1×** |
+| `run_scoring.sh` | Master im Repo **+ Bootstrap-Kopie** am FS-Startort des Jobs | **2×** (einzige Ausnahme, s. u.) |
+| `job_<usecase>.conf` | Master im Repo (`production/jobs/`) **+ Kopie** neben der Skript-Kopie | **2×** (einzige Ausnahme, s. u.) |
+| XPT / Monitoring-JSON | Zielpfade aus der Scoring-YAML | **1×** |
+| SSH-Deploy-Key, `sascfg_personal.py` | Home des Service-Users | **1×** (nie im Repo) |
+| pixi-Environment | `WORKDIR` (Clone) | ephemer, pro Lauf |
+
+**Warum genau zwei Dateien doppelt liegen:** Der Job braucht Startskript und
+Job-Datei, **bevor** der Clone existiert (Bootstrap) — alles andere kommt aus
+dem frisch geklonten, gepinnten Repo-Stand. Gegen veraltete Kopien warnt das
+Skript nach dem Clone automatisch (**Drift-Check**: laufende Kopie und
+Job-Datei werden gegen den Repo-Master verglichen; bei Abweichung erscheint
+eine WARNUNG mit beiden Pfaden im Log).
+
 ## Schritt 1 — Bundle erzeugen
 
 In der **Analysis-Config** des Use-Cases:

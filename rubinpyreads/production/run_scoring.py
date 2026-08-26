@@ -6,7 +6,11 @@ Das Bundle liefert Preprocessor + Modelle self-contained; dieses Skript
 orchestriert ausschließlich Einlesen → Transform → Scoren → Rückschreiben →
 Monitoring. Es hält keine eigenen Modell- oder Preprocessing-Artefakte.
 
-Aufruf (Config-getrieben, CLI nur für Pfad-Overrides):
+Der EINE Einstieg für beide Transporte: Der Top-Level-Key ``runner:`` der
+Config entscheidet — ``file`` läuft hier, ``saspy`` wird an
+run_scoring_saspy.main() delegiert.
+
+Aufruf (Config-getrieben, CLI nur für Pfad-Overrides beim lokalen Testen):
 
     python production/run_scoring.py --config production/scoring_ph.yml
     python production/run_scoring.py --config ... --input other.parquet --bundle <dir>
