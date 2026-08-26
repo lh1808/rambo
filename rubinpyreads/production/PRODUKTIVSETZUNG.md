@@ -8,6 +8,28 @@ Pflicht/Optional-Markierung: `scoring_template_file.yml` (Datei-Flow) und
 `scoring_template_saspy.yml` (saspy-Flow); `scoring_ph.yml` ist ein
 konkreter, gelebter Use-Case.
 
+## Auf einen Blick: Neuen Score produktiv setzen
+
+1. **Bundle exportieren** — im Analyse-Lauf `bundle.enabled: true` + `bundle_id`
+   setzen; das Bundle-Verzeichnis nach `/mnt/Production/<usecase>/bundle/`
+   legen *(Details: Schritt 1)*.
+2. **Scoring-Config anlegen** — `scoring_template_file.yml` (bzw. `_saspy`)
+   nach `production/scoring_<usecase>.yml` kopieren, PFLICHT-Felder füllen
+   *(Schritt 2, Modellauswahl: Schritt 3)*.
+3. **Lokal testen** —
+   `python production/run_scoring.py --config production/scoring_<usecase>.yml`
+   *(Schritt 5 zeigt die Checks)*.
+4. **Job-Datei anlegen** — `production/jobs/job_ph.conf` nach
+   `job_<usecase>.conf` kopieren, `SCORING_CONFIGS` (und später `GIT_REF`)
+   eintragen; alles committen *(Schritt 4)*.
+5. **Domino-Job anlegen** — Skript- und Job-Datei-Kopie an die FS-Ablage,
+   Kommando (Pfade der Ablage):
+   `bash .../run_scoring.sh .../job_<usecase>.conf`;
+   Schedule unter dem Service-Account-Login *(Schritt 4, inkl. Pfad-Semantik)*.
+6. **Für Prod härten** — `GIT_REF` in der Job-Datei auf ein Tag pinnen und
+   `REQUIRE_PINNED_REF=1` setzen; Erstlauf gegen Testziele fahren
+   *(Schritt 5, Betrieb)*.
+
 ## Wie hängt alles zusammen?
 
 ```
@@ -155,17 +177,23 @@ Modell hinter `SCORE_P`/`SCORE_B` stand.
 
 ## Schritt 4 — Job einrichten
 
-`run_scoring.sh` bleibt unverändert; die Kopie auf dem Domino File System
-(z. B. `/mnt/Production/<usecase>/run_scoring.sh`) nach Repo-Änderungen
-synchronisieren. Steuerung über **Env-Variablen der Job-Definition**:
+`run_scoring.sh` bleibt generisch und unverändert; **Skript und Job-Datei
+liegen zusammen** am Startort des Jobs — die Kopien auf dem Domino File
+System (z. B. `/mnt/Production/<usecase>/run_scoring.sh` +
+`.../job_<usecase>.conf`; Master beider Dateien im Repo) nach Repo-Änderungen
+synchronisieren. Das Job-Kommando nutzt dann die FS-Pfade:
+`bash /mnt/Production/<usecase>/run_scoring.sh /mnt/Production/<usecase>/job_<usecase>.conf`. Steuerung über die **Job-Datei** (`KEY="wert"`; Flags als
+Test-Override, `--help` zeigt alles; Env wird nicht gelesen):
 
-| Variable | Default | Bedeutung |
+| Conf-Key | Default | Bedeutung |
 |---|---|---|
-| `SCORING_CONFIGS` | `production/scoring_ph.yml` | Leerzeichen-Liste der Configs — **hier** kommen neue Use-Cases dazu. Jeder Score läuft in einem eigenen Python-Prozess (Speicher wird zwischen Scores vollständig freigegeben) |
+| `SCORING_CONFIGS` | `production/scoring_ph.yml` | Leerzeichen-Liste der zu fahrenden Configs — **hier** kommen neue Use-Cases dazu. Jeder Score läuft in einem eigenen Python-Prozess (Speicher wird zwischen Scores vollständig freigegeben) |
 | `GIT_REF` | `main` | **Für Prod pinnen** — annotiertes Tag empfohlen (Shallow-Clone, schnell); Commit-SHAs funktionieren über den automatischen Fallback (voller Clone + Checkout, langsamer). Pinnt Code **und** `pixi.lock` als Einheit, `--frozen` installiert exakt diesen Stand |
 | `CONTINUE_ON_ERROR` | `0` | `1`: alle Scores versuchen; Exit ≠ 0, wenn einer scheitert |
 | `REQUIRE_PINNED_REF` | `0` | `1` **für Prod-Jobs empfohlen**: Abbruch (Exit 2), wenn `GIT_REF` ein Branch ist — statt nur Warnung |
-| `PIXI_ENV`, `WORKDIR`, `GIT_URL` | s. Skript | Umgebung; selten anzufassen |
+| `GIT_USER_EMAIL` / `GIT_USER_NAME` | — | Optional: `git config --global` (bewährtes TFS-Umgebungs-Muster; fürs Klonen nicht nötig) |
+| `WORKDIR`, `GIT_URL`, `PIXI_ENV` | s. Skript | Umgebung; selten anzufassen |
+| `SKIP_SETUP`, `RUN_CMD` | — | Testwerkzeug — üblicher als Flags beim Trockenlauf: `--skip-setup --run-cmd "python"` |
 
 Gemischte Jobs (Datei- und saspy-Scores in einem Lauf) sind möglich — der
 `runner:`-Key jeder Config entscheidet; das Routing übernimmt
@@ -175,15 +203,15 @@ Config-Pfade dürfen keine Leerzeichen enthalten (Leerzeichen trennt die Liste).
 ### Mentales Modell der Steuerung
 
 Das Job-Skript ist ein **vorausgefülltes Formular**: Jede Zeile der Form
-`VAR="${VAR:-default}"` ist ein Feld, das die Domino-Job-Definition per
-Env-Variable übertippen kann — sonst gilt der Default. Es gibt zwei
-Präzedenz-Ebenen, mehr nicht:
+`VAR="default"` ist ein vorausgefülltes Feld; übertippt wird es durch die
+**Job-Datei** (und für Tests durch Flags). Es gibt zwei Präzedenz-Ebenen,
+mehr nicht:
 
-1. **Job-Ebene (Env > Skript-Default):** *Was* läuft (`SCORING_CONFIGS`),
-   *welcher Code-Stand* (`GIT_REF`), *Fehlerpolitik* (`CONTINUE_ON_ERROR`).
-   Das sind die drei Variablen, die man tatsächlich setzt — der Rest ist
-   Umgebungskonstante (`GIT_URL`, `WORKDIR`, `PIXI_ENV`) oder Testwerkzeug
-   (`SKIP_SETUP`, `RUN_CMD`).
+1. **Job-Ebene (Job-Datei > Skript-Default; Test-Flags nur für den
+   Trockenlauf):** *Was* läuft (`SCORING_CONFIGS`), *welcher Code-Stand*
+   (`GIT_REF`), *Fehlerpolitik* (`CONTINUE_ON_ERROR`). Das sind die drei
+   Angaben, die man tatsächlich setzt — der Rest ist Umgebungskonstante
+   oder Testwerkzeug.
 2. **Score-Ebene (CLI > YAML):** *Wie* ein einzelner Score läuft, steht
    vollständig in seiner `scoring_<usecase>.yml`. Die CLI-Flags von
    `run_scoring.py` (`--input/--bundle/--output`) übersteuern einzelne
@@ -192,9 +220,50 @@ Präzedenz-Ebenen, mehr nicht:
 Der Use-Case lebt damit versioniert im Repo (Config-Datei), der Job kennt nur
 Listen von Configs und einen gepinnten Code-Stand.
 
+### Steuerung per Job-Datei (primär — kein Env, keine Flag-Ketten)
+
+Das Job-Interface ist eine **Job-Datei** in flacher `KEY="wert"`-Syntax
+(Vorlage: `production/jobs/job_ph.conf`) — sie liest sich wie Config, wird
+aber von Bash **nativ per `source` geladen** (kein YAML-Parser vor dem Clone
+nötig; genau deshalb ist es bewusst kein echtes YAML). Env-Variablen werden
+nicht gelesen. Die Domino-Job-Definition ist damit eine Zeile:
+
+```
+bash production/run_scoring.sh production/jobs/job_ph.conf
+```
+
+Pro Use-Case-Job eine Datei unter `production/jobs/` — **committet und
+reviewbar**: ein `GIT_REF`-Bump ist ein Ein-Zeilen-Commit mit Audit-Trail.
+Ein Validierungs-Guard erlaubt in der Datei ausschließlich Zuweisungen der
+bekannten Parameter (plus Kommentare) und bricht sonst ab. Die Git-Identity
+des Umgebungs-Setups lässt sich dort mitgeben (`GIT_USER_EMAIL`/`GIT_USER_NAME`
+→ `git config --global`) — fürs Klonen nicht erforderlich, aber kompatibel
+zum bewährten TFS-Einrichtungs-Muster.
+
+Die Job-Datei ist **Pflicht-Argument** — ohne sie startet das Skript nicht
+(klare Fehlermeldung mit Aufrufbeispiel). Als Kommandozeilen-Flags existieren
+ausschließlich die beiden Testwerkzeuge `--skip-setup` und `--run-cmd`
+(Trockenlauf derselben Job-Datei ohne Clone/Pixi); sämtliche Job-Parameter
+haben genau einen Ort: die Job-Datei.
+
+**Pfad-Semantik (wichtig):** Die Job-Datei wird **vor** dem Clone gelesen —
+ihr Pfad gilt relativ zum **Startkontext** des Jobs (dort, wo auch die
+`run_scoring.sh`-Kopie liegt). Die Pfade **in** `SCORING_CONFIGS` werden
+dagegen **nach** dem Clone im frisch ausgecheckten Repo (`WORKDIR`)
+aufgelöst — sie bleiben daher Repo-Pfade wie
+`production/scoring_<usecase>.yml`, unabhängig davon, wo Skript und
+Job-Datei abgelegt sind. Absolute Pfade in `SCORING_CONFIGS` funktionieren
+ebenfalls (z. B. für Test-Configs außerhalb des Repos).
+
+Ohne „Run as"-Option gilt: Scheduled Runs laufen unter dem User, der sie
+angelegt hat (bzw. im Projekt-Kontext) — das Prod-Projekt daher dem
+Service-Account zuordnen und die Schedules unter dessen Login anlegen; sein
+`~/.ssh`-Deploy-Key wird dann automatisch gefunden. Schnelltest im
+Zielprojekt: `whoami; echo ~; ls -la ~/.ssh`.
+
 **Exit-Codes des Job-Skripts** (für Domino-Alerting): `0` = alle Scores OK ·
 `2` = Abbruch vor dem Scoren durch den Reproduzierbarkeits-Guard
-(`REQUIRE_PINNED_REF=1` bei Branch-Ref) · bei Score-/Config-Fehlern
+(`--require-pinned` bei Branch-Ref) · bei Score-/Config-Fehlern
 (inkl. unbekanntem `runner:` — das prüft jetzt `run_scoring.py` selbst):
 Fail-Fast (Default) propagiert den Exit-Code des fehlgeschlagenen
 Python-Prozesses; mit `CONTINUE_ON_ERROR=1` laufen alle Scores und das Skript
@@ -222,7 +291,7 @@ endet mit `1`, wenn mindestens einer fehlschlug (Summary im Log).
    # saspy-Flow: analog mit run_scoring_saspy.load_saspy_scoring_config
    ```
 2. **Trockenlauf der Job-Schleife** ohne Clone/Pixi:
-   `SKIP_SETUP=1 RUN_CMD="python" SCORING_CONFIGS="production/scoring_<usecase>.yml" bash production/run_scoring.sh`
+   `bash production/run_scoring.sh production/jobs/job_<usecase>.conf --skip-setup --run-cmd "python"`
 3. **Erster SAS-Lauf konservativ:** kleine `chunk_size`, Ziel auf eine
    **Testtabelle** zeigen lassen (`--table-out`-Override bzw. Test-Config),
    Monitoring-`n_rows` gegen die erwartete Selektion zählen.
@@ -242,9 +311,11 @@ endet mit `1`, wenn mindestens einer fehlschlug (Summary im Log).
   YAML (oder gleicher Pfad, Verzeichnis tauschen). Sonst nichts.
 - **Modell wechseln:** nur `scoring.score_p_model` in der YAML — kein
   Re-Export, kein Champion-Wechsel nötig.
-- **Weiterer Kausalscore:** neue `scoring_<usecase>.yml` + Eintrag in
-  `SCORING_CONFIGS`. Unterschiedliche Feature-Teilmengen gegen dieselbe
-  breite Eingabetabelle sind der Normalfall (Spalten-Pruning pro Bundle).
+- **Weiterer Kausalscore:** neue `scoring_<usecase>.yml` + entweder Eintrag
+  in `SCORING_CONFIGS` eines bestehenden Jobs (gleicher Zeitplan) oder
+  eigene `job_<usecase>.conf` + eigener Domino-Job (eigener Zeitplan).
+  Unterschiedliche Feature-Teilmengen gegen dieselbe breite Eingabetabelle
+  sind der Normalfall (Spalten-Pruning pro Bundle).
 - **Historisierung:** XPT/Zieltabelle wird überschrieben bzw. ersetzt —
   Historisierung übernimmt das Zielsystem; Monitoring-JSONs sind versioniert.
 

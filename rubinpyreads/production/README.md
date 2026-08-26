@@ -49,10 +49,10 @@ Stand, `pixi.lock` ist gitignored — löst pixi anhand der Version-Pins, mit
 Warnung im Log; **Empfehlung: `pixi.lock` für Prod-Reproduzierbarkeit
 committen**, dann greift automatisch `--frozen`; kein `pixi add` auf dem Executor) →
 Scoring-Schleife (ein eigener Python-Prozess pro Config; ein Einstieg —
-`run_scoring.py` routet intern anhand des `runner:`-Keys). Parameter per Env:
-`SCORING_CONFIGS` (Leerzeichen-Liste; `SCORING_CONFIG` singular bleibt als
-Alias), `GIT_REF` (+ `REQUIRE_PINNED_REF=1` für Prod-Jobs empfohlen),
-`CONTINUE_ON_ERROR`. Läuft unter einem
+`run_scoring.py` routet intern anhand des `runner:`-Keys). Parametrisierung über eine
+**Job-Datei** (`production/jobs/job_<uc>.conf`, flache `KEY="wert"`-Syntax,
+per `source` geladen; Flags als Test-Override, `--help` zeigt alle; Env wird
+nicht gelesen). Läuft unter einem
 Service-User: nur dessen SSH-Deploy-Key wird gebraucht, keine Git-Identity
 (die ist nur für Commits nötig). `set -euo pipefail` propagiert jeden Fehler
 als roten Domino-Job.
@@ -111,13 +111,14 @@ langer Multi-Score-Job kann dadurch nicht durch akkumulierte Zustände in
 einen OOM laufen.
 
 ```bash
-SCORING_CONFIGS="production/scoring_ph.yml production/scoring_kfz.yml" \
-  bash production/run_scoring.sh
-# Transport pro Config: Top-Level-Key `runner:` in der YAML (file | saspy) —
-# gemischte Jobs (Datei- und SAS-Library-Scores) sind möglich; das Routing
-# übernimmt run_scoring.py selbst (die Shell kennt einen Einstieg).
-# Fehlerpolitik: CONTINUE_ON_ERROR=1 → alle versuchen, Exit ≠ 0 wenn einer scheitert
-# Lokaler Trockenlauf ohne Clone/Pixi: SKIP_SETUP=1 RUN_CMD="python"
+# Job-Definition in Domino (eine Zeile; alle Parameter in der Job-Datei):
+bash production/run_scoring.sh production/jobs/job_ph.conf
+# Job-Datei (production/jobs/job_<uc>.conf, KEY="wert"): SCORING_CONFIGS
+# (Leerzeichen-Liste → gemischte file/saspy-Jobs möglich; Routing macht
+# run_scoring.py anhand des runner:-Keys), GIT_REF, REQUIRE_PINNED_REF,
+# CONTINUE_ON_ERROR (1 = alle versuchen, Exit ≠ 0 wenn einer scheitert).
+# Lokaler Trockenlauf ohne Clone/Pixi:
+#   bash production/run_scoring.sh production/jobs/job_<uc>.conf --skip-setup --run-cmd "python"
 ```
 
 Unterschiedliche Feature-Teilmengen pro Score sind der Normalfall und

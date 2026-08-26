@@ -26,27 +26,28 @@
 # pro Score sind unproblematisch: jeder Lauf liest über sein Bundle nur die
 # benötigten Spalten (input.pull_only_needed_columns, Default an).
 #
-# Service-User: Es wird KEINE Git-Identity gesetzt (nur nötig für Commits).
-# Der Job braucht ausschließlich den SSH-Deploy-Key des Service-Users unter
-# ~/.ssh/id_rsa mit Lese-Recht auf das Repo.
+# Service-User: Der Job braucht den SSH-Deploy-Key des Service-Users unter
+# ~/.ssh (id_rsa/id_ed25519/id_ecdsa) mit Lese-Recht auf das Repo. Eine
+# Git-Identity ist fürs Klonen nicht nötig; wo das Umgebungs-Setup sie
+# erwartet, kann sie per --git-email/--git-name gesetzt werden
+# (führt git config --global aus — bewährtes TFS-Vorgehen).
 # ============================================================================
 set -euo pipefail
 
-# ── Parameter (per Env überschreibbar, sonst Defaults) ──────────────────────
-GIT_URL="${GIT_URL:-ssh://tfs.lan.huk-coburg.de:22/web/DefaultCollection/GIT_Projects/_git/da-hf1-rubin}"
-GIT_REF="${GIT_REF:-main}"                 # Für reproduzierbare Prod-Läufe pinnen:
+# ── Parameter-Defaults (Steuerung AUSSCHLIESSLICH über Argumente, s. unten) ─
+GIT_URL="ssh://tfs.lan.huk-coburg.de:22/web/DefaultCollection/GIT_Projects/_git/da-hf1-rubin"
+GIT_REF="main"                 # Für reproduzierbare Prod-Läufe pinnen:
                                            # Tag (empfohlen — Shallow-Clone, schnell)
                                            # oder Commit-SHA (Fallback unten: voller
                                            # Clone + Checkout, funktioniert, langsamer).
-# Ein oder mehrere Configs (Leerzeichen-getrennt — Pfade dürfen daher selbst
-# keine Leerzeichen enthalten). SCORING_CONFIG (Singular) bleibt als Alias
-# für den Ein-Score-Fall nutzbar.
-SCORING_CONFIGS="${SCORING_CONFIGS:-${SCORING_CONFIG:-production/scoring_ph.yml}}"
+# Ein oder mehrere Configs (--configs "a b" Leerzeichen-getrennt — Pfade
+# dürfen daher selbst keine Leerzeichen enthalten; alternativ --config je Datei).
+SCORING_CONFIGS="production/scoring_ph.yml"
 # Fehlerpolitik bei mehreren Scores: 0 = Abbruch beim ersten Fehler (Default),
 # 1 = alle Scores versuchen, am Ende Exit ≠ 0 wenn mindestens einer fehlschlug.
-CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
-WORKDIR="${WORKDIR:-/home/ubuntu/rubin_scoring}"
-PIXI_ENV="${PIXI_ENV:-prod}"               # schlankes Scoring-Env (gleiche solve-group wie default)
+CONTINUE_ON_ERROR=0
+WORKDIR="/home/ubuntu/rubin_scoring"
+PIXI_ENV="prod"               # schlankes Scoring-Env (gleiche solve-group wie default)
 # Transport pro Config: Der Top-Level-Key `runner:` in der jeweiligen YAML
 # entscheidet (file = Datei-Flow/XPT, Default; saspy = SAS-Library-Flow).
 # Das Routing übernimmt run_scoring.py selbst (robustes YAML statt
@@ -54,8 +55,70 @@ PIXI_ENV="${PIXI_ENV:-prod}"               # schlankes Scoring-Env (gleiche solv
 # Trockenlauf/Test: SKIP_SETUP=1 überspringt SSH/Clone/Pixi-Install und führt
 # die Scoring-Schleife im aktuellen Verzeichnis aus; RUN_CMD ersetzt dabei den
 # Python-Aufruf (Default: pixi-Env).
-SKIP_SETUP="${SKIP_SETUP:-0}"
-RUN_CMD="${RUN_CMD:-}"
+SKIP_SETUP=0
+RUN_CMD=""
+REQUIRE_PINNED_REF=0
+# Optionale Git-Identity (leer = nicht setzen; fürs Klonen nicht erforderlich):
+GIT_USER_EMAIL=""
+GIT_USER_NAME=""
+
+# ── Job-Datei = das EINZIGE Steuerungs-Interface (Env wird nicht gelesen) ───
+# Aufruf: bash production/run_scoring.sh production/jobs/job_<uc>.conf
+# Die beiden --Flags unten sind reines Testwerkzeug (Trockenlauf).
+usage() {
+  cat <<'USAGE'
+Aufruf: bash production/run_scoring.sh <JOB_CONF> [--skip-setup] [--run-cmd "<cmd>"]
+
+  JOB_CONF        Pflicht: Pfad zur Job-Datei (KEY="wert"-Zeilen; Vorlage:
+                  production/jobs/job_ph.conf). SÄMTLICHE Job-Parameter
+                  (SCORING_CONFIGS, GIT_REF, REQUIRE_PINNED_REF,
+                  CONTINUE_ON_ERROR, optional GIT_USER_EMAIL/GIT_USER_NAME,
+                  WORKDIR, GIT_URL, PIXI_ENV, SKIP_SETUP, RUN_CMD) werden
+                  dort gesetzt — es gibt bewusst keinen zweiten Weg.
+  --skip-setup    Test: Schleife ohne Clone/Pixi im aktuellen Verzeichnis
+  --run-cmd       Test: Python-Aufruf ersetzen (z. B. "python3")
+  -h | --help     Diese Hilfe
+
+In der Job-Datei nicht gesetzte Schlüssel behalten die Skript-Defaults.
+USAGE
+}
+# ── Job-Conf-Datei (primäres Interface) ─────────────────────────────────────
+# Erstes Argument ohne führendes "--" = Pfad zu einer Job-Datei in flacher
+# KEY="wert"-Syntax (Vorlage: production/jobs/job_ph.conf). Sie wird per
+# source geladen — kein YAML-Parser nötig, Bash liest sie nativ. Erlaubt sind
+# ausschließlich Zuweisungen der bekannten Parameter, Kommentare und
+# Leerzeilen; alles andere bricht ab (Schutz vor Tippfehlern/Injection).
+JOB_CONF=""
+if [[ $# -gt 0 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+  usage; exit 0
+fi
+if [[ $# -eq 0 || "$1" == --* ]]; then
+  echo "FEHLER: Job-Datei fehlt. Aufruf: bash production/run_scoring.sh <production/jobs/job_<uc>.conf> [--skip-setup --run-cmd \"python\"]"
+  echo "        (--help zeigt Details; Vorlage: production/jobs/job_ph.conf)"
+  exit 2
+fi
+JOB_CONF="$1"; shift
+if [[ ! -f "${JOB_CONF}" ]]; then
+  echo "FEHLER: Job-Conf nicht gefunden: ${JOB_CONF}"; exit 2
+fi
+_bad=$(grep -Ev '^[[:space:]]*(#|$|(SCORING_CONFIGS|GIT_REF|GIT_URL|WORKDIR|PIXI_ENV|CONTINUE_ON_ERROR|REQUIRE_PINNED_REF|GIT_USER_EMAIL|GIT_USER_NAME|SKIP_SETUP|RUN_CMD)=)' "${JOB_CONF}" || true)
+if [[ -n "${_bad}" ]]; then
+  echo "FEHLER: Job-Conf ${JOB_CONF} enthält unzulässige Zeilen (erlaubt: KEY=\"wert\" der bekannten Parameter, Kommentare):"
+  echo "${_bad}"
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "${JOB_CONF}"
+
+# ── Test-Flags (einzige Optionen; alles andere gehört in die Job-Datei) ─────
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-setup)        SKIP_SETUP=1; shift ;;
+    --run-cmd)           RUN_CMD="$2"; shift 2 ;;
+    -h|--help)           usage; exit 0 ;;
+    *) echo "Unbekannte Option: $1 — alle Job-Parameter gehören in die Job-Datei (siehe --help)."; exit 2 ;;
+  esac
+done
 
 START_TS=$(date +%s)
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -71,7 +134,7 @@ if [[ "${SKIP_SETUP}" != "1" ]]; then
 # auf ein annotiertes Tag (empfohlen) oder eine Commit-SHA gepinnt ist.
 case "${GIT_REF}" in
   main|master|develop|HEAD)
-    if [[ "${REQUIRE_PINNED_REF:-0}" == "1" ]]; then
+    if [[ "${REQUIRE_PINNED_REF}" == "1" ]]; then
       log "FEHLER: GIT_REF='${GIT_REF}' ist ein Branch (nicht reproduzierbar) und REQUIRE_PINNED_REF=1 ist gesetzt."
       log "        GIT_REF auf ein annotiertes Tag oder eine Commit-SHA pinnen."
       exit 2
@@ -91,6 +154,15 @@ for k in ~/.ssh/id_rsa ~/.ssh/id_ed25519 ~/.ssh/id_ecdsa; do
 done
 [[ "$found_key" -eq 0 ]] && log "WARNUNG: kein SSH-Key unter ~/.ssh gefunden — Clone wird voraussichtlich scheitern."
 git --version
+
+# ── Git-Identity (optional — bewährtes TFS-Umgebungs-Muster) ────────────────
+# Fürs Klonen nicht erforderlich; wird nur gesetzt, wenn per Argument/Env
+# vorgegeben (--git-email/--git-name bzw. GIT_USER_EMAIL/GIT_USER_NAME).
+if [[ -n "${GIT_USER_EMAIL}" || -n "${GIT_USER_NAME}" ]]; then
+  log "--- Git-Identity setzen ---"
+  [[ -n "${GIT_USER_EMAIL}" ]] && git config --global user.email "${GIT_USER_EMAIL}"
+  [[ -n "${GIT_USER_NAME}"  ]] && git config --global user.name  "${GIT_USER_NAME}"
+fi
 
 # ── TLS für pixi/uv (PyPI-Deps: catboost, pyreadstat, editierbares rubin) ───
 # Auf Job-Executors ist die .devboxrc nicht garantiert geladen → explizit setzen.
