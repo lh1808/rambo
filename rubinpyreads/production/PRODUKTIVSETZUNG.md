@@ -53,7 +53,7 @@ hinterlässt ein **Monitoring-JSON** als Kontrollausdruck.
 |---|---|---|
 | `production/scoring_template_*.yml` | Kopiervorlagen (Datei-/saspy-Flow): alle Felder, PFLICHT/optional markiert. | Nie — nur kopieren |
 | `production/scoring_<usecase>.yml` | **Der Use-Case.** Definiert Transport, Input, Bundle, Modellauswahl, Output, Monitoring. | **Pro Use-Case anlegen** (Kopie der passenden Vorlage; Beispiel: `scoring_ph.yml`) |
-| `production/run_scoring.sh` | Generisches Job-Skript: Clone → pixi-Env → Scoring-Schleife. | **Nie.** Steuerung ausschließlich über Env-Variablen des Jobs |
+| `production/run_scoring.sh` | Generisches Job-Skript: Clone → pixi-Env → Scoring-Schleife. | **Nie.** Steuerung ausschließlich über die Job-Datei |
 | `production/run_scoring.py` | Datei-Flow (parquet/csv/sas7bdat → XPT). | Nie |
 | `production/run_scoring_saspy.py` | SAS-Library-Flow (`sd2df` → `df2sd`/`PROC APPEND`). | Nie |
 | `sascfg_personal.py` (saspy-Konfig, außerhalb des Repos) | SAS-Verbindung (Host, Port, Auth). | Einmalig pro Umgebung; **Credentials nie ins Repo** |
