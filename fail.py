@@ -1,4 +1,27 @@
 # ============================================================================
+# Tabelle komplett leeren
+# ============================================================================
+with db2_connect() as conn:
+    conn.set_autocommit(False)
+    cur = conn.cursor()
+
+    cur.execute('SELECT COUNT(*) FROM "%s"."%s"' % (SCHEMA, TABLE))
+    vorher = cur.fetchone()[0]
+    print("Vorher:", vorher, "Zeilen in %s.%s" % (SCHEMA, TABLE))
+
+    cur.execute('DELETE FROM "%s"."%s"' % (SCHEMA, TABLE))
+
+    cur.execute('SELECT COUNT(*) FROM "%s"."%s"' % (SCHEMA, TABLE))
+    print("Nachher:", cur.fetchone()[0], "Zeilen (noch kein Commit)")
+
+    conn.commit()
+    cur.close()
+    print("Commit -- Tabelle ist leer.")
+
+
+
+
+# ============================================================================
 # ZELLE 3 - Testzeilen entfernen und voll laden
 # ============================================================================
 with db2_connect() as conn:
