@@ -1,3 +1,6 @@
+sed -i 's/\r$//' /mnt/Production/DWA_production/run_scoring.sh /mnt/Production/DWA_production/job_dwa.conf
+
+
 27.08.2026 11:47 : Using curl at /opt/domino/bin/curl
 27.08.2026 11:47 : Preparing working directory.
 27.08.2026 11:47 : -- starting API proxy --
