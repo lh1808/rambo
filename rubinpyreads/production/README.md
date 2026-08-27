@@ -43,7 +43,7 @@ python production/run_scoring.py --config production/scoring_ph.yml \
 Repo, die **ausgeführte Kopie liegt auf dem Domino File System** (z. B.
 `/mnt/Production/<usecase>/run_scoring.sh`) — nach Repo-Änderungen
 dorthin synchronisieren. Ablauf: frischer Clone (pinnbar via `GIT_REF`,
-für Prod-Läufe Tag/Commit statt `main` empfohlen) → pixi-Install (mit `pixi.lock` im
+für Prod-Läufe Tag/Commit statt `master` empfohlen) → pixi-Install (mit `pixi.lock` im
 Repo: `--frozen`, exakter Lockfile-Stand ohne Re-Solve; ohne Lockfile — aktueller
 Stand, `pixi.lock` ist gitignored — löst pixi anhand der Version-Pins, mit
 Warnung im Log; **Empfehlung: `pixi.lock` für Prod-Reproduzierbarkeit

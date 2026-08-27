@@ -36,7 +36,7 @@ set -euo pipefail
 # ── Defaults (die Job-Datei überschreibt; nicht Gesetztes bleibt so) ────────
 # Job-Parameter — die drei Angaben, die ein Job typischerweise setzt:
 SCORING_CONFIGS="production/scoring_ph.yml"  # Leerzeichen-Liste (Pfade ohne Leerzeichen)
-GIT_REF="main"          # Für Prod pinnen: Tag (empfohlen, Shallow-Clone) oder Commit-SHA
+GIT_REF="master"        # Für Prod pinnen: Tag (empfohlen, Shallow-Clone) oder Commit-SHA
 CONTINUE_ON_ERROR=0     # 1 = alle Scores versuchen, Exit 1 bei Teilfehlern (Default: Fail-Fast)
 REQUIRE_PINNED_REF=0    # 1 = Abbruch statt Warnung, wenn GIT_REF ein Branch ist (Prod-Empfehlung)
 
@@ -106,7 +106,12 @@ fi
 # Absolute Pfade für den späteren Drift-Check sichern (vor jedem cd):
 JOB_CONF="$(realpath "${JOB_CONF}")"
 _SELF="$(realpath "${BASH_SOURCE[0]}")"
-_bad=$(grep -Ev '^[[:space:]]*(#|$|(SCORING_CONFIGS|GIT_REF|GIT_URL|WORKDIR|PIXI_ENV|CONTINUE_ON_ERROR|REQUIRE_PINNED_REF|GIT_USER_EMAIL|GIT_USER_NAME|SKIP_SETUP|RUN_CMD)=)' "${JOB_CONF}" || true)
+# Vollzeilen-Anker: KEY="wert" (Quotes) oder KEY=wert (ohne Leerzeichen),
+# optional Kommentar dahinter, CRLF-tolerant. Ein Präfix-Check allein würde
+# Zeilen wie KEY="a" extra durchlassen — bash führte "extra" dann als
+# Kommando aus (kryptischer 127er im source statt klarer Meldung hier).
+_KEYS='SCORING_CONFIGS|GIT_REF|GIT_URL|WORKDIR|PIXI_ENV|CONTINUE_ON_ERROR|REQUIRE_PINNED_REF|GIT_USER_EMAIL|GIT_USER_NAME|SKIP_SETUP|RUN_CMD'
+_bad=$(grep -Ev "^[[:space:]]*(#.*)?\r?\$|^[[:space:]]*(${_KEYS})=(\"[^\"]*\"|[^[:space:]\"#]*)[[:space:]]*(#.*)?\r?\$" "${JOB_CONF}" || true)
 if [[ -n "${_bad}" ]]; then
   echo "FEHLER: Job-Conf ${JOB_CONF} enthält unzulässige Zeilen (erlaubt: KEY=\"wert\" der bekannten Parameter, Kommentare):"
   echo "${_bad}"
@@ -164,7 +169,7 @@ setup_environment() {
 
   # TLS für pixi/uv (PyPI-Deps: catboost, pyreadstat, editierbares rubin) —
   # auf Job-Executors ist die .devboxrc nicht garantiert geladen:
-  export PIXI_TLS_ROOT_CERTS="all"
+  export PIXI_TLS_ROOT_CERTS="system"  # "all" ist seit pixi 0.72 deprecated (fiel bereits auf system zurück)
   export UV_NATIVE_TLS="true"
 
   # Repo frisch clonen (kein Stale-State vom vorherigen Lauf):

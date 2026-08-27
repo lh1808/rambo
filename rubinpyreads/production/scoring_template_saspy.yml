@@ -46,6 +46,9 @@ id_columns:
 
 preprocessing:
   replace_inf_with_nan: true  # optional — Inf → NaN vor dem Transform, damit
+  coerce_numeric_strings: true # optional — Sonderwerte/Strings in numerisch
+                              # trainierten Spalten (z. B. 'V' im Gesamtbestand)
+                              # → NaN → gelernte Imputation; Raten im Monitoring
                               # die im Bundle gelernte Missing-Behandlung greift
                               # (was genau, bestimmt die Trainings-Konfiguration)
 

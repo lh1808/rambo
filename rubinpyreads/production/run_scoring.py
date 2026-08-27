@@ -71,7 +71,7 @@ _DEFAULTS: Dict[str, Any] = {
         "pull_only_needed_columns": True,
     },
     "id_columns": [],
-    "preprocessing": {"replace_inf_with_nan": True},
+    "preprocessing": {"replace_inf_with_nan": True, "coerce_numeric_strings": True},
     "scoring": {
         "score_p_model": "champion",     # "champion" (Alias) | konkreter Modellname
         "score_b_model": None,           # z. B. "SurrogateTree"; None → keine SCORE_B-Spalte.
@@ -397,6 +397,28 @@ def score_dataframe(df: pd.DataFrame, cfg: Dict[str, Any], day_stamp: str,
         )
     extra_dropped = sorted(set(df.columns) - set(feature_columns) - set(id_cols))
 
+    # Numerisch trainierte Features, die im Produktionsbestand als object/str
+    # ankommen (SAS-Sonderwerte wie 'V' im Gesamtbestand, die im Trainings-
+    # Ausschnitt nie vorkamen): Nicht-Parsebares → NaN → der GELERNTE
+    # Imputer der Pipeline füllt trainingskonsistent (statt Handarbeit mit
+    # fixen Ersatzwerten pro Use-Case). Kategorische Spalten (encoding_maps)
+    # sind nicht betroffen — dort fängt weiterhin die -1-Kategorie Unbekanntes.
+    coerce_rates: Dict[str, float] = {}
+    if cfg["preprocessing"].get("coerce_numeric_strings", True):
+        _enc_cols = set(getattr(pipe.preprocessor, "encoding_maps", {}) or {})
+        for c in feature_columns:
+            if c in df.columns and c not in _enc_cols and df[c].dtype == object:
+                _before = int(df[c].isna().sum())
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+                _new_na = int(df[c].isna().sum()) - _before
+                if _new_na:
+                    coerce_rates[c] = round(_new_na / len(df), 6)
+        if coerce_rates:
+            _logger.warning(
+                "Nicht-numerische Werte in numerisch trainierten Features durch NaN "
+                "ersetzt (→ gelernte Imputation greift) — Sonderwert-/Drift-Signal: %s",
+                coerce_rates,
+            )
     inf_replaced = 0
     if cfg["preprocessing"].get("replace_inf_with_nan", True):
         num = df.select_dtypes(include=[np.number])
@@ -480,6 +502,7 @@ def score_dataframe(df: pd.DataFrame, cfg: Dict[str, Any], day_stamp: str,
             "missing_expected_columns": missing_expected,       # als NaN ergänzt
             "extra_input_columns_dropped": len(extra_dropped),
             "inf_cells_replaced_with_nan": inf_replaced,
+            "numeric_coerce_rate_per_feature": coerce_rates,     # Sonderwerte in num. Spalten
             "minus1_rate_per_categorical": minus1,               # Drift-Signal
         },
         "models": {"score_p": p_name, "score_b": b_name,

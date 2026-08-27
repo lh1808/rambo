@@ -83,7 +83,7 @@ _DEFAULTS: Dict[str, Any] = {
         "pull_only_needed_columns": True,
     },
     "id_columns": [],
-    "preprocessing": {"replace_inf_with_nan": True},
+    "preprocessing": {"replace_inf_with_nan": True, "coerce_numeric_strings": True},
     "scoring": {
         "score_p_model": "champion",
         "score_b_model": None,
