@@ -1,3 +1,14 @@
+# Zeilenenden: Dateien, die auf Linux direkt von bash gelesen werden, MÜSSEN
+# LF haben — Git für Windows mit core.autocrlf=true würde sie sonst beim
+# Checkout nach CRLF wandeln, und der Domino-Job bricht sofort ab
+# ("set: pipefail␍: invalid option name"; s. PRODUKTIVSETZUNG,
+# Fehlermeldungs-Tabelle). eol=lf erzwingt LF bei jedem Checkout,
+# unabhängig von der lokalen Git-Konfiguration.
+*.sh   text eol=lf
+*.conf text eol=lf
+
+
+
 sed -i 's/\r$//' /mnt/Production/DWA_production/run_scoring.sh /mnt/Production/DWA_production/job_dwa.conf
 
 
