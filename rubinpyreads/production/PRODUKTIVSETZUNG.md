@@ -260,6 +260,14 @@ des Umgebungs-Setups lässt sich dort mitgeben (`GIT_USER_EMAIL`/`GIT_USER_NAME`
 → `git config --global`) — fürs Klonen nicht erforderlich, aber kompatibel
 zum bewährten TFS-Einrichtungs-Muster.
 
+**Domino-UI mit Datei- und Argument-Feld** (ältere Versionen ohne freies
+Kommando): Datei-Feld = Pfad zur `run_scoring.sh`-Kopie (**ohne** `bash`
+davor — die Shebang übernimmt; dafür braucht die Kopie einmalig das
+Execute-Bit: `chmod +x .../run_scoring.sh`). Argument-Feld = Pfad zur
+Job-Datei, sonst nichts. Verlangt das Datei-Feld Projekt-Dateien statt
+`/mnt`-Pfaden, beide Dateien in die Projekt-Files legen; den Conf-Pfad im
+Argument-Feld möglichst absolut angeben.
+
 Die Job-Datei ist **Pflicht-Argument** — ohne sie startet das Skript nicht
 (klare Fehlermeldung mit Aufrufbeispiel). Als Kommandozeilen-Flags existieren
 ausschließlich die beiden Testwerkzeuge `--skip-setup` und `--run-cmd`
