@@ -260,13 +260,35 @@ des Umgebungs-Setups lässt sich dort mitgeben (`GIT_USER_EMAIL`/`GIT_USER_NAME`
 → `git config --global`) — fürs Klonen nicht erforderlich, aber kompatibel
 zum bewährten TFS-Einrichtungs-Muster.
 
-**Domino-UI mit Datei- und Argument-Feld** (ältere Versionen ohne freies
-Kommando): Datei-Feld = Pfad zur `run_scoring.sh`-Kopie (**ohne** `bash`
-davor — die Shebang übernimmt; dafür braucht die Kopie einmalig das
-Execute-Bit: `chmod +x .../run_scoring.sh`). Argument-Feld = Pfad zur
-Job-Datei, sonst nichts. Verlangt das Datei-Feld Projekt-Dateien statt
-`/mnt`-Pfaden, beide Dateien in die Projekt-Files legen; den Conf-Pfad im
-Argument-Feld möglichst absolut angeben.
+**Eintrag in der Domino-Job-UI** („File Name or Command"):
+
+```
+/mnt/Production/<uc>/run_scoring.sh /mnt/Production/<uc>/job_<uc>.conf
+```
+
+Die `.sh`-Datei wird direkt eingetragen (Datei + Argument, wie das
+`train.py --with --args`-Muster der UI) — **kein** `bash`-Präfix, **kein**
+Execute-Bit nötig: Domino führt `.sh`-Dateien selbst über bash aus
+(nachgewiesen: Referenz-Jobs ohne Shebang und mit bash-Builtins wie `pushd`
+laufen), die Datei wird dabei nur gelesen. Dass Upload-Wege das Execute-Bit
+verwerfen, ist deshalb folgenlos. Verlangt die UI Projekt-Dateien statt
+`/mnt`-Pfaden, die Dateien in die Projekt-Files legen; Pfade möglichst
+absolut angeben (das Arbeitsverzeichnis des Runs ist der Projekt-Root
+`/mnt`, projekt-relative Pfade wie `Production/<uc>/…` funktionieren daher
+ebenfalls). Das Home des Job-Users ist `/mnt` — der SSH-Deploy-Key gehört
+folglich nach `/mnt/.ssh/id_rsa` und ist dort persistent.
+
+**Zeilenenden (häufigster Erstlauf-Fehler):** Der Upload überträgt Bytes
+unverändert — CRLF entsteht **vorher**: durch Git für Windows
+(`core.autocrlf=true` wandelt beim Checkout) oder durch Windows-Editoren.
+Das Skript bricht dann sofort ab mit `set: pipefail␍: invalid option name`.
+Sofort-Behebung **auf der Domino-Kopie** (Workspace-Terminal):
+`sed -i 's/\r$//' .../run_scoring.sh .../job_<uc>.conf`. Dauerhaft löst es
+die `.gitattributes` im Repo-Root (`*.sh`/`*.conf` → `eol=lf`): Jeder
+TFS-Checkout liefert diese Dateien damit garantiert mit LF — unangefasst
+hochladen genügt dann. Prüfen lässt sich eine Datei mit
+`cat -A datei | head -1` (CRLF zeigt sich als `^M$`). Die Job-Datei selbst
+ist zusätzlich CRLF-tolerant und verzeiht konvertierte Zeilenenden.
 
 Die Job-Datei ist **Pflicht-Argument** — ohne sie startet das Skript nicht
 (klare Fehlermeldung mit Aufrufbeispiel). Als Kommandozeilen-Flags existieren
@@ -351,6 +373,7 @@ endet mit `1`, wenn mindestens einer fehlschlug (Summary im Log).
 
 | Meldung | Ursache | Behebung |
 |---|---|---|
+| `set: pipefail␍: invalid option name` (Zeile 34, sofort beim Start) | Die `run_scoring.sh`-Kopie hat Windows-Zeilenenden (CRLF durch Upload/Editor) | Einmalig `sed -i 's/\r$//' <skript>`; beim Hochladen LF wählen |
 | `Unbekannter Config-Schlüssel '…' — meinten Sie '…'?` | Tippfehler in der Scoring-YAML (Schlüssel werden strikt validiert, nichts wird still ignoriert) | Vorschlag aus der Meldung übernehmen |
 | `… deklariert runner: '…' — diese Config gehört zu …` | Config wurde direkt am falschen Runner-Skript aufgerufen | Genannten Runner verwenden — oder einfach `run_scoring.sh`, das automatisch routet |
 | `metadata.json fehlt im Bundle` / `ml_package_versions fehlt` | Unvollständiges/von Hand gebautes Bundle | Bundle neu aus der Analysis exportieren |

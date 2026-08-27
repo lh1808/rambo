@@ -79,7 +79,7 @@ USAGE
 # veraltete Kopie liefe sonst still mit alter Logik — hier wird laut gewarnt.
 check_copy_drift() {
   local running="$1" master="$2" label="$3"
-  [[ -f "${master}" ]] || return 0
+  [[ -f "${running}" && -f "${master}" ]] || return 0
   if ! cmp -s "${running}" "${master}"; then
     log "WARNUNG: ${label} weicht vom Repo-Master (${GIT_REF}) ab — FS-Kopie bitte synchronisieren:"
     log "         laufend: ${running}"
@@ -112,8 +112,11 @@ if [[ -n "${_bad}" ]]; then
   echo "${_bad}"
   exit 2
 fi
+# CRLF-tolerant sourcen: Windows-Upload-Wege wandeln Zeilenenden in \r\n —
+# ein \r am Wertende ergäbe sonst kryptische Folgefehler ("Config nicht
+# gefunden" mit unsichtbarem Zeichen im Pfad).
 # shellcheck disable=SC1090
-source "${JOB_CONF}"
+source <(tr -d '\r' < "${JOB_CONF}")
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
