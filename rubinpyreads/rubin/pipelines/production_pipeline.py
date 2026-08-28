@@ -169,6 +169,27 @@ class ProductionPipeline:
         """Prüft, ob ein Surrogate-Einzelbaum im Bundle vorhanden ist."""
         return SURROGATE_MODEL_NAME in self.models
 
+    def prepare_input(self, X_input: "pd.DataFrame") -> "pd.DataFrame":
+        """Geteilter Eingangs-Kern für score() UND den Produktions-Runner
+        (score_dataframe): bundle_dtypes-Angleichung (best effort — z. B.
+        sas7bdat liest int-Spalten als float, astype(str) machte daraus
+        "1.0" statt "1" und alle Encodings liefen auf -1), bytes→str-Decode
+        (sas7bdat liefert b"M", encoding_maps kennen "M") und NaN→"fehlend"
+        in kategorischen Spalten (identische Repräsentation wie im Training).
+        Pfadspezifisches (uppercase-Auflösung, Missing-Feature-Politik,
+        Schema-Report) bleibt bewusst in den jeweiligen Aufrufern."""
+        if isinstance(self.bundle_dtypes, dict):
+            for col, dt in self.bundle_dtypes.items():
+                if col in X_input.columns:
+                    try:
+                        X_input[col] = X_input[col].astype(dt)
+                    except Exception:
+                        pass
+        from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
+        decode_bytes_categories(X_input, logger=self._logger if hasattr(self, "_logger") else None)
+        fill_missing_categories(X_input, logger=self._logger if hasattr(self, "_logger") else None)
+        return X_input
+
     def score_surrogate(self, X_raw: pd.DataFrame) -> ProductionOutputs:
         """Scoring ausschließlich mit dem Surrogate-Einzelbaum.
 
@@ -223,22 +244,7 @@ class ProductionPipeline:
                     f"und das Scoring unbrauchbare Werte liefern."
                 )
 
-        if isinstance(self.bundle_dtypes, dict):
-            for col, dt in self.bundle_dtypes.items():
-                if col in X_input.columns:
-                    try:
-                        X_input[col] = X_input[col].astype(dt)
-                    except Exception:
-                        pass
-
-        # NaN in kategorischen Spalten → explizite Kategorie "fehlend":
-        # identische Repräsentation wie im Training (fill_missing_categories in
-        # den Trainings-Ladepfaden). Ohne diesen Schritt würde CatBoost-Predict
-        # an None/NaN in cat_features scheitern bzw. Scoring-Zeilen mit
-        # fehlenden Kategorien anders behandelt als im Training.
-        from rubin.utils.data_utils import decode_bytes_categories, fill_missing_categories
-        decode_bytes_categories(X_input, logger=self._logger if hasattr(self, "_logger") else None)
-        fill_missing_categories(X_input, logger=self._logger if hasattr(self, "_logger") else None)
+        X_input = self.prepare_input(X_input)
         try:
             if hasattr(self.preprocessor, "validate"):
                 res = self.preprocessor.validate(X_input, strict=False)

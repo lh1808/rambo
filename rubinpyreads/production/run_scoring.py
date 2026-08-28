@@ -49,6 +49,7 @@ if _REPO_ROOT not in _sys.path:
 
 from rubin.pipelines.production_pipeline import ProductionPipeline
 from rubin.training import _predict_effect
+from rubin.utils.categorical_patch import patch_categorical_features
 
 _logger = logging.getLogger("rubin.scoring")
 
@@ -405,9 +406,18 @@ def score_dataframe(df: pd.DataFrame, cfg: Dict[str, Any], day_stamp: str,
     # sind nicht betroffen — dort fängt weiterhin die -1-Kategorie Unbekanntes.
     coerce_rates: Dict[str, float] = {}
     if cfg["preprocessing"].get("coerce_numeric_strings", True):
-        _enc_cols = set(getattr(pipe.preprocessor, "encoding_maps", {}) or {})
+        # Präzise Menge "numerisch trainiert": primär aus den Trainings-dtypes
+        # des Bundles (bundle_dtypes), sonst aus der gelernten numerischen
+        # Imputation (fillna_values). "Nicht in encoding_maps" wäre zu breit —
+        # native Kategorie-Spalten ohne Encoding (category-dtype-Bundles)
+        # würden sonst komplett zu NaN gecoerct.
+        _bdt = pipe.bundle_dtypes if isinstance(getattr(pipe, "bundle_dtypes", None), dict) else {}
+        _num_cols = {c for c, dt in _bdt.items()
+                     if str(dt).lower().startswith(("int", "float", "uint"))}
+        if not _num_cols:
+            _num_cols = set(getattr(pipe.preprocessor, "fillna_values", {}) or {})
         for c in feature_columns:
-            if c in df.columns and c not in _enc_cols and df[c].dtype == object:
+            if c in df.columns and c in _num_cols and df[c].dtype == object:
                 _before = int(df[c].isna().sum())
                 df[c] = pd.to_numeric(df[c], errors="coerce")
                 _new_na = int(df[c].isna().sum()) - _before
@@ -419,6 +429,15 @@ def score_dataframe(df: pd.DataFrame, cfg: Dict[str, Any], day_stamp: str,
                 "ersetzt (→ gelernte Imputation greift) — Sonderwert-/Drift-Signal: %s",
                 coerce_rates,
             )
+    # Eingangs-Parität zur Analyse/score() — NACH der Coerce-Stufe (sonst
+    # erklärte fill_missing_categories eine 'V'-haltige object-Spalte zur
+    # Kategorie, bevor die numerische Reparatur greifen kann):
+    # bundle_dtypes-Angleichung, bytes→str-Decode und NaN→"fehlend". OHNE
+    # diesen Schritt liefen sas7bdat-bytes-Kategorien (b"M" statt "M") oder
+    # float-gelesene int-Spalten ("1.0" statt "1") massenhaft auf die
+    # -1-Kategorie (sichtbar als extreme minus1-Raten im Monitoring).
+    df = pipe.prepare_input(df)
+
     inf_replaced = 0
     if cfg["preprocessing"].get("replace_inf_with_nan", True):
         num = df.select_dtypes(include=[np.number])
@@ -442,26 +461,36 @@ def score_dataframe(df: pd.DataFrame, cfg: Dict[str, Any], day_stamp: str,
     p_name = _resolve_model(pipe, cfg["scoring"].get("score_p_model") or "champion")
     if p_name not in pipe.models:
         raise ValueError(f"score_p_model '{p_name}' nicht im Bundle. Vorhanden: {sorted(pipe.models)}")
-    for col, vals in _score_columns("SCORE_P", predict_in_batches(pipe.models[p_name], Xp, batch)).items():
-        scores[col] = vals
-    _logger.info("SCORE_P: %s", p_name)
 
-    b_spec = cfg["scoring"].get("score_b_model")
-    b_name = _resolve_model(pipe, b_spec) if b_spec else None
-    if b_name is not None:
-        if b_name in pipe.models:
-            for col, vals in _score_columns("SCORE_B", predict_in_batches(pipe.models[b_name], Xp, batch)).items():
-                scores[col] = vals
-            _logger.info("SCORE_B: %s", b_name)
-        else:
-            _logger.warning("score_b_model '%s' nicht im Bundle — SCORE_B entfällt (optional).", b_name)
-            b_name = None
-
-    for extra in cfg["scoring"].get("extra_models") or []:
-        if extra not in pipe.models:
-            raise ValueError(f"extra_models: '{extra}' nicht im Bundle.")
-        for col, vals in _score_columns(f"CATE_{extra}", predict_in_batches(pipe.models[extra], Xp, batch)).items():
+    # Metalearner-Bundles (T-/X-Learner) mit CatBoost-Basismodellen: econml
+    # konvertiert X in const_marginal_effect() intern zu float-Arrays — ohne
+    # den Patch erreicht das Array CatBoost ungeschützt und crasht an
+    # cat_features ("'data' is numpy array of floating point … but
+    # 'cat_features' …"). In der Analyse ist derselbe Patch aktiv (fit UND
+    # predict); die Produktion muss die predict-Seite spiegeln. Xp liefert
+    # die korrekten Spaltenindizes des Bundles; ohne kategorische Spalten
+    # (rein numerische Bundles) ist der Kontext ein No-Op.
+    with patch_categorical_features(Xp, base_learner_type="catboost"):
+        for col, vals in _score_columns("SCORE_P", predict_in_batches(pipe.models[p_name], Xp, batch)).items():
             scores[col] = vals
+        _logger.info("SCORE_P: %s", p_name)
+
+        b_spec = cfg["scoring"].get("score_b_model")
+        b_name = _resolve_model(pipe, b_spec) if b_spec else None
+        if b_name is not None:
+            if b_name in pipe.models:
+                for col, vals in _score_columns("SCORE_B", predict_in_batches(pipe.models[b_name], Xp, batch)).items():
+                    scores[col] = vals
+                _logger.info("SCORE_B: %s", b_name)
+            else:
+                _logger.warning("score_b_model '%s' nicht im Bundle — SCORE_B entfällt (optional).", b_name)
+                b_name = None
+
+        for extra in cfg["scoring"].get("extra_models") or []:
+            if extra not in pipe.models:
+                raise ValueError(f"extra_models: '{extra}' nicht im Bundle.")
+            for col, vals in _score_columns(f"CATE_{extra}", predict_in_batches(pipe.models[extra], Xp, batch)).items():
+                scores[col] = vals
 
     if round_dec is not None:
         scores = scores.round(int(round_dec))
