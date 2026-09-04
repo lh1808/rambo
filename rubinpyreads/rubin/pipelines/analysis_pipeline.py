@@ -3645,8 +3645,17 @@ class AnalysisPipeline:
             except Exception:
                 self._logger.debug("ATE-Barplot konnte nicht erzeugt werden.", exc_info=True)
             if holdout_data is not None:
-                # Gilt für External Eval UND TMES (beide setzen holdout_data)
+                # External Eval: Stats des separaten Eval-Datensatzes
                 report.add_eval_data_stats(*holdout_data)
+            elif eval_mask is not None:
+                # TMES: holdout_data bleibt None (kein Holdout-Split) — die
+                # Eval-Statistiken beschreiben das eval_mask-Subset, damit der
+                # Report Umfang und Verteilung des bewerteten Subsets zeigt.
+                _m = np.asarray(eval_mask, dtype=bool)
+                report.add_eval_data_stats(
+                    X[_m], np.asarray(T)[_m], np.asarray(Y)[_m],
+                    (np.asarray(S)[_m] if S is not None else None),
+                )
 
             _progress("Feature-Selektion")
             # Kategorischer Patch für Feature-Selektion: IMMER "both" weil

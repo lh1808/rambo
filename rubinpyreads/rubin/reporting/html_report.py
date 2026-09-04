@@ -509,7 +509,7 @@ def _render_overview(collector, cs, ds, eds, champ, is_external, _is_tmes) -> st
     if is_external and eds.get("n_rows"):
         h += (
             '<div class="cd"><div class="cd-l">Beobachtungen</div><div class="cd-v sm">'
-            f'<div style="line-height:1.6">Train: <strong>{ds.get("n_rows",0):,}</strong></div>'
+            f'<div style="line-height:1.6">{"Gesamt" if _is_tmes else "Train"}: <strong>{ds.get("n_rows",0):,}</strong></div>'
             f'<div style="line-height:1.6">Eval: <strong>{eds.get("n_rows",0):,}</strong></div>'
             '</div></div>'
         )
@@ -544,12 +544,14 @@ def _render_overview(collector, cs, ds, eds, champ, is_external, _is_tmes) -> st
         steps.append("Bundle")
     if steps:
         h += '<h3>Pipeline</h3><div class="tags">' + ''.join(f'<span class="tag step">{escape(s)}</span>' for s in steps) + '</div>'
-    if is_external:
+    if _is_tmes:
+        h += '<div style="margin-top:14px;padding:12px 16px;background:#fffbeb;border:1px solid #e8d49c;border-radius:8px;font-size:13px;line-height:1.5;color:#7a5a00"><strong>TMES-Validierung (Train Many, Evaluate Some):</strong> Training und Cross-Prediction laufen auf dem Gesamtdatensatz (Out-of-Fold-Predictions, maximale statistische Power). Uplift-Metriken, DRTester-Plots und Policy-Values werden ausschließlich auf dem per <code>eval_mask</code> markierten Subset ausgewertet. Hinweis: Die Eval-Zeilen sind je Fold out-of-fold, fließen aber in das Training der übrigen Folds ein — für eine strikte Holdout-/Out-of-Time-Validierung <code>validate_on: external</code> mit separatem Eval-Datensatz verwenden.</div>'
+    elif is_external:
         h += '<div style="margin-top:14px;padding:12px 16px;background:#fffbeb;border:1px solid #e8d49c;border-radius:8px;font-size:13px;line-height:1.5;color:#7a5a00"><strong>Externe Validierung:</strong> Tuning und Feature-Selektion liefen intern auf den Trainingsdaten (CV). Alle Modelle wurden auf 100% der Trainingsdaten nachtrainiert und auf dem separaten Eval-Datensatz evaluiert. Metriken und Diagnose-Plots basieren ausschließlich auf den Eval-Daten.</div>'
     return h
 
 
-def _render_data(collector, ds, eds, is_external) -> str:
+def _render_data(collector, ds, eds, is_external, _is_tmes=False) -> str:
     """Baut den Inhalt der Datengrundlage-Sektion."""
     h = '<p class="expl">Statistische Grunddaten. Der ATE (Diff. in Means) ist ein erster, unbereinigter Hinweis auf den Gesamteffekt.</p>'
     if is_external:
@@ -565,14 +567,15 @@ def _render_data(collector, ds, eds, is_external) -> str:
         h += f'<div style="margin:16px 28px;text-align:center"><img src="data:image/png;base64,{collector.ate_barplot}" alt="Outcome Rate by Treatment Group" style="max-width:420px;border-radius:8px;border:1px solid var(--border)" loading="lazy"></div>'
     if ds.get("treatment_distribution"):
         total_n = ds.get("n_rows", 1)
-        h += '<h3>Treatment-Verteilung' + (' (Train)' if is_external else '') + '</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
+        h += '<h3>Treatment-Verteilung' + (' (Gesamtdatensatz inkl. Eval-Subset)' if _is_tmes else (' (Train)' if is_external else '')) + '</h3><div class="tbl-scroll"><table class="dt"><thead><tr><th>Gruppe</th><th>Anzahl</th><th>Anteil</th><th>Outcome</th></tr></thead><tbody>'
         for grp, n in ds["treatment_distribution"].items():
             rate = ds.get("outcome_rates", {}).get(grp, 0)
             h += f'<tr><td>{escape(grp)}</td><td>{n:,}</td><td>{n/total_n*100:.1f}%</td><td>{rate:.4f}</td></tr>'
         h += '</tbody></table></div>'
     # Eval-Daten-Statistiken (nur bei external)
     if is_external and eds:
-        h += '<h3>Evaluationsdaten (separater Datensatz)</h3><div class="cg">'
+        h += ('<h3>Evaluationsdaten (TMES: eval_mask-Subset)</h3><div class="cg">' if _is_tmes
+              else '<h3>Evaluationsdaten (separater Datensatz)</h3><div class="cg">')
         if eds.get("ate_diff_in_means") is not None:
             h += f'<div class="cd hl"><div class="cd-l">ATE (Diff. in Means)</div><div class="cd-v">{eds["ate_diff_in_means"]:.6f}</div></div>'
         h += f'<div class="cd"><div class="cd-l">Beobachtungen</div><div class="cd-v">{eds.get("n_rows",0):,}</div></div>'
@@ -1137,7 +1140,7 @@ def _render_cft(collector, cs) -> str:
     return h
 
 
-def _render_comparison(collector, cs, champ, sel_met, higher, is_external) -> str:
+def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_tmes=False) -> str:
     """Baut den Inhalt der Modellvergleichs-Sektion."""
     all_mets = sorted({k for m in collector.model_metrics.values() for k in m if isinstance(m.get(k), (int, float))})
 
@@ -1149,7 +1152,7 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external) -> st
             best_per_met[met] = max(vals, key=lambda x: x[1] if higher else -x[1])[1]
 
     _study_type = cs.get("study_type", "rct")
-    h = '<p class="expl">' + ('Uplift-Metriken basierend auf dem <strong>externen Evaluationsdatensatz</strong>. Modelle wurden auf den Trainingsdaten trainiert und hier auf ungesehenen Daten evaluiert.' if is_external else 'Uplift-Metriken basierend auf Out-of-Fold-Predictions (externe K-Fold Cross-Validation für alle Modelle).') + ' Champion ist hervorgehoben. <span class="best-marker-legend">Bester Wert</span> je Metrik ist markiert.</p>'
+    h = '<p class="expl">' + (('Uplift-Metriken basierend auf <strong>Out-of-Fold-Predictions</strong> (externe K-Fold Cross-Validation über den Gesamtdatensatz), ausgewertet <strong>ausschließlich auf dem eval_mask-Subset (TMES)</strong>. Die Eval-Zeilen fließen in das Training der übrigen Folds ein.' if _is_tmes else 'Uplift-Metriken basierend auf dem <strong>externen Evaluationsdatensatz</strong>. Modelle wurden auf den Trainingsdaten trainiert und hier auf ungesehenen Daten evaluiert.') if is_external else 'Uplift-Metriken basierend auf Out-of-Fold-Predictions (externe K-Fold Cross-Validation für alle Modelle).') + ' Champion ist hervorgehoben. <span class="best-marker-legend">Bester Wert</span> je Metrik ist markiert.</p>'
     if _study_type == "rct":
         h += '<p class="expl">Alle Metriken basieren auf randomisierten Daten und sind direkt als kausale Effekte interpretierbar. Qini, AUUC und Policy Value messen die tatsächliche Wirksamkeit der modellbasierten Targeting-Strategie.</p>'
     else:
@@ -1213,10 +1216,11 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external) -> st
     return h
 
 
-def _render_model_detail(mn, plots, cs, champ, is_external) -> str:
+def _render_model_detail(mn, plots, cs, champ, is_external, _is_tmes=False) -> str:
     """Baut den Inhalt einer einzelnen Modell-Detail-Sektion."""
     ic = mn == champ
-    eval_note = " Plots basieren auf dem externen Eval-Datensatz." if is_external else ""
+    eval_note = (" Plots basieren auf dem eval_mask-Subset (Out-of-Fold-Predictions, TMES)." if _is_tmes
+                 else (" Plots basieren auf dem externen Eval-Datensatz." if is_external else ""))
     champ_badge = '&ensp;<span class="badge-c">Champion</span>' if ic else ''
     h = f'<p class="expl">Diagnose-Plots für <strong>{escape(mn)}</strong>{champ_badge}.{eval_note}</p>'
     _no_confounding_models = {"SLearner", "TLearner", "CausalForest"}
@@ -1340,7 +1344,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         _sec("heterogeneity", "Heterogenität", _het_html)
 
     # ── 2. Datengrundlage ──
-    _sec("data", "Datengrundlage", _render_data(collector, ds, eds, is_external))
+    _sec("data", "Datengrundlage", _render_data(collector, ds, eds, is_external, _is_tmes))
 
     # ── 2b. Datenaufbereitung (wenn DataPrep-Info vorhanden) ──
     _dataprep_html = _render_dataprep(collector, cs)
@@ -1379,7 +1383,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     higher = cs.get("higher_is_better", True)
     if collector.model_metrics:
         _nav_label("Ergebnisse")
-        _sec("comparison", "Modellvergleich", _render_comparison(collector, cs, champ, sel_met, higher, is_external))
+        _sec("comparison", "Modellvergleich", _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_tmes))
 
     # ── 7. Modell-Details ──
     # Sortierung: gleiche Reihenfolge wie im Modellvergleich (Ranking nach Selektionsmetrik)
@@ -1390,7 +1394,7 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
         plots = collector.model_plots.get(mn, {})
         if not plots:
             continue
-        _sec(f"model_{mn}", f"Modell: {mn}", _render_model_detail(mn, plots, cs, champ, is_external))
+        _sec(f"model_{mn}", f"Modell: {mn}", _render_model_detail(mn, plots, cs, champ, is_external, _is_tmes))
 
     # ── 8. Surrogate (unter Ergebnisse) ──
     _surrogate_html = _render_surrogate(collector, champ)
