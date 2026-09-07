@@ -124,6 +124,9 @@ def _fixture_collector() -> ReportCollector:
     c.feature_selection_info = {
         "n_before": 120, "n_after": 50, "n_removed_correlation": 40,
         "n_removed_importance": 30, "n_after_correlation": 80,
+            "selected_features": ["alter", "beitrag", "region", "vertragsdauer"],
+        "removed_correlation": ["beitrag_brutto"],
+        "removed_importance": ["kanal_alt"],
     }
 
     c.tuning_scores = {

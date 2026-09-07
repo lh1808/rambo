@@ -3142,7 +3142,7 @@ class AnalysisPipeline:
                     _log_temp_artifact(mlflow, _save_plot, f"SHAP_{plot_key}_{champion_name}.png")
 
                 def _save_imp(p, _imp=shap_result.importance):
-                    _imp.head(top_n).to_csv(p)
+                    _imp.to_csv(p)  # CSV-Artefakt vollständig; nur der Plot zeigt Top-N
                 _log_temp_artifact(mlflow, _save_imp, f"shap_importance_{champion_name}.csv")
 
                 mlflow.log_param("explainability_method", "shap_plots")
@@ -3160,7 +3160,7 @@ class AnalysisPipeline:
                 imp = res.mean_abs_importance()
 
                 def _save_imp2(p, _imp=imp):
-                    _imp.head(top_n).to_csv(p)
+                    _imp.to_csv(p)  # CSV-Artefakt vollständig; nur der Plot zeigt Top-N
                 _log_temp_artifact(mlflow, _save_imp2, f"shap_importance_{champion_name}.csv")
 
                 try:
@@ -3196,7 +3196,8 @@ class AnalysisPipeline:
                     _imp_plot = imp.head(top_n)[::-1]
                     _fig_bar, _ax = plt.subplots(figsize=(10, max(4, 0.25 * len(_imp_plot) + 2)))
                     _ax.barh(_imp_plot.index.astype(str), _imp_plot.values)
-                    _ax.set_xlabel("Wichtigkeit"); _ax.set_title(f"SHAP-Importance – {champion_name}")
+                    _ax.set_xlabel("Wichtigkeit")
+                    _ax.set_title(f"SHAP-Importance – {champion_name} (Top {len(_imp_plot)} von {len(imp)})")
                     _fig_bar.tight_layout()
                     report.add_explainability_plot("SHAP-Importance", _fig_bar)
                     plt.close(_fig_bar)
@@ -3666,6 +3667,12 @@ class AnalysisPipeline:
             if removed.get("importance") or removed.get("high_correlation"):
                 report.feature_selection_info["n_before"] = report.data_stats.get("n_features", 0)
                 report.feature_selection_info["n_after"] = len(X.columns)
+                # Vollständige Namenslisten für den Report (nicht nur Zählungen):
+                # welche Features es ins Modell geschafft haben und welche warum
+                # entfernt wurden — Nachvollziehbarkeit der Selektion.
+                report.feature_selection_info["selected_features"] = [str(c) for c in X.columns]
+                report.feature_selection_info["removed_correlation"] = [str(c) for c in removed.get("high_correlation", [])]
+                report.feature_selection_info["removed_importance"] = [str(c) for c in removed.get("importance", [])]
                 report.feature_selection_info["n_removed_correlation"] = len(removed.get("high_correlation", []))
                 report.feature_selection_info["n_removed_importance"] = len(removed.get("importance", []))
                 n_corr = len(removed.get("high_correlation", []))

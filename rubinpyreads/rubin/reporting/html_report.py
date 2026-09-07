@@ -51,13 +51,21 @@ def fig_to_base64(fig) -> str:
 
 
 def df_to_html(df: pd.DataFrame, max_rows: int = 50) -> str:
-    """Konvertiert ein DataFrame in eine HTML-Tabelle."""
-    if len(df) > max_rows:
+    """Konvertiert ein DataFrame in eine HTML-Tabelle.
+
+    Kürzt bei Überlänge auf max_rows — dann mit sichtbarem Hinweis statt
+    still (eine kommentarlos abgeschnittene Tabelle wirkt vollständig)."""
+    total = len(df)
+    if total > max_rows:
         df = df.head(max_rows)
-    return df.to_html(
+    html = df.to_html(
         classes="dt", index=False, border=0,
         float_format=lambda x: f"{x:.6f}" if abs(x) < 1 else f"{x:.4f}",
     )
+    if total > max_rows:
+        html += (f'<p style="font-size:11.5px;color:#856404;margin:4px 0 0">'
+                 f'Gekürzt: {max_rows} von {total} Zeilen angezeigt.</p>')
+    return html
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +174,7 @@ class ReportCollector:
                 self.dataprep_info = {
                     "data_files": dp.get("data_path", []),
                     "eval_files": dp.get("eval_data_path", []),
+                    "eval_file_index": dp.get("eval_file_index", None),
                     "target": dp.get("target", "Y"),
                     "treatment": dp.get("treatment", "T"),
                     "score_name": dp.get("score_name", ""),
@@ -612,11 +621,31 @@ def _render_dataprep(collector, cs) -> str:
     data_files = dpi.get("data_files", [])
     if isinstance(data_files, str):
         data_files = [data_files]
-    if data_files:
-        files_str = ", ".join(str(f).rsplit("/", 1)[-1] for f in data_files[:5])
-        if len(data_files) > 5:
-            files_str += f" (+{len(data_files)-5})"
-        h += f'<div class="cd"><div class="cd-l">Quelldateien</div><div class="cd-v sm">{escape(files_str)}</div></div>'
+    eval_files = dpi.get("eval_files", []) or []
+    if isinstance(eval_files, str):
+        eval_files = [eval_files]
+    # Rollen je Datei: eval_file_index markiert Dateien aus data_files als
+    # TMES-Eval-Subset — diese Dateien sind Training UND Evaluation (ihre
+    # Zeilen trainieren in den übrigen Folds mit). Bei validate_on: external
+    # wird eine gesetzte Maske ignoriert (siehe Analyse-Log-Warnung) — dann
+    # zählen alle data_files als reines Training und eval_files als
+    # Evaluation. Ohne beides: alles Training.
+    _efi = dpi.get("eval_file_index", None)
+    _eval_idx = set([_efi] if isinstance(_efi, int) else list(_efi)) if _efi is not None else set()
+    if str((cs or {}).get("validate_on") or "") == "external":
+        _eval_idx = set()
+    _n_te = sum(1 for i in _eval_idx if 0 <= i < len(data_files))
+    _n_t = len(data_files) - _n_te
+    if data_files or eval_files:
+        _parts = []
+        if _n_t:
+            _parts.append(f"{_n_t} Training")
+        if _n_te:
+            _parts.append(f"{_n_te} Training + Evaluation")
+        if eval_files:
+            _parts.append(f"{len(eval_files)} Evaluation")
+        _summary = f"{len(data_files) + len(eval_files)} Datei(en)" + (f" — {', '.join(_parts)}" if _parts else "")
+        h += f'<div class="cd"><div class="cd-l">Quelldateien</div><div class="cd-v sm">{escape(_summary)}</div></div>'
     target_val = dpi.get("target", "Y")
     if isinstance(target_val, list):
         target_display = " + ".join(str(t) for t in target_val)
@@ -634,6 +663,23 @@ def _render_dataprep(collector, cs) -> str:
     if cat_cols:
         h += f'<div class="cd"><div class="cd-l">Kategorische Spalten</div><div class="cd-v sm">{len(cat_cols)} Spalten</div></div>'
     h += '</div>'
+    # Vollständige Quelldatei-Liste (ALLE Dateien, keine Kürzung) mit Rolle
+    if data_files or eval_files:
+        _b = {
+            "t": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#eef2f7;color:#3b556e;white-space:nowrap">Training</span>',
+            "te": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#efe7fb;color:#5b3a8e;white-space:nowrap">Training + Evaluation</span>',
+            "e": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#fff3cd;color:#856404;white-space:nowrap">Evaluation</span>',
+        }
+        h += '<h3>Quelldateien nach Rolle</h3>'
+        h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 18px;font-size:12.5px">'
+        for i, f in enumerate(data_files):
+            badge = _b["te"] if i in _eval_idx else _b["t"]
+            h += ('<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0">'
+                  f'<span style="overflow-wrap:anywhere">{escape(str(f).rsplit("/", 1)[-1])}</span>{badge}</div>')
+        for f in eval_files:
+            h += ('<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0">'
+                  f'<span style="overflow-wrap:anywhere">{escape(str(f).rsplit("/", 1)[-1])}</span>{_b["e"]}</div>')
+        h += '</div>'
     # Verarbeitungsschritte
     processing_steps = []
     fill_na = dpi.get("fill_na_method")
@@ -645,14 +691,14 @@ def _render_dataprep(collector, cs) -> str:
         processing_steps.append(f'Multi-Target: {len(target_val)} Spalten aufsummiert')
     if dpi.get("deduplicate"):
         col = dpi.get("deduplicate_id_column")
-        processing_steps.append('Deduplizierung' + (f' ({col})' if col else ''))
+        processing_steps.append('Deduplizierung' + (f' ({escape(str(col))})' if col else ''))
     if dpi.get("balance_treatments"):
         processing_steps.append("Treatment-Balance (Downsampling)")
     if dpi.get("score_as_feature"):
         processing_steps.append("Score als Feature")
     if dpi.get("treatment_replacement"):
         tr = dpi["treatment_replacement"]
-        mapping = ", ".join(f'{k}→{v}' for k, v in tr.items()) if isinstance(tr, dict) else str(tr)
+        mapping = ", ".join(f'{escape(str(k))}→{escape(str(v))}' for k, v in tr.items()) if isinstance(tr, dict) else escape(str(tr))
         processing_steps.append(f'Treatment-Mapping: {mapping}')
     multi = dpi.get("multiple_files_option", "merge")
     if multi and multi != "merge" and len(data_files) > 1:
@@ -716,6 +762,20 @@ def _render_feature_selection(collector, cs) -> str:
             h += f'<div style="font-size:11px;color:var(--text-l);margin-top:2px">{n_after_corr} → {fs.get("n_after","?")}</div>'
         h += '</div></div>'
     h += '</div>'
+
+    # Vollständige Namenslisten (ALLE Features, keine Kürzung) — einklappbar,
+    # damit die Sektion bei großen Feature-Räumen kompakt bleibt.
+    def _feature_details(title, names):
+        if not names:
+            return ""
+        body = ", ".join(escape(str(n)) for n in names)
+        return ('<details style="margin-top:8px">'
+                f'<summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-l)">{escape(title)} ({len(names)}) — vollständige Liste</summary>'
+                f'<div style="font-size:12px;line-height:1.8;margin:6px 0 2px;overflow-wrap:anywhere">{body}</div></details>')
+
+    h += _feature_details("Selektierte Features", fs.get("selected_features") or [])
+    h += _feature_details("Entfernt durch Korrelationsfilter", fs.get("removed_correlation") or [])
+    h += _feature_details("Entfernt durch Importance-Ranking", fs.get("removed_importance") or [])
     return h
 
 
@@ -1140,16 +1200,37 @@ def _render_cft(collector, cs) -> str:
     return h
 
 
+_LOWER_BETTER_HINTS = ("_se", "stderr", "std_err", "brier", "error", "loss", "rmse", "mae", "mse")
+
+
+def _metric_higher(met: str, default: bool) -> bool:
+    """Optimierungsrichtung je Metrik: Fehler-/Streuungsmaße sind
+    "niedriger = besser", alles andere folgt der Report-Voreinstellung
+    (higher der Selektionsmetrik). Vorher galt das eine Flag pauschal für
+    ALLE Spalten — Pfeile und Best-Marker wären für ein Fehlermaß falsch."""
+    m = met.lower()
+    if any(hint in m for hint in _LOWER_BETTER_HINTS):
+        return False
+    return default
+
+
 def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_tmes=False) -> str:
     """Baut den Inhalt der Modellvergleichs-Sektion."""
-    all_mets = sorted({k for m in collector.model_metrics.values() for k in m if isinstance(m.get(k), (int, float))})
+    import math
 
-    # Compute best value per metric
+    def _num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    all_mets = sorted({k for m in collector.model_metrics.values() for k in m
+                       if isinstance(m.get(k), (int, float)) and not isinstance(m.get(k), bool)})
+
+    # Bester Wert je Metrik — richtungsbewusst (Fehlermaße: min), NaN/Inf
+    # gefiltert (max() mit NaN wäre undefiniert), int-Metriken eingeschlossen.
     best_per_met = {}
     for met in all_mets:
-        vals = [(mn, mx.get(met)) for mn, mx in collector.model_metrics.items() if isinstance(mx.get(met), float)]
+        vals = [mx.get(met) for mx in collector.model_metrics.values() if _num(mx.get(met))]
         if vals:
-            best_per_met[met] = max(vals, key=lambda x: x[1] if higher else -x[1])[1]
+            best_per_met[met] = max(vals) if _metric_higher(met, higher) else min(vals)
 
     _study_type = cs.get("study_type", "rct")
     h = '<p class="expl">' + (('Uplift-Metriken basierend auf <strong>Out-of-Fold-Predictions</strong> (externe K-Fold Cross-Validation über den Gesamtdatensatz), ausgewertet <strong>ausschließlich auf dem eval_mask-Subset (TMES)</strong>. Die Eval-Zeilen fließen in das Training der übrigen Folds ein.' if _is_tmes else 'Uplift-Metriken basierend auf dem <strong>externen Evaluationsdatensatz</strong>. Modelle wurden auf den Trainingsdaten trainiert und hier auf ungesehenen Daten evaluiert.') if is_external else 'Uplift-Metriken basierend auf Out-of-Fold-Predictions (externe K-Fold Cross-Validation für alle Modelle).') + ' Champion ist hervorgehoben. <span class="best-marker-legend">Bester Wert</span> je Metrik ist markiert.</p>'
@@ -1161,7 +1242,7 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
     # Table with best-value highlighting
     h += '<div class="tbl-scroll"><table class="dt"><thead><tr><th>Modell</th>'
     for met in all_mets:
-        arrow = " ▲" if higher else " ▼"
+        arrow = " ▲" if _metric_higher(met, higher) else " ▼"
         is_sel = met == sel_met
         cls = ' class="sel-met"' if is_sel else ""
         h += f'<th{cls}>{escape(met)}{arrow}</th>'
@@ -1177,10 +1258,13 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
         h += f'<tr{tr_cls}><td><strong>{escape(mn)}</strong>{champ_badge}</td>'
         for met in all_mets:
             v = mx.get(met)
-            if isinstance(v, float):
+            if _num(v):
                 is_best = best_per_met.get(met) is not None and abs(v - best_per_met[met]) < 1e-9
                 cls = ' class="best-val"' if is_best else ""
-                h += f'<td{cls}>{v:.6f}</td>'
+                cell = f"{v:,}" if isinstance(v, int) else f"{v:.6f}"
+                h += f'<td{cls}>{cell}</td>'
+            elif isinstance(v, float):  # NaN/Inf: vorher stand wörtlich "nan" in der Zelle
+                h += '<td class="na" title="nicht berechnet (NaN/Inf)">–</td>'
             else:
                 h += '<td class="na">–</td>'
         h += '</tr>'

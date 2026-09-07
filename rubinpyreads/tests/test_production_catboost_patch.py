@@ -3,8 +3,9 @@ CatBoost-Basismodellen und cat_features — econml konvertiert X in
 const_marginal_effect() zu float-Arrays; ohne den categorical_patch crasht
 CatBoost ("'data' is numpy array of floating point …"). Die Analyse lief,
 weil sie den Patch installiert; die Produktion muss die predict-Seite
-spiegeln (score_dataframe wickelt die Predicts jetzt in den Kontext)."""
-import re
+spiegeln — die Verdrahtung im Runner sichert der End-to-End-Paritätstest
+(test_production_score_parity, CatBoost-Metalearner mit Kategorie über den
+vollen Scoring-Weg) verhaltensbasiert ab."""
 import sys
 from pathlib import Path
 
@@ -48,15 +49,3 @@ class TestMetalearnerCatboostPredict:
         with patch_categorical_features(X, base_learner_type="catboost"):
             eff = np.asarray(tl.const_marginal_effect(X))
         assert eff.shape[0] == len(X) and np.isfinite(eff).all()
-
-    def test_score_dataframe_wraps_predicts_in_patch_context(self):
-        """Quelltext-Invariante: Die Produktions-Predicts (SCORE_P/B/extra)
-        stehen im patch_categorical_features-Kontext mit Xp als Indexquelle."""
-        src = (_PROD / "run_scoring.py").read_text(encoding="utf-8")
-        m = re.search(
-            r'with patch_categorical_features\(Xp, base_learner_type="catboost"\):'
-            r'(.*?)_nan_scores', src, re.S)
-        assert m, "Patch-Kontext um die Predicts fehlt"
-        inner = m.group(1)
-        for marker in ('"SCORE_P"', '"SCORE_B"', "extra_models"):
-            assert marker in inner, f"{marker} nicht im Patch-Kontext"
