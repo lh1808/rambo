@@ -234,6 +234,43 @@ data_prep:
 
 ---
 
+
+**Use-Case-Ausschlüsse** (`exclude_features`, optional): Das zentrale
+Feature-Dictionary bleibt die eine Wahrheit, *was grundsätzlich Input ist*;
+diese Liste nimmt davon für einen Use Case gezielt Spalten aus — ohne das
+Dictionary zu kopieren:
+
+```yaml
+data_prep:
+  feature_path: dictionaries/features_bestand.xlsx
+  exclude_features: [GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH]
+```
+
+Nur Ausschluss (Aufnahme von Nicht-Inputs geht bewusst übers Dictionary
+selbst). Case-insensitiv; unbekannte Namen erzeugen eine **Warnung**
+(Tippfehler — oder das Feature wurde im Dictionary inzwischen
+umbenannt/entfernt), keinen Abbruch. Target/Treatment/Score sind geschützt.
+Die effektiv angewandte Liste wird **separat weggeloggt**: als
+`exclude_features_used.txt` im DataPrep-Output (ein Name pro Zeile — schnell
+greifbar, in Git diffbar) und in der `dataprep_config.yml`-Kopie des Laufs —
+bei Retraining lassen sich exakt dieselben Ausschlüsse wieder anwenden,
+auch wenn sich das Dictionary zwischenzeitlich geändert hat. Der
+Analyse-Report zeigt die Ausschlüsse in der Datenaufbereitungs-Sektion.
+In der **Web-UI** werden die Ausschlüsse als geschriebene Liste erfasst
+(Komma- oder zeilengetrennt, unter dem Dictionary-Pfad) — „Gegen Dictionary
+prüfen" gleicht die Namen gegen die INPUT-Spalten des Dictionaries ab und
+markiert unbekannte Einträge. Einträge der Liste sind in der
+Spalten-Checkboxliste (die z. B. durch „Dictionary anwenden" bereits
+vorbelegt ist) **live gesperrt**: ausgegraut, nicht anwählbar — auch nicht
+über „Alle". Reaktivieren geht ausschließlich durch Entfernen aus der
+Liste; so gibt es eine einzige Quelle der Wahrheit und keine
+widersprüchlichen Zustände zwischen Liste, Checkboxen und Logs. Die Liste
+kann nur abwählen, nie hinzufügen; alles Übrige der Spaltenauswahl bleibt
+unverändert bedienbar. Der Dictionary-**Export** übernimmt die
+Use-Case-Ausschlüsse bewusst **nicht** (sie blieben dort INPUT): Das Delta
+gehört in die Use-Case-Config, nicht in die globale Dictionary-Wahrheit —
+die UI weist beim Export darauf hin.
+
 ## `mlflow` – Experiment‑Tracking
 
 ```yaml
@@ -766,11 +803,11 @@ Aktiviert einen Einzelbaum des konfigurierten Base-Learners (LightGBM/CatBoost m
 | `SurrogateTree` | Champion (beliebiges Modell) | Wenn `enabled: true` |
 
 - `enabled`: Aktiviert den Surrogate-Einzelbaum auf dem Champion.
-- `min_samples_leaf`: Mindestanzahl an Beobachtungen pro Blatt. Wird auf `min_child_samples` (LightGBM) bzw. `min_data_in_leaf` (CatBoost) gemappt.
-- `num_leaves`: Maximale Anzahl Blätter (nur LightGBM). Steuert die Baumkomplexität direkt über leaf-wise Growth.
-- `max_depth`: Maximale Baumtiefe. `null` bedeutet keine Begrenzung bei LightGBM (`-1`), bei CatBoost wird `6` als Default verwendet.
+- `min_samples_leaf`: Mindestanzahl an Beobachtungen pro Blatt — für statistisch belastbare Segmente. Wird auf `min_child_samples` (LightGBM) bzw. `min_data_in_leaf` (CatBoost, via `grow_policy=Lossguide`) gemappt. Hinweis: LightGBM garantiert die Untergrenze hart; CatBoost nutzt sie als Split-Steuerung ohne harte Garantie — einzelne Blätter können darunter liegen.
+- `num_leaves`: Maximale Anzahl Blätter (leaf-wise Growth). Wirkt bei **beiden** Base-Learnern: LightGBM (`num_leaves`) und CatBoost (`max_leaves`, Lossguide). Steuert die Baumkomplexität direkt.
+- `max_depth`: Maximale Baumtiefe. `null` bedeutet keine Begrenzung bei LightGBM (`-1`); bei CatBoost wird `16` (Maximum) verwendet — Lossguide-Bäume werden primär über `num_leaves`/`min_samples_leaf` begrenzt.
 
-**Ablauf in der Analyse-Pipeline:** Der Surrogate wird nach der Evaluation des Champions trainiert, wenn `enabled: true`.
+**Ablauf in der Analyse-Pipeline:** Der Surrogate wird nach der Evaluation des Champions trainiert, wenn `enabled: true`. Der Bundle-Export übernimmt exakt diesen Analyse-Baum (Objekt-Identität) — die Report-Kennzahlen (Qini, Tiefe, Blätter, Regeln) beschreiben damit genau das Modell, das in Produktion scored; ein Neubau erfolgt nur als geloggter Fallback.
 
 - **K-Fold CV (Evaluation, Fold-Aligned, komplett leakage-frei):** Während der Cross-Prediction werden pro Fold K Champion-Modelle trainiert. Jeder Champion_k hat Fold k nie gesehen. Für Surrogate-Fold k wird Champion_k's Prediction auf den Train-Folds als Target verwendet — kein Informationspfad von Val-Samples ins Training. Fallback auf OOF-Predictions wenn Fold-Aligned nicht verfügbar.
 - **Final-Fit (Produktion):** Surrogate wird auf Full-Data-Refit-Predictions des Champions trainiert (weniger Rauschen, keine Evaluation darauf).

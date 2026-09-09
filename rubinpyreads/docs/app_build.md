@@ -121,6 +121,17 @@ function App() { ... }
 **Warum:** Es gibt keinen Modul-Loader — die Funktion wird direkt
 von `ReactDOM.createRoot(...)` aufgerufen.
 
+### Prüf-Werkzeuge nach UI-Änderungen
+
+1. `python3 app/build_ui.py` — Bundle + index.html erzeugen.
+2. `python3 scripts/check_ui_sync.py` — Ebene 0 (Bundle transpiliert mit dem
+   ausgelieferten Babel) + Byte-Sync der drei Ebenen. Fängt **Syntaxfehler**.
+3. `node scripts/check_ui_render.js` — mountet die komplette App headless
+   (react-test-renderer, einmalig `npm i react@18.2.0 react-dom@18.2.0
+   react-test-renderer@18.2.0`). Fängt **Laufzeitfehler**, die Ebene 0 nicht
+   sieht: entfernte Definitionen mit verbliebener Nutzung, Hook-/TDZ-Brüche,
+   Render-Crashes — mit Komponenten-Stack.
+
 ### 3. React Hooks: Reihenfolge einhalten
 
 Alle `useState()`, `useRef()` und `useEffect()`-Aufrufe **müssen am Anfang**
@@ -201,6 +212,8 @@ server.py                     (Flask liefert index.html aus)
 | Leere Seite, Console: "React is not defined" | Libraries nicht inlined | `pixi run build-app` |
 | Leere Seite, Console: "Unexpected token import" | `import`-Statement in index.html | JSX → `const { ... } = React;` |
 | Leere Seite, Console: "Invalid hook call" | useState/useRef nach useEffect | Hooks-Reihenfolge korrigieren |
+| Leere Seite, Console: "Cannot access 'x' before initialization" | useEffect mit Dependency vor der useState-Deklaration (TDZ) | Effect hinter alle useState-Zeilen verschieben |
+| Leere Seite, Console: "x is not defined" | Definition bei einem Edit entfernt, JSX-Nutzung blieb (transpiliert fehlerfrei!) | `node scripts/check_ui_render.js` lokalisiert es mit Stack |
 | `pixi run build-app` schlägt fehl | CDN blockiert, keine lokalen Dateien | Dateien manuell in `app/frontend/lib/` ablegen |
 | build-app sagt "Bereits inlined" | Erster Build war fehlerhaft | `python scripts/build_app_html.py --force` |
 | "Name or service not known" beim Start | `HOST`-Variable durch Conda/pixi überschrieben | server.py nutzt `RUBIN_HOST` statt `HOST` |
