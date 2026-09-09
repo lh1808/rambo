@@ -37,6 +37,34 @@ def first_divergence(a: str, b: str) -> str:
     return f"Längen-Differenz: {len(a)} vs. {len(b)} Zeichen (gemeinsamer Präfix identisch)"
 
 
+def check_transpiles() -> bool:
+    """Ebene 0: Die JSX-Quelle muss mit dem ausgelieferten Babel transpilieren.
+    Ein einziger JSX-Syntaxfehler (z. B. benachbarte Elemente in einem
+    Ternary-Zweig ohne umschließendes Element) zerschießt im Browser das
+    GESAMTE Bundle — der Byte-Sync der Ebenen unten fängt das nicht.
+    Ohne node wird der Check mit Hinweis übersprungen."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        print("~ Ebene 0 übersprungen (node fehlt) — Transpile-Check nur mit node möglich")
+        return True
+    js = (
+        'const Babel=require(process.argv[1]);'
+        'const src=require("fs").readFileSync(process.argv[2],"utf8");'
+        'try{Babel.transform(src,{presets:["react"]});}'
+        'catch(e){console.error(String(e.message||e));process.exit(1);}'
+    )
+    r = subprocess.run(
+        ["node", "-e", js, str(ROOT / "app" / "frontend" / "lib" / "babel.min.js"), str(BUNDLE)],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print(f"✗ Ebene 0: JSX-Syntaxfehler im Bundle — {r.stderr.strip()}")
+        return False
+    print("✓ Ebene 0: Bundle transpiliert fehlerfrei (Babel preset react)")
+    return True
+
+
 def main() -> int:
     fragments = sorted(SRC_DIR.glob("*.jsx"))
     if not fragments:
@@ -45,7 +73,7 @@ def main() -> int:
     concat = "\n".join(f.read_text(encoding="utf-8") for f in fragments)
     bundle = BUNDLE.read_text(encoding="utf-8")
 
-    ok = True
+    ok = check_transpiles()
     if concat == bundle:
         print(f"✓ Ebene 1↔2: rubin_ui_src.jsx == '\\n'.join({len(fragments)} src-Fragmente) — byte-identisch")
     else:

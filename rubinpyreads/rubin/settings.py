@@ -164,6 +164,19 @@ class DataPrepConfig(BaseModel):
     # Explizite Feature-Auswahl (aus UI oder manuell). Wenn gesetzt, werden nur diese
     # Spalten als Features in X aufgenommen. Überschreibt feature_path falls beides gesetzt.
     features: Optional[List[str]] = None
+    # Use-Case-Ausschlüsse als Delta ÜBER dem Feature-Dictionary: Das zentrale
+    # Dictionary bleibt die Wahrheit "was ist grundsätzlich Input"; diese
+    # Liste nimmt davon für DIESEN Use Case gezielt Spalten aus (nur
+    # Ausschluss — Aufnahme von Nicht-Inputs geht bewusst nur übers
+    # Dictionary selbst). Case-insensitiv; unbekannte Namen erzeugen eine
+    # WARNUNG (Tippfehler/inzwischen umbenannt), keinen Abbruch. Die Liste
+    # (alle real existierenden Namen, ohne echte Tippfehler) wird separat als
+    # exclude_features_used.txt ins
+    # DataPrep-Output geschrieben (schnell greifbar, diffbar) und steht
+    # zusätzlich in der dataprep_config.yml-Kopie des Laufs — für exakt
+    # reproduzierbare Ausschlüsse bei Retraining, auch wenn sich das
+    # Dictionary zwischenzeitlich geändert hat.
+    exclude_features: Optional[List[str]] = None
     # Explizite kategorische Spalten. Überschreibt die automatische Erkennung aus
     # feature_path oder dtype-Heuristik.
     categorical_columns: Optional[List[str]] = None

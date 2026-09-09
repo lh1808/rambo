@@ -799,6 +799,44 @@ class DataPrepPipeline:
         if dp.score_as_feature and score_col and score_col in df.columns:
             X[score_col] = df[score_col]
 
+        # Use-Case-Ausschlüsse (Delta über Dictionary/features/Fallback):
+        # greift NACH jeder Feature-Bestimmung einheitlich; Target/Treatment/
+        # Score sind geschützt.
+        if dp.exclude_features:
+            _protected = {str(c).upper() for c in [*target_cols, treat_col, score_col or ""] if c}
+            _excl = {str(c).upper() for c in dp.exclude_features} - _protected
+            _hit = [c for c in X.columns if str(c).upper() in _excl]
+            # Tippfehler-Warnung nur für Namen, die auch in den ROHDATEN nicht
+            # existieren. Namen, die in den Rohdaten stehen, aber ohnehin kein
+            # Input mehr sind (z. B. via UI bereits aus der features-Liste
+            # abgewählt), sind kein Tippfehler — sonst warnte jeder Lauf des
+            # UI-Flows "Liste → Checkbox-Abwahl" fälschlich.
+            _raw_cols = {str(c).upper() for c in df.columns}
+            _miss = sorted(_excl - {str(c).upper() for c in X.columns} - _raw_cols)
+            if _hit:
+                X = X.drop(columns=_hit)
+                available_features = [c for c in available_features if c not in _hit]
+                categorical_columns = [c for c in categorical_columns if c not in _hit]
+                self._logger.info(
+                    "exclude_features: %d Spalte(n) für diesen Use Case ausgeschlossen: %s",
+                    len(_hit), sorted(_hit),
+                )
+            if _miss:
+                self._logger.warning(
+                    "exclude_features: %s nicht unter den Input-Features — Tippfehler "
+                    "oder im Dictionary inzwischen umbenannt/entfernt?",
+                    _miss,
+                )
+            # Fürs separate Weglogging zählt die USE-CASE-LISTE (alle real
+            # existierenden Namen) — nicht nur die vom Filter aktiv entfernten:
+            # Im UI-Flow "Liste → Checkbox-Abwahl" fehlen die Spalten bereits
+            # in der features-Liste, der Filter hätte nichts zu tun und die
+            # txt bliebe sonst ausgerechnet dort leer.
+            self._exclude_applied = sorted(_excl & _raw_cols)
+            if dp.log_to_mlflow:
+                import mlflow
+                mlflow.log_param("exclude_features", ",".join(self._exclude_applied) or "-")
+
         # Explizite categorical_columns aus YAML/UI überschreiben die Auto-Erkennung
         if dp.categorical_columns and not dp.features:
             cat_upper = [str(c).upper() for c in dp.categorical_columns]
@@ -1022,6 +1060,20 @@ class DataPrepPipeline:
             import yaml as _yaml
             dp_cfg_dict = {"data_prep": dp.model_dump() if hasattr(dp, "model_dump") else dp.dict()}
             dp_cfg_dict["data_prep"]["categorical_columns"] = categorical_columns
+            # Separates Weglogging der Use-Case-Ausschlüsse: eigene kleine
+            # Datei (ein Name pro Zeile) — schneller optisch greifbar als die
+            # YAML-Kopie und in Git zeilenweise diffbar. Für Retraining kann
+            # die Liste 1:1 wieder als exclude_features übernommen werden.
+            _applied = getattr(self, "_exclude_applied", None)
+            if _applied is not None:
+                # Wirkung dokumentieren (Eingabeliste steht als exclude_features
+                # ohnehin in der Kopie; applied = real existierende Namen ohne
+                # Tippfehler — Report-Kachel und mlflow nutzen dieselbe Quelle).
+                dp_cfg_dict["data_prep"]["exclude_features_applied"] = list(_applied)
+            if _applied:
+                (out_dir / "exclude_features_used.txt").write_text(
+                    "\n".join(_applied) + "\n", encoding="utf-8"
+                )
             (out_dir / "dataprep_config.yml").write_text(
                 _yaml.dump(dp_cfg_dict, default_flow_style=False, allow_unicode=True, sort_keys=False),
                 encoding="utf-8",

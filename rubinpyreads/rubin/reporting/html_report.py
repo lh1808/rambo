@@ -175,6 +175,8 @@ class ReportCollector:
                     "data_files": dp.get("data_path", []),
                     "eval_files": dp.get("eval_data_path", []),
                     "eval_file_index": dp.get("eval_file_index", None),
+                    "exclude_features": dp.get("exclude_features", None),
+                    "exclude_features_applied": dp.get("exclude_features_applied", None),
                     "target": dp.get("target", "Y"),
                     "treatment": dp.get("treatment", "T"),
                     "score_name": dp.get("score_name", ""),
@@ -646,6 +648,14 @@ def _render_dataprep(collector, cs) -> str:
             _parts.append(f"{len(eval_files)} Evaluation")
         _summary = f"{len(data_files) + len(eval_files)} Datei(en)" + (f" — {', '.join(_parts)}" if _parts else "")
         h += f'<div class="cd"><div class="cd-l">Quelldateien</div><div class="cd-v sm">{escape(_summary)}</div></div>'
+    # Kachel zeigt die WIRKUNG (applied: real existierende Namen, ohne
+    # Tippfehler); Fallback auf die Eingabeliste für ältere Lauf-Kopien.
+    _uc_excl = (dpi.get("exclude_features_applied")
+                if dpi.get("exclude_features_applied") is not None
+                else (dpi.get("exclude_features") or []))
+    if _uc_excl:
+        h += (f'<div class="cd"><div class="cd-l">Use-Case-Ausschlüsse</div>'
+              f'<div class="cd-v sm">{len(_uc_excl)}: {escape(", ".join(str(c) for c in _uc_excl))}</div></div>')
     target_val = dpi.get("target", "Y")
     if isinstance(target_val, list):
         target_display = " + ".join(str(t) for t in target_val)
