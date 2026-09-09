@@ -330,6 +330,44 @@ def apply_dictionary():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@bp.route("/api/dictionary-inputs", methods=["POST"])
+def dictionary_inputs():
+    """Liest ein Feature-Dictionary (CSV/Excel) und liefert die INPUT-Namen —
+    Grundlage der Tippfehler-Prüfung für Use-Case-Ausschlüsse in der UI."""
+    data = request.get_json(silent=True) or {}
+    filepath = data.get("path", "")
+    if not filepath:
+        return jsonify({"status": "error", "message": "Kein Pfad angegeben."}), 400
+    if os.path.isabs(filepath):
+        full = Path(filepath).resolve()
+    else:
+        full = (ROOT / filepath).resolve()
+        if not full.is_relative_to(ROOT.resolve()):
+            log.warning("Path-Traversal-Versuch blockiert (dictionary-inputs): %s", filepath)
+            return jsonify({"status": "error", "message": "Ungueltiger Pfad."}), 403
+    if not full.is_file():
+        return jsonify({"status": "error", "message": f"Datei nicht gefunden: {filepath}"}), 404
+    try:
+        import pandas as pd
+        if str(full).lower().endswith(".csv"):
+            df = pd.read_csv(full)
+        else:
+            try:
+                df = pd.read_excel(full, engine="openpyxl")
+            except Exception:
+                df = pd.read_excel(full, engine="xlrd")  # .xls wie der DataPrep-Reader
+        df.columns = [str(c).upper() for c in df.columns]
+        if not {"ROLE", "NAME"}.issubset(df.columns):
+            return jsonify({"status": "error",
+                            "message": "Kein gueltiges Feature-Dictionary (ROLE/NAME fehlen)."}), 400
+        inputs = sorted(df.loc[df["ROLE"].astype(str).str.upper() == "INPUT", "NAME"]
+                        .dropna().astype(str).str.upper().unique().tolist())
+        return jsonify({"status": "ok", "inputs": inputs, "n_inputs": len(inputs)})
+    except Exception as exc:
+        log.warning("dictionary-inputs fehlgeschlagen: %s", exc)
+        return jsonify({"status": "error", "message": f"Dictionary nicht lesbar: {exc}"}), 400
+
+
 @bp.route("/api/export-feature-dict", methods=["POST"])
 def export_feature_dict():
     """Exportiert die aktuelle Feature-Auswahl als Feature Dictionary (Excel).

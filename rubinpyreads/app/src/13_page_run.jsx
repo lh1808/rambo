@@ -2,7 +2,6 @@ const PRun = ({cfg,setPg,sp,spFmt,onRunningChange,onDoneChange,totalFits}) => {
   const issues = validate(cfg);
   const [running,setRunning] = useState(false);
   useEffect(() => { if(onRunningChange) onRunningChange(running); }, [running]);
-  useEffect(() => { if(onDoneChange) onDoneChange(done); }, [done]);
   const [step,setStep] = useState(null);
   const [error,setError] = useState(null);
   const [done,setDone] = useState(false);
@@ -11,6 +10,7 @@ const PRun = ({cfg,setPg,sp,spFmt,onRunningChange,onDoneChange,totalFits}) => {
   const [showReport,setShowReport] = useState(false);
   const [stepProgress,setStepProgress] = useState(0);
   const [stepDurations,setStepDurations] = useState({});
+  useEffect(() => { if(onDoneChange) onDoneChange(done); }, [done]);
   const timerRef = useRef(null);
   const timeoutsRef = useRef([]);
   const intervalsRef = useRef([]);

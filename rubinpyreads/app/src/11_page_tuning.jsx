@@ -241,14 +241,7 @@ const PSelection = ({cfg,set}) => {
       <Info>Exportiert alle Artefakte in ein Verzeichnis: Modelle (.pkl), Preprocessor, Config, Registry. Grundlage für <strong>run_production.py</strong> (Batch-Scoring) und <strong>run_promote.py</strong> (Champion wechseln). Ohne Bundle können Modelle nicht außerhalb der Analyse-Pipeline verwendet werden.</Info>
       <Toggle label="Bundle-Export aktivieren" checked={cfg.bundleEnabled} onChange={v=>set({...cfg,bundleEnabled:v})}/>
       {cfg.bundleEnabled&&<>
-        <Divider/>
-        <Row>
-          <Col>
-          </Col>
-          <Col>
-            <Toggle label="Bundle in MLflow loggen" checked={cfg.bundleMlflow!==false} onChange={v=>set({...cfg,bundleMlflow:v})} help="Das Bundle-Verzeichnis als MLflow-Artifact hochladen. Macht es über das MLflow-UI auffindbar."/>
-          </Col>
-        </Row>
+        <Toggle label="Bundle in MLflow loggen" checked={cfg.bundleMlflow!==false} onChange={v=>set({...cfg,bundleMlflow:v})} help="Das Bundle-Verzeichnis als MLflow-Artifact hochladen. Macht es über das MLflow-UI auffindbar."/>
         <div style={{fontSize:11,color:C.textMuted,marginTop:8}}>Ziel: <code style={{fontSize:10,background:C.rose,padding:"1px 6px",borderRadius:4}}>{cfg.bundleDir||"runs/bundles"}/&lt;timestamp-id&gt;/</code></div>
       </>}
     </Sec>

@@ -33,6 +33,20 @@ def _badges(html):
     return dict(rows)
 
 
+class TestExcludeTile:
+    def test_tile_prefers_applied_over_wishlist(self, tmp_path):
+        from test_report_golden import _fixture_collector
+        from rubin.reporting.html_report import generate_html_report
+        c = _fixture_collector()
+        c.dataprep_info["exclude_features"] = ["BEITRAG", "GIBTSNICHT"]
+        c.dataprep_info["exclude_features_applied"] = ["BEITRAG"]
+        out = tmp_path / "r.html"
+        generate_html_report(c, str(out))
+        html = out.read_text(encoding="utf-8")
+        assert "Use-Case-Ausschlüsse" in html and "1: BEITRAG" in html
+        assert "GIBTSNICHT" not in html   # Tippfehler nie als Ausschluss angezeigt
+
+
 class TestDataFileRoles:
     def test_all_files_shown_no_truncation(self, tmp_path):
         html = _html(tmp_path)

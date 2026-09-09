@@ -1,5 +1,7 @@
 const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
   const [simCols,setSimCols] = useState(null);
+  const [dictInputs, setDictInputs] = useState(null);
+  const [featureFilter, setFeatureFilter] = useState("");
   const [dpRunning,setDpRunning] = useState(false);
   const [dpDone,setDpDone] = useState(false);
   const [dpProgress,setDpProgress] = useState(0);
@@ -94,7 +96,31 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
     setExporting(false);
   };
 
+  // Use-Case-Ausschlüsse: geschriebene Liste (Komma/Zeilen), Prüfung gegen
+  // die INPUT-Namen des Dictionaries (Tippfehler-Erkennung via Backend).
+  const parseExcludes = (txt) => (txt||"").split(/[\n,;]+/).map(t=>t.trim()).filter(Boolean);
+  const checkExcludes = async () => {
+    if(!dp.featurePath) { setDictInputs({error:"Erst Feature-Dictionary-Pfad setzen."}); return; }
+    try {
+      const res = await fetch("./api/dictionary-inputs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({path:dp.featurePath})});
+      const data = await res.json();
+      if(data.status==="ok") setDictInputs({inputs:data.inputs, n:data.n_inputs});
+      else setDictInputs({error:data.message||"Prüfung fehlgeschlagen."});
+    } catch(e) { setDictInputs({error:"Backend nicht erreichbar."}); }
+  };
+  const excludeEntries = parseExcludes(dp.excludeFeaturesText);
+  // Live-Sperre: Einträge der Use-Case-Ausschlussliste sind in der
+  // Spaltenauswahl unten ausgegraut und NICHT anwählbar (auch nicht über
+  // "Alle") — Reaktivieren nur durch Entfernen aus der Liste oben. Eine
+  // Quelle der Wahrheit, keine widersprüchlichen Zustände/Logs.
+  const excludeSetUpper = new Set(excludeEntries.map(e => e.toUpperCase()));
+  const isListedExcluded = (c) => excludeSetUpper.has(String(c).toUpperCase());
+  // Prüf-Ergebnis gegen die Dictionary-INPUTs (null = noch nicht geprüft)
+  const unknownExcludes = (dictInputs && dictInputs.inputs)
+    ? excludeEntries.filter(e => !dictInputs.inputs.includes(e.toUpperCase()))
+    : null;
   const toggleFeature = (col) => {
+    if(isListedExcluded(col)) return;  // gesperrt: nur über die Liste oben lösbar
     setDp(prev => {
       const sel = {...(prev.featureSelection||{})};
       sel[col] = !sel[col];
@@ -106,7 +132,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
     const excl = new Set([...(dp.targets||[""]),dp.treatment||"",dp.scoreName||""].map(s=>(s||"").toUpperCase()));
     setDp(prev => {
       const sel = {...(prev.featureSelection||{})};
-      simCols.forEach(c => { if(!excl.has(c)) sel[c] = val; });
+      simCols.forEach(c => { if(!excl.has(c)) sel[c] = (val === true && isListedExcluded(c)) ? false : val; });
       return {...prev, featureSelection: sel};
     });
   };
@@ -194,11 +220,11 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
   const treatU = (dp.treatment||"").toUpperCase();
   const scoreU = (dp.scoreName||"").toUpperCase();
   const reservedCols = new Set([...allTargetU, treatU, ...(scoreU ? [scoreU] : [])]);
-  const selectedCount = simCols ? simCols.filter(c => !reservedCols.has(c) && (dp.featureSelection||{})[c] !== false).length : 0;
+  const selectedCount = simCols ? simCols.filter(c => !reservedCols.has(c) && !isListedExcluded(c) && (dp.featureSelection||{})[c] !== false).length : 0;
   const totalAvail = simCols ? simCols.filter(c => !reservedCols.has(c)).length : 0;
   const types = dp.colTypes || {};
-  const numCount = simCols ? simCols.filter(c => !reservedCols.has(c) && (dp.featureSelection||{})[c] !== false && types[c]==="num").length : 0;
-  const catCount = simCols ? simCols.filter(c => !reservedCols.has(c) && (dp.featureSelection||{})[c] !== false && types[c]==="cat").length : 0;
+  const numCount = simCols ? simCols.filter(c => !reservedCols.has(c) && !isListedExcluded(c) && (dp.featureSelection||{})[c] !== false && types[c]==="num").length : 0;
+  const catCount = simCols ? simCols.filter(c => !reservedCols.has(c) && !isListedExcluded(c) && (dp.featureSelection||{})[c] !== false && types[c]==="cat").length : 0;
 
   return (
     <>
@@ -508,7 +534,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
       <Sec title="Feature Dictionary laden (optional)" accent="#6366f1">
         <Info>Lade optional ein bestehendes Feature Dictionary (Excel mit NAME, ROLE, LEVEL). Nur <code style={{background:"#f8f0f0",padding:"1px 5px",borderRadius:3}}>ROLE=INPUT</code> wird als Feature übernommen, <code style={{background:"#f8f0f0",padding:"1px 5px",borderRadius:3}}>LEVEL=NOMINAL</code> als kategorisch. Du kannst diesen Schritt überspringen und direkt unten manuell arbeiten.</Info>
         {dpTab==="Dateipfade" ? (
-          <Inp label="Feature Dictionary Pfad" placeholder="runs/exports/feature_dictionary.xlsx" value={dp.featurePath} onChange={v=>setDp(prev=>({...prev,featurePath:v}))}/>
+          <Inp label="Feature Dictionary Pfad" placeholder="runs/exports/feature_dictionary.xlsx" value={dp.featurePath} onChange={v=>{setDictInputs(null); setDp(prev=>({...prev,featurePath:v}));}}/>
         ) : (
           <div style={{border:"1.5px solid "+(dp.featurePath?"#86efac":"#c4b5fd"),borderRadius:10,padding:"20px 16px",textAlign:"center",background:dp.featurePath?"#f0fdf4":"#f5f3ff",cursor:"pointer",transition:"all 0.15s"}}
             onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.accept=".xlsx,.xls,.csv";inp.onchange=async e=>{
@@ -525,6 +551,19 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             <div style={{fontSize:10.5,color:"#999",marginTop:3}}>{dp.featurePath ? "Klicken zum Ersetzen" : "Klicken zum Hochladen"}</div>
           </div>
         )}
+        <div style={{marginTop:8}}>
+          <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
+          <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
+            placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
+            value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+            <Btn small secondary onClick={checkExcludes}>Gegen Dictionary prüfen</Btn>
+            {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
+            {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
+            {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
+            {unknownExcludes&&unknownExcludes.length>0 && <span style={{fontSize:11.5,color:"#856404"}}>⚠ nicht im Dictionary: {unknownExcludes.join(", ")}</span>}
+          </div>
+        </div>
         {dp.featurePath && (
           <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
             <Btn small onClick={async()=>{
@@ -569,7 +608,12 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
         {simCols && (<>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{selectedCount} / {totalAvail} Features ({numCount} num, {catCount} cat)</span>
-            <div style={{display:"flex",gap:6}}>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <input value={featureFilter} onChange={e=>setFeatureFilter(e.target.value)}
+                placeholder="Suchen …" spellCheck={false}
+                style={{fontSize:12,padding:"4px 10px",border:"1px solid #d8cfd0",borderRadius:6,width:170,fontFamily:"inherit"}}/>
+              {featureFilter && <span style={{fontSize:11,color:C.gray,whiteSpace:"nowrap"}}>{simCols.filter(c=>c.toUpperCase().includes(featureFilter.toUpperCase())).length} Treffer</span>}
+              {featureFilter && <Btn small secondary onClick={()=>setFeatureFilter("")}>✕</Btn>}
               <Btn small secondary onClick={()=>selectAll(true)}>Alle</Btn>
               <Btn small secondary onClick={()=>selectAll(false)}>Keine</Btn>
             </div>
@@ -578,9 +622,10 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             <div style={{display:"grid",gridTemplateColumns:"44px 1fr 60px 70px 70px 60px",fontSize:10.5,fontWeight:600,padding:"8px 14px",background:"#6B0D15",color:"#fff",position:"sticky",top:0,letterSpacing:0.3}}>
               <span></span><span>Spalte</span><span>Typ</span><span>Unique</span><span>NaN %</span><span>Rolle</span>
             </div>
-            {simCols.map((col,i) => {
+            {simCols.filter(col => !featureFilter || col.toUpperCase().includes(featureFilter.toUpperCase())).map((col,i) => {
               const isReserved = reservedCols.has(col);
-              const isSelected = !isReserved && (dp.featureSelection||{})[col] !== false;
+              const isListed = !isReserved && isListedExcluded(col);
+              const isSelected = !isReserved && !isListed && (dp.featureSelection||{})[col] !== false;
               const roleLabel = col===treatU?"Treatment":allTargetU.has(col)?"Outcome":col===scoreU?"Score":null;
               const colType = (types[col]) || "num";
               const isNum = colType === "num";
@@ -589,7 +634,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
                 <div key={col} style={{display:"grid",gridTemplateColumns:"44px 1fr 60px 70px 70px 60px",padding:"6px 14px",borderBottom:"1px solid #f5f0f0",background:isReserved?"#fffbeb":isSelected?"#fff":"#fafafa",alignItems:"center",opacity:isReserved?0.5:1}}>
                   <div>
                     {!isReserved && (
-                      <div onClick={()=>toggleFeature(col)} style={{width:18,height:18,borderRadius:4,border:isSelected?"2px solid #9B111E":"2px solid #ccc",background:isSelected?"#9B111E":"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <div onClick={()=>toggleFeature(col)} title={isListed?"Use-Case-Ausschluss (Liste oben) — dort entfernen zum Reaktivieren":undefined} style={{width:18,height:18,borderRadius:4,border:isSelected?"2px solid #9B111E":"2px solid #ccc",background:isListed?"#eee":(isSelected?"#9B111E":"#fff"),cursor:isListed?"not-allowed":"pointer",opacity:isListed?0.55:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
                         {isSelected && <span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
                       </div>
                     )}
@@ -613,6 +658,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
           <Divider/>
           <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
             <Btn small onClick={exportDict} disabled={exporting}>{exporting ? "Exportiere ..." : "Auswahl als Feature Dictionary exportieren"}</Btn>
+            {excludeEntries.length>0 && <div style={{fontSize:11.5,color:"#856404",background:"#fffbeb",border:"1px solid #e8d49c",borderRadius:6,padding:"4px 10px",marginTop:6}}>Hinweis: Die {excludeEntries.length} Use-Case-Ausschlüsse aus der Liste oben werden beim Export <strong>nicht</strong> ins Dictionary übernommen (dort blieben sie INPUT) — sie sind bewusst Use-Case-spezifisch und wandern in die Config (exclude_features), nicht in die globale Wahrheit.</div>}
             {exportResult && !exportResult.error && (
               <span style={{fontSize:12,color:"#059669",fontWeight:500}}>
                 ✓ {exportResult.path} ({exportResult.n_input} INPUT, {exportResult.n_exclude} EXCLUDE)

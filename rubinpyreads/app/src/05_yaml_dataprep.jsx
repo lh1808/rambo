@@ -25,6 +25,12 @@ const buildDataPrepYaml = (dp, cfg) => {
   a(`  treatment: ${dp.treatment||""}`);
   if(dp.scoreName) a(`  score_name: ${dp.scoreName}`);
   if(dp.featurePath) a(`  feature_path: "${dp.featurePath}"`);
+  // Use-Case-Ausschlüsse aus der geschriebenen Liste (Komma/Zeilen getrennt)
+  const uex = (dp.excludeFeaturesText||"").split(/[\n,;]+/).map(t=>t.trim()).filter(Boolean);
+  if(uex.length>0) {
+    a("  exclude_features:");
+    uex.forEach(f => a(`    - "${f}"`));
+  }
   a(`  output_path: ${outPath}`);
   a(`  delimiter: "${dp.delimiter||","}"`);
   if(dp.chunksize) a(`  chunksize: ${dp.chunksize}`);
@@ -49,8 +55,11 @@ const buildDataPrepYaml = (dp, cfg) => {
   }
   // Explizite Feature-Auswahl (manuell oder Dictionary)
   const fs = dp.featureSelection||{};
-  const selectedFeatures = Object.entries(fs).filter(([k,v])=>v===true).map(([k])=>k);
-  const deselectedExists = Object.values(fs).some(v=>v===false);
+  const uexUpper = new Set(uex.map(x => x.toUpperCase()));
+  // Listen-Einträge zählen als abgewählt — auch falls die Checkbox (Stand vor
+  // Eintrag in die Liste) noch true wäre: eine Quelle der Wahrheit.
+  const selectedFeatures = Object.entries(fs).filter(([k,v])=>v===true && !uexUpper.has(k.toUpperCase())).map(([k])=>k);
+  const deselectedExists = Object.entries(fs).some(([k,v])=>v===false || uexUpper.has(k.toUpperCase()));
   if(deselectedExists && selectedFeatures.length > 0) {
     a("  features:");
     selectedFeatures.forEach(f => a(`    - "${f}"`));
