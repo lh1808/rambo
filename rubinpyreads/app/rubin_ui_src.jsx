@@ -7,6 +7,19 @@ const { useState, useEffect, useRef, useMemo } = React;
 // Level 1-2 sequentiell; Level 3 max. 4; Level 4 max. 8 (reines LightGBM)
 // bzw. 6 (CatBoost / "both" / unbekannt). Mehr Kerne erhöhen nie die
 // parallelen Trials, nur die Kerne pro Fit.
+// Kern-Boost für die Wellen-PRESETS: Viele Kerne machen jede Welle schneller
+// (mehr Kerne pro Fit) — im gleichen Zeitbudget sind also mehr Wellen drin.
+// Der Boost wächst mit sqrt (Fit-Speedup skaliert sublinear mit Threads) und
+// ist auf ×4 sowie 32 Gesamt-Wellen gedeckelt (Zeitfallen-Schutz). Reine
+// Preset-Convenience der UI: Die Config trägt weiterhin die finale
+// Trial-Zahl, das Backend bleibt unverändert deterministisch.
+const computeWaveBoost = (nCores) => {
+  if (!nCores || nCores <= 16) return 1;
+  return Math.max(1, Math.min(4, Math.round(Math.sqrt(nCores / 16))));
+};
+const WAVES_MAX = 32;
+const wavesEffective = (baseW, nCores) => Math.min(baseW * computeWaveBoost(nCores), WAVES_MAX);
+
 const computeTuningParallel = (pl, nCores, learner, coresPerTrial=4) => {
   if ((pl||3) <= 2) return 1;
   if (!nCores) return 0;
@@ -490,12 +503,12 @@ const DEFAULT_CFG = {studyType:"rct",expName:"rubin",seed:42,tuningSeed:18,model
 
 const ADDON_PRESETS = [
   // ── Tuning (Pipeline-Reihenfolge: BL → FMT → GRF) ──
-  {key:"bl_tuning_schnell",label:"Schnell",desc:"3 Wellen",group:"tuning_blt",
+  {key:"bl_tuning_schnell",label:"Schnell",desc:"Basis 3 Wellen · skaliert mit Kernen",group:"tuning_blt",
     cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:3}},
-  {key:"bl_tuning",label:"Standard",desc:"5 Wellen",group:"tuning_blt",
+  {key:"bl_tuning",label:"Standard",desc:"Basis 5 Wellen · skaliert mit Kernen",group:"tuning_blt",
     cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:5}},
-  {key:"bl_tuning_intensiv",label:"Intensiv",desc:"8 Wellen",group:"tuning_blt",
-    cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:8}},
+  {key:"bl_tuning_intensiv",label:"Intensiv",desc:"Basis 12 Wellen · skaliert mit Kernen",group:"tuning_blt",
+    cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:12}},
   {key:"fmt_schnell",label:"Schnell",desc:"30 Trials",group:"tuning_fmt",
     cfg:{fmtEnabled:true,fmtModels:["NonParamDML","DRLearner"],fmtTrials:30}},
   {key:"fmt",label:"Standard",desc:"50 Trials",group:"tuning_fmt",
@@ -673,7 +686,7 @@ const buildDataPrepYaml = (dp, cfg) => {
 };
 
 // ── DataPrep Page ──
-const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
+const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
   const [simCols,setSimCols] = useState(null);
   const [dictInputs, setDictInputs] = useState(null);
   const [featureFilter, setFeatureFilter] = useState("");
@@ -686,6 +699,10 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
   const [dpTab, setDpTab] = useState("Dateipfade");
+  // Lauf-Abschluss an die App melden (Nav-Ampel: grün erst nach ECHTEM
+  // DataPrep-Lauf, nicht schon nach "Spalten erkennen") — Muster wie
+  // onDoneChange in PRun. Effect NACH allen useState (docs/app_build.md).
+  useEffect(() => { if(onDpDone) onDpDone(dpDone); }, [dpDone]);
 
   const files = dp.files || [""];
   const setFiles = (fn) => setDp(prev => ({...prev, files: typeof fn==="function" ? fn(prev.files||[""]) : fn, targetValues: [], treatValues: [], detectedCols: null, nanCols: [], colStats: {}}));
@@ -1226,19 +1243,6 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             <div style={{fontSize:10.5,color:"#999",marginTop:3}}>{dp.featurePath ? "Klicken zum Ersetzen" : "Klicken zum Hochladen"}</div>
           </div>
         )}
-        <div style={{marginTop:8}}>
-          <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
-          <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
-            placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
-            value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-            <Btn small secondary onClick={checkExcludes}>Gegen Dictionary prüfen</Btn>
-            {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
-            {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
-            {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
-            {unknownExcludes&&unknownExcludes.length>0 && <span style={{fontSize:11.5,color:"#856404"}}>⚠ nicht im Dictionary: {unknownExcludes.join(", ")}</span>}
-          </div>
-        </div>
         {dp.featurePath && (
           <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
             <Btn small onClick={async()=>{
@@ -1275,6 +1279,23 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             )}
           </div>
         )}
+        {dp.featurePath && (
+          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.</div>
+        )}
+        <div style={{marginTop:14}}>
+          <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
+          <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
+            placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
+            value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+            <Btn small secondary onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
+            {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
+            {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
+            {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
+            {unknownExcludes&&unknownExcludes.length>0 && <span style={{fontSize:11.5,color:"#856404"}}>⚠ nicht im Dictionary: {unknownExcludes.join(", ")}</span>}
+          </div>
+          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Prüft nur die Schreibweise gegen die INPUT-Liste des Dictionaries — ändert keine Auswahl. Die Liste wirkt erst beim DataPrep-Lauf und sperrt unten die betroffenen Checkboxen.</div>
+        </div>
         {detectError && <Info type="error">{detectError}</Info>}
       </Sec>
 
@@ -1681,7 +1702,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
     setActiveBase(null);
     const paths = {x_file:cfg.x_file,t_file:cfg.t_file,y_file:cfg.y_file,s_file:cfg.s_file,eval_x_file:cfg.eval_x_file,eval_t_file:cfg.eval_t_file,eval_y_file:cfg.eval_y_file,eval_s_file:cfg.eval_s_file,hasNaN:cfg.hasNaN,nanCols:cfg.nanCols,seed:cfg.seed,outputDir:cfg.outputDir,histScoreName:cfg.histScoreName,histScoreCol:cfg.histScoreCol,histScoreHigher:cfg.histScoreHigher,expName:cfg.expName,dpRunName:cfg.dpRunName,eval_mask_file:cfg.eval_mask_file};
     const addonOverlay = {};
-    activeAddons.forEach(k => {const a=ADDON_PRESETS.find(x=>x.key===k);if(a){Object.assign(addonOverlay,a.cfg);if(a.waves)addonOverlay[a.waves.field]=_wavesToTrials(a.waves.w, a.waves.stage||"blt");}});
+    activeAddons.forEach(k => {const a=ADDON_PRESETS.find(x=>x.key===k);if(a){Object.assign(addonOverlay,a.cfg);if(a.waves)addonOverlay[a.waves.field]=_wavesToTrials(a.waves.w);}});
     // Filter models: remove BT-only models when switching to multi
     const defaultModels = newTt==="multi" ? DEFAULT_CFG.models.filter(m=>!btOnly.has(m)) : DEFAULT_CFG.models;
     // Qini-Scorer (FMT/CFT) ist binär-only — bei Multi auf "auto" zurücksetzen
@@ -1691,14 +1712,17 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
   };
 
 
-  const _getParallel = (stage="blt") => {
+  const _getParallel = () => {
+    // BLT-Wellenbreite — GECAPPT, identisch zur Learner-&-Tuning-Seite und
+    // zum Backend (computeTuningParallel, 01_constants). FMT/CFT tunen
+    // sequentiell mit festen Trial-Zahlen — keine Wellen-Rechnung.
     const nCores = sysInfo?.cpu?.cores || 0;
     const pl = cfg.parallelLevel||3;
-    if(!nCores || pl <= 2) return pl <= 2 ? 1 : 5;
-    if(stage === "fmt") return Math.max(2, Math.floor(nCores / 8));
-    return Math.max(1, Math.floor(nCores / 4));
+    if(pl <= 2) return 1;
+    if(!nCores) return Math.min(5, pl === 3 ? 4 : 8);  // Fallback ohne Server-Info
+    return computeTuningParallel(pl, nCores, cfg.baseLearner||"catboost");
   };
-  const _wavesToTrials = (w, stage="blt") => Math.max(10, _getParallel(stage) * w);
+  const _wavesToTrials = (w) => Math.max(10, _getParallel() * wavesEffective(w, sysInfo?.cpu?.cores || 0));
 
   const MUTEX = [["bl_tuning_schnell","bl_tuning","bl_tuning_intensiv"],["fmt_schnell","fmt","fmt_intensiv"],["grf_tuning_schnell","grf_tuning","grf_tuning_intensiv"],["reg_moderate","reg_strong"]];
   const toggleAddon = (p) => {
@@ -1724,7 +1748,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
       });
       let applyCfg = {...p.cfg};
       // Wave-based: compute trials from waves × parallel
-      if(p.waves) applyCfg[p.waves.field] = _wavesToTrials(p.waves.w, p.waves.stage||"blt");
+      if(p.waves) applyCfg[p.waves.field] = _wavesToTrials(p.waves.w);
       if(p.key === "feature_reduction" && cfg.hasNaN) {
         applyCfg.fsMethods = (applyCfg.fsMethods || []).filter(m => m !== "causal_forest");
       }
@@ -2024,7 +2048,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                 const merged = {};
                 stdKeys.forEach(k=>{
                   const p=ADDON_PRESETS.find(x=>x.key===k);
-                  if(p){next.add(k);Object.assign(merged,p.cfg);if(p.waves)merged[p.waves.field]=_wavesToTrials(p.waves.w, p.waves.stage||"blt")}
+                  if(p){next.add(k);Object.assign(merged,p.cfg);if(p.waves)merged[p.waves.field]=_wavesToTrials(p.waves.w)}
                 });
                 setCfg(prev=>({...prev,...merged}));
               }
@@ -2776,23 +2800,25 @@ const parCapped = pl >= 3 && rawPar > par;
 const trials = cfg.tuningTrials||50;
 const waves = par > 0 ? Math.ceil(trials / par) : 0;
 const waveColor = waves < 3 ? "#dc2626" : waves < 5 ? "#d97706" : "#059669";
-const setByWaves = (w) => set({...cfg, tuningTrials: Math.max(par||5, (par||5) * w)});
+const waveBoost = computeWaveBoost(nCores);
+const setByWaves = (w) => set({...cfg, tuningTrials: Math.max(par||5, (par||5) * wavesEffective(w, nCores))});
 return (<>
 <div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Intensität</div>
 {par > 0 ? (<>
   <div style={{display:"flex",gap:8,marginBottom:8}}>
-    {[{w:3,l:"Schnell",d:"Grenzwertig, aber schnell"},{w:5,l:"Standard",d:"Solide TPE-Exploration"},{w:8,l:"Gründlich",d:"Hohe Suchqualität"}].map(p => {
-      const active = waves === p.w;
+    {[{w:3,l:"Schnell",d:"Grenzwertig, aber schnell"},{w:5,l:"Standard",d:"Solide TPE-Exploration"},{w:12,l:"Gründlich",d:"Hohe Suchqualität"}].map(p => {
+      const effW = wavesEffective(p.w, nCores);
+      const active = waves === effW;
       return <button key={p.w} onClick={()=>setByWaves(p.w)} style={{flex:1,padding:"10px 12px",borderRadius:10,border:active?"1.5px solid #C4343F":"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
         <div style={{fontSize:13,fontWeight:600,color:active?C.ruby:C.dark}}>{p.l}</div>
-        <div style={{fontSize:11,color:active?C.ruby:C.textMuted,marginTop:2}}>{p.w} Wellen = {par*p.w} Trials</div>
+        <div style={{fontSize:11,color:active?C.ruby:C.textMuted,marginTop:2}}>{effW} Wellen = {par*effW} Trials{waveBoost>1?` (Basis ${p.w} × Kern-Boost)`:""}</div>
       </button>;
     })}
   </div>
   <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
     {pl <= 2
       ? <><strong>Sequentiell</strong> (Level {pl}): jeder Trial voll informiert, alle Kerne im einzelnen Fit — <strong>{trials}</strong> Trials.</>
-      : <><strong>{par}</strong> parallele Trials ({parCapped ? `${nCores} Kerne / 4 = ${rawPar}, gecappt auf ${par} fürs Wellen-Lernen` : `${nCores} Kerne / 4`}) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials. Übrige Kerne beschleunigen die einzelnen Fits.</>}
+      : <><strong>{par}</strong> parallele Trials ({parCapped ? `${nCores} Kerne / 4 = ${rawPar}, gecappt auf ${par} fürs Wellen-Lernen` : `${nCores} Kerne / 4`}) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials. Übrige Kerne beschleunigen die einzelnen Fits.{waveBoost>1 && <> Kern-Boost ×{waveBoost}: Die Presets skalieren die Wellen mit der Maschinengröße (max. {WAVES_MAX}).</>}</>}
     {waves < 3 && " TPE kann bei weniger als 3 Wellen kaum zwischen guten und schlechten Parametern unterscheiden."}
     {waves >= 3 && waves < 5 && " Grenzwertig — TPE beginnt erst nach den Startup-Trials zu lernen."}
     {waves >= 5 && " Genug Wellen für stabile TPE-Exploration und Exploitation."}
@@ -2833,7 +2859,7 @@ return (<>
   {trials >= 30 && " Genug Trials für stabile TPE-Exploration und Exploitation."}
 </div>
 <Expander title="Manuell anpassen">
-  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final — sequentiell (TPE voll informiert), je Fit ~8 Kerne."/>
+  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final — sequentiell (TPE voll informiert), jeder Fit mit allen Kernen."/>
 </Expander>
 </>);
 })()}{cfg.fmtSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: Jeder Trial wird auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} OOF-Folds evaluiert — {cfg.cvSplits||5}× schneller.</div>}{cfg.fmtSingleFold && (()=>{const K=cfg.cvSplits||5;if(dataStats){const ppf=Math.floor(dataStats.minority/K);if(ppf<100){const severe=ppf<50;return <div style={{fontSize:11,color:severe?"#991b1b":"#92400e",background:severe?"#fef2f2":"#fffbeb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:`1px solid ${severe?"#fca5a5":"#fbbf24"}`}}><strong>{severe?"⚠ Nicht empfohlen":"⚠ Grenzwertig"}:</strong> Bei Ihren Daten nur <strong>{ppf}</strong> Minority-Fälle im äußeren Val-Fold (empfohlen: ≥100, Minimum: ≥50). {severe?"OOF-Score ist nicht aussagekräftig. K-Fold CV dringend empfohlen.":"Die Score-Schätzung (R-Score) ist merklich verrauscht — K-Fold CV empfohlen."}</div>;}}else return <div style={{fontSize:11,color:"#6b7280",background:"#f9fafb",padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>Faustregel: min(n_treated, n_positive) / {K} ≥ 100 pro Val-Fold für zuverlässige Metrik-Schätzung (Collins et al.: min. 100, idealerweise 200+ Events für stabile Validation).</div>;return null;})()}<Divider/>{_isBoth ? (<>
@@ -3769,6 +3795,7 @@ function App() {
   const [spFmt,setSpFmt] = useState(_ss0.spFmt || {lgbm:{},catboost:{}});
   const [analysisRunning,setAnalysisRunning] = useState(false);
   const [analysisDone,setAnalysisDone] = useState(false);
+  const [dpCompleted,setDpCompleted] = useState(false);
   const [resetKey,setResetKey] = useState(0);
   const [serverOk,setServerOk] = useState(null); // null=checking, true=ok, false=error
   const [serverError,setServerError] = useState("");
@@ -3842,7 +3869,8 @@ function App() {
   const pageStatus = (() => {
     const s = {};
     // Datenvorbereitung (optional)
-    if(dp.detectedCols) s.dataprep = {st:"done",detail:"Spalten erkannt"};
+    if(dpCompleted) s.dataprep = {st:"done",detail:"DataPrep-Lauf abgeschlossen"};
+    else if(dp.detectedCols) s.dataprep = {st:"active",detail:"Spalten erkannt"};
     else if(dp.files?.some(f=>f.trim())) s.dataprep = {st:"active",detail:"Dateien eingetragen"};
     else s.dataprep = {st:"open",detail:"Optional"};
 
@@ -4180,7 +4208,7 @@ function App() {
       </nav>
       <main style={{flex:1,maxWidth:960,padding:"36px 52px 80px",margin:"0 auto"}}>
         {pg==="overview" && <POverview setPg={setPg}/>}
-        <div key={"dp-"+resetKey} style={{display: pg==="dataprep" ? "block" : "none"}}><PDataPrep dp={dp} setDp={setDp} cfg={cfg} setCfg={set} setPg={setPg}/></div>
+        <div key={"dp-"+resetKey} style={{display: pg==="dataprep" ? "block" : "none"}}><PDataPrep dp={dp} setDp={setDp} cfg={cfg} setCfg={set} setPg={setPg} onDpDone={setDpCompleted}/></div>
         {pg==="datafiles" && <PData cfg={cfg} set={set} setCfg={set} activeBase={activeBase} setActiveBase={setActiveBase} activeAddons={activeAddons} setActiveAddons={setActiveAddons} setSp={setSp} setSpFmt={setSpFmt} view="files" sysInfo={sysInfo}/>}
         {pg==="template" && <PData cfg={cfg} set={set} setCfg={set} activeBase={activeBase} setActiveBase={setActiveBase} activeAddons={activeAddons} setActiveAddons={setActiveAddons} setSp={setSp} setSpFmt={setSpFmt} view="template" sysInfo={sysInfo}/>}
         {pg==="config" && <PConfig cfg={cfg} set={set}/>}

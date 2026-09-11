@@ -7,6 +7,19 @@ const { useState, useEffect, useRef, useMemo } = React;
 // Level 1-2 sequentiell; Level 3 max. 4; Level 4 max. 8 (reines LightGBM)
 // bzw. 6 (CatBoost / "both" / unbekannt). Mehr Kerne erhöhen nie die
 // parallelen Trials, nur die Kerne pro Fit.
+// Kern-Boost für die Wellen-PRESETS: Viele Kerne machen jede Welle schneller
+// (mehr Kerne pro Fit) — im gleichen Zeitbudget sind also mehr Wellen drin.
+// Der Boost wächst mit sqrt (Fit-Speedup skaliert sublinear mit Threads) und
+// ist auf ×4 sowie 32 Gesamt-Wellen gedeckelt (Zeitfallen-Schutz). Reine
+// Preset-Convenience der UI: Die Config trägt weiterhin die finale
+// Trial-Zahl, das Backend bleibt unverändert deterministisch.
+const computeWaveBoost = (nCores) => {
+  if (!nCores || nCores <= 16) return 1;
+  return Math.max(1, Math.min(4, Math.round(Math.sqrt(nCores / 16))));
+};
+const WAVES_MAX = 32;
+const wavesEffective = (baseW, nCores) => Math.min(baseW * computeWaveBoost(nCores), WAVES_MAX);
+
 const computeTuningParallel = (pl, nCores, learner, coresPerTrial=4) => {
   if ((pl||3) <= 2) return 1;
   if (!nCores) return 0;

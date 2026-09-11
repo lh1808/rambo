@@ -1,4 +1,4 @@
-const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
+const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
   const [simCols,setSimCols] = useState(null);
   const [dictInputs, setDictInputs] = useState(null);
   const [featureFilter, setFeatureFilter] = useState("");
@@ -11,6 +11,10 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
   const [dpTab, setDpTab] = useState("Dateipfade");
+  // Lauf-Abschluss an die App melden (Nav-Ampel: grün erst nach ECHTEM
+  // DataPrep-Lauf, nicht schon nach "Spalten erkennen") — Muster wie
+  // onDoneChange in PRun. Effect NACH allen useState (docs/app_build.md).
+  useEffect(() => { if(onDpDone) onDpDone(dpDone); }, [dpDone]);
 
   const files = dp.files || [""];
   const setFiles = (fn) => setDp(prev => ({...prev, files: typeof fn==="function" ? fn(prev.files||[""]) : fn, targetValues: [], treatValues: [], detectedCols: null, nanCols: [], colStats: {}}));
@@ -551,19 +555,6 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             <div style={{fontSize:10.5,color:"#999",marginTop:3}}>{dp.featurePath ? "Klicken zum Ersetzen" : "Klicken zum Hochladen"}</div>
           </div>
         )}
-        <div style={{marginTop:8}}>
-          <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
-          <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
-            placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
-            value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-            <Btn small secondary onClick={checkExcludes}>Gegen Dictionary prüfen</Btn>
-            {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
-            {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
-            {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
-            {unknownExcludes&&unknownExcludes.length>0 && <span style={{fontSize:11.5,color:"#856404"}}>⚠ nicht im Dictionary: {unknownExcludes.join(", ")}</span>}
-          </div>
-        </div>
         {dp.featurePath && (
           <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
             <Btn small onClick={async()=>{
@@ -600,6 +591,23 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg}) => {
             )}
           </div>
         )}
+        {dp.featurePath && (
+          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.</div>
+        )}
+        <div style={{marginTop:14}}>
+          <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
+          <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
+            placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
+            value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+            <Btn small secondary onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
+            {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
+            {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
+            {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
+            {unknownExcludes&&unknownExcludes.length>0 && <span style={{fontSize:11.5,color:"#856404"}}>⚠ nicht im Dictionary: {unknownExcludes.join(", ")}</span>}
+          </div>
+          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Prüft nur die Schreibweise gegen die INPUT-Liste des Dictionaries — ändert keine Auswahl. Die Liste wirkt erst beim DataPrep-Lauf und sperrt unten die betroffenen Checkboxen.</div>
+        </div>
         {detectError && <Info type="error">{detectError}</Info>}
       </Sec>
 

@@ -1,12 +1,12 @@
 
 const ADDON_PRESETS = [
   // ── Tuning (Pipeline-Reihenfolge: BL → FMT → GRF) ──
-  {key:"bl_tuning_schnell",label:"Schnell",desc:"3 Wellen",group:"tuning_blt",
+  {key:"bl_tuning_schnell",label:"Schnell",desc:"Basis 3 Wellen · skaliert mit Kernen",group:"tuning_blt",
     cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:3}},
-  {key:"bl_tuning",label:"Standard",desc:"5 Wellen",group:"tuning_blt",
+  {key:"bl_tuning",label:"Standard",desc:"Basis 5 Wellen · skaliert mit Kernen",group:"tuning_blt",
     cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:5}},
-  {key:"bl_tuning_intensiv",label:"Intensiv",desc:"8 Wellen",group:"tuning_blt",
-    cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:8}},
+  {key:"bl_tuning_intensiv",label:"Intensiv",desc:"Basis 12 Wellen · skaliert mit Kernen",group:"tuning_blt",
+    cfg:{tuningEnabled:true},waves:{field:"tuningTrials",w:12}},
   {key:"fmt_schnell",label:"Schnell",desc:"30 Trials",group:"tuning_fmt",
     cfg:{fmtEnabled:true,fmtModels:["NonParamDML","DRLearner"],fmtTrials:30}},
   {key:"fmt",label:"Standard",desc:"50 Trials",group:"tuning_fmt",

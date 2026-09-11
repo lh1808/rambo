@@ -6,23 +6,25 @@ const parCapped = pl >= 3 && rawPar > par;
 const trials = cfg.tuningTrials||50;
 const waves = par > 0 ? Math.ceil(trials / par) : 0;
 const waveColor = waves < 3 ? "#dc2626" : waves < 5 ? "#d97706" : "#059669";
-const setByWaves = (w) => set({...cfg, tuningTrials: Math.max(par||5, (par||5) * w)});
+const waveBoost = computeWaveBoost(nCores);
+const setByWaves = (w) => set({...cfg, tuningTrials: Math.max(par||5, (par||5) * wavesEffective(w, nCores))});
 return (<>
 <div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:8}}>Tuning-Intensität</div>
 {par > 0 ? (<>
   <div style={{display:"flex",gap:8,marginBottom:8}}>
-    {[{w:3,l:"Schnell",d:"Grenzwertig, aber schnell"},{w:5,l:"Standard",d:"Solide TPE-Exploration"},{w:8,l:"Gründlich",d:"Hohe Suchqualität"}].map(p => {
-      const active = waves === p.w;
+    {[{w:3,l:"Schnell",d:"Grenzwertig, aber schnell"},{w:5,l:"Standard",d:"Solide TPE-Exploration"},{w:12,l:"Gründlich",d:"Hohe Suchqualität"}].map(p => {
+      const effW = wavesEffective(p.w, nCores);
+      const active = waves === effW;
       return <button key={p.w} onClick={()=>setByWaves(p.w)} style={{flex:1,padding:"10px 12px",borderRadius:10,border:active?"1.5px solid #C4343F":"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:"pointer",textAlign:"left",transition:"all 0.15s"}}>
         <div style={{fontSize:13,fontWeight:600,color:active?C.ruby:C.dark}}>{p.l}</div>
-        <div style={{fontSize:11,color:active?C.ruby:C.textMuted,marginTop:2}}>{p.w} Wellen = {par*p.w} Trials</div>
+        <div style={{fontSize:11,color:active?C.ruby:C.textMuted,marginTop:2}}>{effW} Wellen = {par*effW} Trials{waveBoost>1?` (Basis ${p.w} × Kern-Boost)`:""}</div>
       </button>;
     })}
   </div>
   <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
     {pl <= 2
       ? <><strong>Sequentiell</strong> (Level {pl}): jeder Trial voll informiert, alle Kerne im einzelnen Fit — <strong>{trials}</strong> Trials.</>
-      : <><strong>{par}</strong> parallele Trials ({parCapped ? `${nCores} Kerne / 4 = ${rawPar}, gecappt auf ${par} fürs Wellen-Lernen` : `${nCores} Kerne / 4`}) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials. Übrige Kerne beschleunigen die einzelnen Fits.</>}
+      : <><strong>{par}</strong> parallele Trials ({parCapped ? `${nCores} Kerne / 4 = ${rawPar}, gecappt auf ${par} fürs Wellen-Lernen` : `${nCores} Kerne / 4`}) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials. Übrige Kerne beschleunigen die einzelnen Fits.{waveBoost>1 && <> Kern-Boost ×{waveBoost}: Die Presets skalieren die Wellen mit der Maschinengröße (max. {WAVES_MAX}).</>}</>}
     {waves < 3 && " TPE kann bei weniger als 3 Wellen kaum zwischen guten und schlechten Parametern unterscheiden."}
     {waves >= 3 && waves < 5 && " Grenzwertig — TPE beginnt erst nach den Startup-Trials zu lernen."}
     {waves >= 5 && " Genug Wellen für stabile TPE-Exploration und Exploitation."}
@@ -63,7 +65,7 @@ return (<>
   {trials >= 30 && " Genug Trials für stabile TPE-Exploration und Exploitation."}
 </div>
 <Expander title="Manuell anpassen">
-  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final — sequentiell (TPE voll informiert), je Fit ~8 Kerne."/>
+  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final — sequentiell (TPE voll informiert), jeder Fit mit allen Kernen."/>
 </Expander>
 </>);
 })()}{cfg.fmtSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: Jeder Trial wird auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} OOF-Folds evaluiert — {cfg.cvSplits||5}× schneller.</div>}{cfg.fmtSingleFold && (()=>{const K=cfg.cvSplits||5;if(dataStats){const ppf=Math.floor(dataStats.minority/K);if(ppf<100){const severe=ppf<50;return <div style={{fontSize:11,color:severe?"#991b1b":"#92400e",background:severe?"#fef2f2":"#fffbeb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:`1px solid ${severe?"#fca5a5":"#fbbf24"}`}}><strong>{severe?"⚠ Nicht empfohlen":"⚠ Grenzwertig"}:</strong> Bei Ihren Daten nur <strong>{ppf}</strong> Minority-Fälle im äußeren Val-Fold (empfohlen: ≥100, Minimum: ≥50). {severe?"OOF-Score ist nicht aussagekräftig. K-Fold CV dringend empfohlen.":"Die Score-Schätzung (R-Score) ist merklich verrauscht — K-Fold CV empfohlen."}</div>;}}else return <div style={{fontSize:11,color:"#6b7280",background:"#f9fafb",padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>Faustregel: min(n_treated, n_positive) / {K} ≥ 100 pro Val-Fold für zuverlässige Metrik-Schätzung (Collins et al.: min. 100, idealerweise 200+ Events für stabile Validation).</div>;return null;})()}<Divider/>{_isBoth ? (<>

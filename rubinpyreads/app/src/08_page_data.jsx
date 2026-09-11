@@ -8,7 +8,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
     setActiveBase(null);
     const paths = {x_file:cfg.x_file,t_file:cfg.t_file,y_file:cfg.y_file,s_file:cfg.s_file,eval_x_file:cfg.eval_x_file,eval_t_file:cfg.eval_t_file,eval_y_file:cfg.eval_y_file,eval_s_file:cfg.eval_s_file,hasNaN:cfg.hasNaN,nanCols:cfg.nanCols,seed:cfg.seed,outputDir:cfg.outputDir,histScoreName:cfg.histScoreName,histScoreCol:cfg.histScoreCol,histScoreHigher:cfg.histScoreHigher,expName:cfg.expName,dpRunName:cfg.dpRunName,eval_mask_file:cfg.eval_mask_file};
     const addonOverlay = {};
-    activeAddons.forEach(k => {const a=ADDON_PRESETS.find(x=>x.key===k);if(a){Object.assign(addonOverlay,a.cfg);if(a.waves)addonOverlay[a.waves.field]=_wavesToTrials(a.waves.w, a.waves.stage||"blt");}});
+    activeAddons.forEach(k => {const a=ADDON_PRESETS.find(x=>x.key===k);if(a){Object.assign(addonOverlay,a.cfg);if(a.waves)addonOverlay[a.waves.field]=_wavesToTrials(a.waves.w);}});
     // Filter models: remove BT-only models when switching to multi
     const defaultModels = newTt==="multi" ? DEFAULT_CFG.models.filter(m=>!btOnly.has(m)) : DEFAULT_CFG.models;
     // Qini-Scorer (FMT/CFT) ist binär-only — bei Multi auf "auto" zurücksetzen
@@ -18,14 +18,17 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
   };
 
 
-  const _getParallel = (stage="blt") => {
+  const _getParallel = () => {
+    // BLT-Wellenbreite — GECAPPT, identisch zur Learner-&-Tuning-Seite und
+    // zum Backend (computeTuningParallel, 01_constants). FMT/CFT tunen
+    // sequentiell mit festen Trial-Zahlen — keine Wellen-Rechnung.
     const nCores = sysInfo?.cpu?.cores || 0;
     const pl = cfg.parallelLevel||3;
-    if(!nCores || pl <= 2) return pl <= 2 ? 1 : 5;
-    if(stage === "fmt") return Math.max(2, Math.floor(nCores / 8));
-    return Math.max(1, Math.floor(nCores / 4));
+    if(pl <= 2) return 1;
+    if(!nCores) return Math.min(5, pl === 3 ? 4 : 8);  // Fallback ohne Server-Info
+    return computeTuningParallel(pl, nCores, cfg.baseLearner||"catboost");
   };
-  const _wavesToTrials = (w, stage="blt") => Math.max(10, _getParallel(stage) * w);
+  const _wavesToTrials = (w) => Math.max(10, _getParallel() * wavesEffective(w, sysInfo?.cpu?.cores || 0));
 
   const MUTEX = [["bl_tuning_schnell","bl_tuning","bl_tuning_intensiv"],["fmt_schnell","fmt","fmt_intensiv"],["grf_tuning_schnell","grf_tuning","grf_tuning_intensiv"],["reg_moderate","reg_strong"]];
   const toggleAddon = (p) => {
@@ -51,7 +54,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
       });
       let applyCfg = {...p.cfg};
       // Wave-based: compute trials from waves × parallel
-      if(p.waves) applyCfg[p.waves.field] = _wavesToTrials(p.waves.w, p.waves.stage||"blt");
+      if(p.waves) applyCfg[p.waves.field] = _wavesToTrials(p.waves.w);
       if(p.key === "feature_reduction" && cfg.hasNaN) {
         applyCfg.fsMethods = (applyCfg.fsMethods || []).filter(m => m !== "causal_forest");
       }
@@ -351,7 +354,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                 const merged = {};
                 stdKeys.forEach(k=>{
                   const p=ADDON_PRESETS.find(x=>x.key===k);
-                  if(p){next.add(k);Object.assign(merged,p.cfg);if(p.waves)merged[p.waves.field]=_wavesToTrials(p.waves.w, p.waves.stage||"blt")}
+                  if(p){next.add(k);Object.assign(merged,p.cfg);if(p.waves)merged[p.waves.field]=_wavesToTrials(p.waves.w)}
                 });
                 setCfg(prev=>({...prev,...merged}));
               }

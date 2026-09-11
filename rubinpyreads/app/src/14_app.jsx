@@ -34,6 +34,7 @@ function App() {
   const [spFmt,setSpFmt] = useState(_ss0.spFmt || {lgbm:{},catboost:{}});
   const [analysisRunning,setAnalysisRunning] = useState(false);
   const [analysisDone,setAnalysisDone] = useState(false);
+  const [dpCompleted,setDpCompleted] = useState(false);
   const [resetKey,setResetKey] = useState(0);
   const [serverOk,setServerOk] = useState(null); // null=checking, true=ok, false=error
   const [serverError,setServerError] = useState("");
@@ -107,7 +108,8 @@ function App() {
   const pageStatus = (() => {
     const s = {};
     // Datenvorbereitung (optional)
-    if(dp.detectedCols) s.dataprep = {st:"done",detail:"Spalten erkannt"};
+    if(dpCompleted) s.dataprep = {st:"done",detail:"DataPrep-Lauf abgeschlossen"};
+    else if(dp.detectedCols) s.dataprep = {st:"active",detail:"Spalten erkannt"};
     else if(dp.files?.some(f=>f.trim())) s.dataprep = {st:"active",detail:"Dateien eingetragen"};
     else s.dataprep = {st:"open",detail:"Optional"};
 
@@ -445,7 +447,7 @@ function App() {
       </nav>
       <main style={{flex:1,maxWidth:960,padding:"36px 52px 80px",margin:"0 auto"}}>
         {pg==="overview" && <POverview setPg={setPg}/>}
-        <div key={"dp-"+resetKey} style={{display: pg==="dataprep" ? "block" : "none"}}><PDataPrep dp={dp} setDp={setDp} cfg={cfg} setCfg={set} setPg={setPg}/></div>
+        <div key={"dp-"+resetKey} style={{display: pg==="dataprep" ? "block" : "none"}}><PDataPrep dp={dp} setDp={setDp} cfg={cfg} setCfg={set} setPg={setPg} onDpDone={setDpCompleted}/></div>
         {pg==="datafiles" && <PData cfg={cfg} set={set} setCfg={set} activeBase={activeBase} setActiveBase={setActiveBase} activeAddons={activeAddons} setActiveAddons={setActiveAddons} setSp={setSp} setSpFmt={setSpFmt} view="files" sysInfo={sysInfo}/>}
         {pg==="template" && <PData cfg={cfg} set={set} setCfg={set} activeBase={activeBase} setActiveBase={setActiveBase} activeAddons={activeAddons} setActiveAddons={setActiveAddons} setSp={setSp} setSpFmt={setSpFmt} view="template" sysInfo={sysInfo}/>}
         {pg==="config" && <PConfig cfg={cfg} set={set}/>}
