@@ -68,7 +68,7 @@ Die UI zeigt eine automatische Warnung, wenn Single-Fold aktiviert und die Daten
 Bei `constants.parallel_level` 3 oder 4 werden mehrere Optuna-Trials gleichzeitig ausgeführt (`study.optimize(n_jobs=...)`). Die CPU-Kerne werden proportional aufgeteilt:
 
 - **Level 1–2:** 1 Trial sequentiell, alle Kerne an den einzelnen Fit
-- **Level 3–4:** `cpus // 4` parallele Trials (z. B. 16 bei 64 Kernen), je 4 Kerne
+- **Level 3–4:** `cpus // 4` parallele Trials, hart gecappt (Level 3: max. 4; Level 4: max. 8 LightGBM / 6 CatBoost — z. B. 8 bei 64 wie bei 250 Kernen), je 4 Kerne; übrige Kerne gehen an die einzelnen Fits
 
 Dies gilt für das **Base-Learner-Tuning**. FMT und CFT laufen seit der cache_values-Optimierung
 **sequentiell** (n_jobs=1) — Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final

@@ -1,6 +1,8 @@
 const nCores = sysInfo?.cpu?.cores || 0;
 const pl = cfg.parallelLevel||3;
-const par = nCores && pl >= 3 ? Math.max(1, Math.floor(nCores / 4)) : (pl <= 2 ? 1 : 0);
+const rawPar = nCores ? Math.max(1, Math.floor(nCores / 4)) : 0;
+const par = computeTuningParallel(pl, nCores, cfg.baseLearner||"catboost");
+const parCapped = pl >= 3 && rawPar > par;
 const trials = cfg.tuningTrials||50;
 const waves = par > 0 ? Math.ceil(trials / par) : 0;
 const waveColor = waves < 3 ? "#dc2626" : waves < 5 ? "#d97706" : "#059669";
@@ -18,7 +20,9 @@ return (<>
     })}
   </div>
   <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
-    <strong>{par}</strong> parallele Trials ({nCores} Kerne / 4) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials.
+    {pl <= 2
+      ? <><strong>Sequentiell</strong> (Level {pl}): jeder Trial voll informiert, alle Kerne im einzelnen Fit — <strong>{trials}</strong> Trials.</>
+      : <><strong>{par}</strong> parallele Trials ({parCapped ? `${nCores} Kerne / 4 = ${rawPar}, gecappt auf ${par} fürs Wellen-Lernen` : `${nCores} Kerne / 4`}) × <strong style={{color:waveColor}}>{waves} Wellen</strong> = <strong>{trials}</strong> Trials. Übrige Kerne beschleunigen die einzelnen Fits.</>}
     {waves < 3 && " TPE kann bei weniger als 3 Wellen kaum zwischen guten und schlechten Parametern unterscheiden."}
     {waves >= 3 && waves < 5 && " Grenzwertig — TPE beginnt erst nach den Startup-Trials zu lernen."}
     {waves >= 5 && " Genug Wellen für stabile TPE-Exploration und Exploitation."}
@@ -59,7 +63,7 @@ return (<>
   {trials >= 30 && " Genug Trials für stabile TPE-Exploration und Exploitation."}
 </div>
 <Expander title="Manuell anpassen">
-  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final (sequentiell, alle Kerne)."/>
+  <Inp label="Trials" type="number" value={trials} onChange={v=>set({...cfg,fmtTrials:Number(v)})} help="Anzahl Optuna-Trials. Nuisance-Modelle werden einmalig gecacht, Trials fitten nur model_final — sequentiell (TPE voll informiert), je Fit ~8 Kerne."/>
 </Expander>
 </>);
 })()}{cfg.fmtSingleFold && <div style={{fontSize:11,color:C.textMuted,background:C.rose,padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.4}}>Single-Fold aktiv: Jeder Trial wird auf <strong style={{color:C.ruby}}>1</strong> statt {cfg.cvSplits||5} OOF-Folds evaluiert — {cfg.cvSplits||5}× schneller.</div>}{cfg.fmtSingleFold && (()=>{const K=cfg.cvSplits||5;if(dataStats){const ppf=Math.floor(dataStats.minority/K);if(ppf<100){const severe=ppf<50;return <div style={{fontSize:11,color:severe?"#991b1b":"#92400e",background:severe?"#fef2f2":"#fffbeb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:`1px solid ${severe?"#fca5a5":"#fbbf24"}`}}><strong>{severe?"⚠ Nicht empfohlen":"⚠ Grenzwertig"}:</strong> Bei Ihren Daten nur <strong>{ppf}</strong> Minority-Fälle im äußeren Val-Fold (empfohlen: ≥100, Minimum: ≥50). {severe?"OOF-Score ist nicht aussagekräftig. K-Fold CV dringend empfohlen.":"Die Score-Schätzung (R-Score) ist merklich verrauscht — K-Fold CV empfohlen."}</div>;}}else return <div style={{fontSize:11,color:"#6b7280",background:"#f9fafb",padding:"6px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>Faustregel: min(n_treated, n_positive) / {K} ≥ 100 pro Val-Fold für zuverlässige Metrik-Schätzung (Collins et al.: min. 100, idealerweise 200+ Events für stabile Validation).</div>;return null;})()}<Divider/>{_isBoth ? (<>

@@ -122,6 +122,13 @@ in allen Cross-Prediction-Folds wiederverwendet."""
         Level 1-2: 1 (sequentiell)
         Level 3-4: n_cpus // 8 (= 5 bei 40 CPUs, je 8 Kerne pro Trial)
         """
+        # WICHTIG (Semantik-Klärung nach Audit): FMT-Trials laufen SEQUENTIELL
+        # (study.optimize mit n_jobs=1 — siehe unten) und brauchen daher
+        # KEINEN Wellen-Cap; TPE ist bei sequentiellen Trials maximal
+        # informiert. Dieser Wert dient AUSSCHLIESSLICH als Divisor in
+        # _parallel_jobs_per_fit: n_cpus // (n_cpus // 8) ≈ 8 Kerne pro
+        # Base-Learner-Fit (bewusste Politik — model_final-Fits skalieren
+        # über ~8 Kerne kaum, Rest bleibt für BLAS/System).
         pl = self.cfg.constants.parallel_level
         if pl <= 2:
             return 1

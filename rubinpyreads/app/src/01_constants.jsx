@@ -2,6 +2,17 @@
 // REGION: React Hooks + SVG Assets
 // ════════════════════════════════════════════════════════════════════
 const { useState, useEffect, useRef, useMemo } = React;
+// Parallele Optuna-Trials (Wellen-Design) — SPIEGEL von
+// rubin/tuning/base_learner.compute_tuning_n_jobs (bei Änderung BEIDE!):
+// Level 1-2 sequentiell; Level 3 max. 4; Level 4 max. 8 (reines LightGBM)
+// bzw. 6 (CatBoost / "both" / unbekannt). Mehr Kerne erhöhen nie die
+// parallelen Trials, nur die Kerne pro Fit.
+const computeTuningParallel = (pl, nCores, learner, coresPerTrial=4) => {
+  if ((pl||3) <= 2) return 1;
+  if (!nCores) return 0;
+  const cap = pl === 3 ? 4 : (String(learner||"").toLowerCase() === "lgbm" ? 8 : 6);
+  return Math.max(1, Math.min(Math.floor(nCores / coresPerTrial), cap));
+};
 
 const RubinLogo = ({ size = 48, light = false }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="50 -5 120 125" width={size} height={size}>

@@ -252,8 +252,8 @@ Die zentrale Regel: **Gesamtauslastung ≈ verfügbare Kerne**. Wenn mehrere Fit
 |-------|-------------------|---------------------|-----------------------|----------------|----------------|
 | 1     | 1                 | 1                   | -1 (alle)             | 1 (sequentiell, cache_values) | sequentiell    |
 | 2     | -1 (alle)         | 1                   | -1 (alle)             | 1 (sequentiell, cache_values) | sequentiell    |
-| 3     | cores/workers     | cores//4            | -1 (alle)             | 1 (sequentiell, cache_values) | parallel       |
-| 4     | cores/workers     | cores//4            | -1 (alle)             | 1 (sequentiell, cache_values) | parallel (max) |
+| 3     | cores/workers     | min(cores//4, 4)    | -1 (alle)             | 1 (sequentiell, cache_values) | parallel       |
+| 4     | cores/workers     | min(cores//4, 8 LGBM / 6 CatBoost) | -1 (alle)  | 1 (sequentiell, cache_values) | parallel (max) |
 
 ### CFT: CPU-Parallelisierung bei CFDML und GRF
 
@@ -311,7 +311,7 @@ Alle **Zufallsquellen sind mit Seeds fixiert**: globale `np.random.seed`/`random
 
 Es gibt zwei Effekte, beide nur ab `parallel_level ≥ 2`/`≥ 3` aktiv:
 
-1. **Parallele BLT-Optuna-Trials** (Level 3/4: `cores//4` parallele Trials — siehe Tabelle oben). Bei parallelen Trials ist die Reihenfolge, in der Trials fertig werden und an den Sampler zurückmelden, timing-abhängig. Der TPE-Sampler ist zwar geseedet, erhält die Ergebnisse aber in wechselnder Reihenfolge und schlägt dadurch andere Folge-Hyperparameter vor → andere getunte Modelle. Eine andere Kernzahl bedeutet eine andere Trial-Parallelität und damit einen anderen Tuning-Pfad. Dies ist der **größte** Effekt; FMT und CFT tunen sequentiell (`n_jobs=1`) und sind davon nicht betroffen.
+1. **Parallele BLT-Optuna-Trials** (Level 3/4: `min(cores//4, Cap)` parallele Trials, Cap 4 bzw. 8/6 — siehe Tabelle oben). Durch den Cap ist die Trial-Parallelität ab mittleren Maschinen konstant (z. B. 8 bei 64 wie bei 250 Kernen) — der Wellen-Plan und damit der Tuning-Pfad hängen nicht mehr von der Kernzahl ab. Bei parallelen Trials ist die Reihenfolge, in der Trials fertig werden und an den Sampler zurückmelden, timing-abhängig. Der TPE-Sampler ist zwar geseedet, erhält die Ergebnisse aber in wechselnder Reihenfolge und schlägt dadurch andere Folge-Hyperparameter vor → andere getunte Modelle. Eine andere Kernzahl bedeutet eine andere Trial-Parallelität und damit einen anderen Tuning-Pfad. Dies ist der **größte** Effekt; FMT und CFT tunen sequentiell (`n_jobs=1`) und sind davon nicht betroffen.
 2. **Multi-threaded Base-Learner** (LightGBM/CatBoost bei `parallel_jobs ≠ 1`). LightGBM erzwingt `deterministic=True` + `force_row_wise=True` nur bei `parallel_jobs == 1`; mit mehreren Threads hängt die Floating-Point-Summationsreihenfolge der parallel berechneten Histogramme von der Thread-Zahl ab → minimal andere Splits/Bäume. CatBoost (`thread_count=-1`) variiert analog mit der Thread-Zahl.
 
 Beide Effekte sind meist klein, können aber das getunte Modell und damit die Qini-/Uplift-Werte sichtbar verschieben. **Für vollständig reproduzierbare Läufe** (unabhängig von der Kernzahl): `constants.parallel_level: 1` setzen — das erzwingt `parallel_jobs=1` (deterministisches LightGBM/CatBoost) **und** serielle Optuna-Trials. Das ist deutlich langsamer, liefert aber identische Ergebnisse. `parallel_level=2` beseitigt nur den Trial-Effekt (serielle Trials); die Base-Learner bleiben multi-threaded und damit minimal nicht-deterministisch.

@@ -614,6 +614,15 @@ class AnalysisPipeline:
                 if task_key in tuner.skill_scores:
                     mlflow.log_metric(f"tuning_skill__{task_key}", tuner.skill_scores[task_key])
             mlflow.log_param("blt__n_trials", cfg.tuning.n_trials)
+            # Wellen-Plan festhalten: Nach dem Parallelitäts-Cap ist DIES die
+            # Größe, die Läufe vergleichbar macht (62 vs. 8 parallele Trials
+            # erklärt Qualitätsunterschiede bei identischer Config).
+            from rubin.tuning.base_learner import compute_tuning_n_jobs
+            from rubin.utils.data_utils import available_cpu_count
+            _blt_pj = compute_tuning_n_jobs(cfg.constants.parallel_level, available_cpu_count(), 4,
+                                            str(getattr(cfg.base_learner, "type", "lgbm") or "lgbm"))
+            mlflow.log_param("blt__parallel_trials", _blt_pj)
+            mlflow.log_param("blt__waves", max(1, -(-cfg.tuning.n_trials // _blt_pj)))
             mlflow.log_param("blt__cv_splits", cfg.tuning.cv_splits)
             mlflow.log_param("blt__metric", "log_loss (Klassifikation) / neg_mse (Regression)")
             mlflow.log_param("blt__skill_metric", "Skill Score (Klassifikation) / R² (Regression)")
@@ -735,6 +744,7 @@ class AnalysisPipeline:
                 mlflow.log_metric(f"fmt_best__{task_key}", score)
             mlflow.log_param("fmt__enabled", True)
             mlflow.log_param("fmt__n_trials", cfg.final_model_tuning.n_trials)
+            mlflow.log_param("fmt__trials_mode", "sequentiell (n_jobs=1, TPE voll informiert)")
             mlflow.log_param("fmt__cv_splits", getattr(cfg.final_model_tuning, "cv_splits", 3))
             mlflow.log_param("fmt__overfit_penalty", getattr(cfg.final_model_tuning, "overfit_penalty", 0.0))
             mlflow.log_param("fmt__single_fold", getattr(cfg.final_model_tuning, "single_fold", False))

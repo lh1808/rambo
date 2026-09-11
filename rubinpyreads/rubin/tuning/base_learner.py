@@ -23,6 +23,31 @@ from rubin.tuning.common import (
 from rubin.settings import AnalysisConfig
 from rubin.utils.data_utils import available_cpu_count
 
+def compute_tuning_n_jobs(parallel_level: int, n_cpus: int, cores_per_trial: int,
+                          learner_type: str = "lgbm") -> int:
+    """Parallele Optuna-Trials: n_cpus // cores_per_trial, hart gecappt,
+    damit der TPE-Sampler sequentielle "Wellen" zum Lernen hat.
+
+    Caps (Wellen-Design, siehe docs/konfiguration.md):
+    - Level 1-2: 1 (sequentiell — maximal informierte Trials)
+    - Level 3:   max. 4 parallele Trials
+    - Level 4:   max. 8 (LightGBM) bzw. 6 (CatBoost — speicherhungrigere Fits)
+
+    Beispiel n_trials=50 mit 8 parallelen Trials → ~6 Wellen; jede Welle
+    startet mit den Ergebnissen aller vorherigen (constant_liar überbrückt
+    nur die laufende Welle). Ohne Cap (250 Kerne → 62 parallel) starten
+    alle Trials gleichzeitig — TPE hätte keine abgeschlossenen Trials und
+    wäre reine Zufallssuche. Übrige Kerne gehen an die einzelnen Fits."""
+    if parallel_level <= 2:
+        return 1
+    lt = str(learner_type).lower()
+    # 8 nur für REINES LightGBM; catboost, "both" (enthält CatBoost-Studies)
+    # und Unbekanntes konservativ 6 — identisch gespiegelt in der UI
+    # (computeTuningParallel in app/src/01_constants.jsx; bei Änderung BEIDE!).
+    cap = 4 if parallel_level == 3 else (8 if lt == "lgbm" else 6)
+    return max(1, min(n_cpus // cores_per_trial, cap))
+
+
 class BaseLearnerTuner:
     """Optimiert Base-Learner-Aufgaben und teilt Ergebnisse zwischen kompatiblen Rollen.
 
@@ -333,6 +358,11 @@ class BaseLearnerTuner:
             # Level 3/4: Mehrere Trials parallel → Kerne aufteilen
             n_cpus = available_cpu_count()
             n_trial_workers = self._tuning_n_jobs()
+            _tlog.info(
+                "Wellen-Plan '%s': %d Trials, %d parallel → ~%d Wellen (TPE lernt ab Welle 2)",
+                task.key, _n_trials, n_trial_workers,
+                max(1, -(-_n_trials // max(1, n_trial_workers))),
+            )
             pj = max(1, n_cpus // max(1, n_trial_workers))
         model = build_base_learner(self.cfg.base_learner.type, params, seed=self.seed, task=estimator_task, parallel_jobs=pj)
         model.fit(X_train, y_train)
@@ -813,14 +843,18 @@ class BaseLearnerTuner:
         """Anzahl paralleler Optuna-Trials basierend auf parallel_level.
 
         Level 1-2: 1 (sequentiell, alle Kerne an den einzelnen Fit)
-        Level 3-4: n_cpus // 4 (je 4 Kerne pro Trial, gleiche Anzahl
-                   für CatBoost und LightGBM → vergleichbare TPE-Exploration)
+        Level 3-4: n_cpus // 4, hart GECAPPT (compute_tuning_n_jobs) — ohne
+        Cap liefen auf großen Maschinen (250 Kerne → 62 parallele Trials)
+        mehr Trials gleichzeitig als das gesamte Budget (n_trials=50): kein
+        Trial sähe je ein abgeschlossenes Ergebnis, TPE degenerierte zu
+        Zufallssuche. Der Cap erzwingt sequentielle "Wellen" zum Lernen.
         """
-        pl = self.cfg.constants.parallel_level
-        if pl <= 2:
-            return 1
-        n_cpus = available_cpu_count()
-        return max(1, n_cpus // 4)
+        return compute_tuning_n_jobs(
+            parallel_level=self.cfg.constants.parallel_level,
+            n_cpus=available_cpu_count(),
+            cores_per_trial=4,
+            learner_type=str(getattr(self.cfg.base_learner, "type", "lgbm") or "lgbm"),
+        )
 
     def tune_all(self, model_names: List[str], X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> Dict[str, Dict[str, Dict[str, Any]]]:
         if not self.cfg.tuning.enabled:
