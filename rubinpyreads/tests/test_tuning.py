@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # ═══ Import-Helfer: Lade Module ohne rubin.__init__ (vermeidet econml-Abhängigkeit) ═══
@@ -738,3 +739,4 @@ class TestQiniScorerAggregation:
         curve = uplift_curve(y, t, score)
         q = qini_coefficient(curve)
         assert abs(q) < 0.01, f"Konstante Prediction sollte Qini ≈ 0 haben, got {q}"
+

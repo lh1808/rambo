@@ -358,11 +358,6 @@ class BaseLearnerTuner:
             # Level 3/4: Mehrere Trials parallel → Kerne aufteilen
             n_cpus = available_cpu_count()
             n_trial_workers = self._tuning_n_jobs()
-            _tlog.info(
-                "Wellen-Plan '%s': %d Trials, %d parallel → ~%d Wellen (TPE lernt ab Welle 2)",
-                task.key, _n_trials, n_trial_workers,
-                max(1, -(-_n_trials // max(1, n_trial_workers))),
-            )
             pj = max(1, n_cpus // max(1, n_trial_workers))
         model = build_base_learner(self.cfg.base_learner.type, params, seed=self.seed, task=estimator_task, parallel_jobs=pj)
         model.fit(X_train, y_train)
@@ -775,8 +770,9 @@ class BaseLearnerTuner:
         else:
             _nj = max(1, available_cpu_count() // max(1, _pj_start))
         _tlog.info(
-            "BLT '%s': Starte %d Trials (parallel=%d, %s, n_jobs=%d).",
-            task.key, _n_trials, _pj_start, _fold_lbl, _nj,
+            "BLT '%s': Starte %d Trials (parallel=%d → ~%d Wellen, %s, n_jobs=%d). TPE lernt ab Welle 2.",
+            task.key, _n_trials, _pj_start,
+            max(1, -(-_n_trials // max(1, _pj_start))), _fold_lbl, _nj,
         )
         study.optimize(objective, n_trials=_n_trials, timeout=_timeout,
                        n_jobs=_pj_start, catch=(Exception,))
