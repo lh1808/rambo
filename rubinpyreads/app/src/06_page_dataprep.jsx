@@ -262,7 +262,13 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           ].map(o => {
             const active = (dp.evalMode||"cross") === o.k;
             return (
-              <label key={o.k} onClick={()=>setDp(prev=>({...prev, evalMode:o.k}))} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",transition:"all 0.15s"}}>
+              <label key={o.k} onClick={()=>{
+                setDp(prev=>({...prev, evalMode:o.k, ...(o.k!=="tmes" ? {evalFileIdxs:[], evalFileIdx:null} : {})}));
+                // Wechsel weg von TMES macht eine evtl. früher erzeugte Eval-Maske
+                // ungültig — sonst analysiert der nächste Lauf still weiter im
+                // TMES-Regime ("gleiche Files, anderer Uplift").
+                if(o.k!=="tmes") setCfg(prev=>({...prev, eval_mask_file:""}));
+              }} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",transition:"all 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <input type="radio" name="dp_evalMode" checked={active} readOnly style={{accentColor:"#D4A853",pointerEvents:"none"}}/>
                   <span style={{fontSize:13,fontWeight:600,color:active?"#7a5a00":C.dark}}>{o.label}</span>
@@ -555,9 +561,8 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
             <div style={{fontSize:10.5,color:"#999",marginTop:3}}>{dp.featurePath ? "Klicken zum Ersetzen" : "Klicken zum Hochladen"}</div>
           </div>
         )}
-        {dp.featurePath && (
-          <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn small onClick={async()=>{
+        <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <Btn small disabled={!dp.featurePath} onClick={async()=>{
               setDetecting(true); setDetectError(null);
               try {
                 const res = await fetch("./api/apply-dictionary", {
@@ -589,18 +594,16 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
                 {(dp.dictResult.missing_in_data||[]).length > 0 && <span style={{color:"#cf222e"}}> ({dp.dictResult.missing_in_data.length} fehlen)</span>}
               </span>
             )}
-          </div>
-        )}
-        {dp.featurePath && (
-          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.</div>
-        )}
-        <div style={{marginTop:14}}>
+        </div>
+        <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.{!dp.featurePath && " Zuerst oben ein Dictionary angeben."}</div>
+        <Divider/>
+        <div>
           <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
           <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
             placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
             value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
           <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-            <Btn small secondary onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
+            <Btn small secondary disabled={!dp.featurePath} onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
             {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
             {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
             {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}

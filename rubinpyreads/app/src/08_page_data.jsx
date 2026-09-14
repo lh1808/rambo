@@ -121,7 +121,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                     e.preventDefault();
                     if(dis) return;
                     if(o.k==="cross") set({...cfg, validateOn:"cross", eval_mask_file:""});
-                    else if(o.k==="external") set({...cfg, validateOn:"external"});
+                    else if(o.k==="external") set({...cfg, validateOn:"external", eval_mask_file:""});
                   }} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:dis?"not-allowed":"pointer",opacity:(!active&&dis)?0.4:1,transition:"all 0.15s"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                       <input type="radio" name="eval_mode_files" checked={active} readOnly style={{accentColor:"#D4A853",pointerEvents:"none"}}/>

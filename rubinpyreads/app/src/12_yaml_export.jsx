@@ -123,7 +123,7 @@ const buildYaml = (cfg, sp, spFmt) => {
     if(cfg.eval_y_file) a(`  eval_y_file: ${cfg.eval_y_file}`);
     if(cfg.eval_s_file) a(`  eval_s_file: ${cfg.eval_s_file}`);
   }
-  if(cfg.eval_mask_file) {
+  if(cfg.eval_mask_file && cfg.validateOn !== "external") {
     if(Array.isArray(cfg.eval_mask_file)) {
       a(`  eval_mask_file:`);
       cfg.eval_mask_file.forEach(f => a(`    - ${f}`));

@@ -45,13 +45,17 @@ const buildDataPrepYaml = (dp, cfg) => {
   if(dp.multiOpt) a(`  multiple_files_option: ${dp.multiOpt}`);
   if(dp.controlFileIndex>0) a(`  control_file_index: ${dp.controlFileIndex}`);
   if(dp.balanceTreat) a("  balance_treatments: true");
-  if((dp.evalFileIdxs||[]).length > 1) {
-    a(`  eval_file_index:`);
-    (dp.evalFileIdxs||[]).forEach(i => a(`    - ${i}`));
-  } else if((dp.evalFileIdxs||[]).length === 1) {
-    a(`  eval_file_index: ${dp.evalFileIdxs[0]}`);
-  } else if(dp.evalFileIdx!=null) {
-    a(`  eval_file_index: ${dp.evalFileIdx}`);
+  // eval_file_index NUR im TMES-Modus emittieren — klebende Indizes aus einer
+  // früheren TMES-Wahl dürfen eine Cross-Validation-Config nicht verändern
+  // (sonst baut DataPrep Maske+Rollen und der Report zeigt Eval-Rollen trotz CV).
+  if((dp.evalMode||"cross") === "tmes") {
+    const _idxs = [...new Set([...(dp.evalFileIdxs||[]), ...(dp.evalFileIdx!=null?[dp.evalFileIdx]:[])])].sort((a,b)=>a-b);
+    if(_idxs.length > 1) {
+      a(`  eval_file_index:`);
+      _idxs.forEach(i => a(`    - ${i}`));
+    } else if(_idxs.length === 1) {
+      a(`  eval_file_index: ${_idxs[0]}`);
+    }
   }
   // Explizite Feature-Auswahl (manuell oder Dictionary)
   const fs = dp.featureSelection||{};

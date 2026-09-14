@@ -639,13 +639,17 @@ const buildDataPrepYaml = (dp, cfg) => {
   if(dp.multiOpt) a(`  multiple_files_option: ${dp.multiOpt}`);
   if(dp.controlFileIndex>0) a(`  control_file_index: ${dp.controlFileIndex}`);
   if(dp.balanceTreat) a("  balance_treatments: true");
-  if((dp.evalFileIdxs||[]).length > 1) {
-    a(`  eval_file_index:`);
-    (dp.evalFileIdxs||[]).forEach(i => a(`    - ${i}`));
-  } else if((dp.evalFileIdxs||[]).length === 1) {
-    a(`  eval_file_index: ${dp.evalFileIdxs[0]}`);
-  } else if(dp.evalFileIdx!=null) {
-    a(`  eval_file_index: ${dp.evalFileIdx}`);
+  // eval_file_index NUR im TMES-Modus emittieren — klebende Indizes aus einer
+  // früheren TMES-Wahl dürfen eine Cross-Validation-Config nicht verändern
+  // (sonst baut DataPrep Maske+Rollen und der Report zeigt Eval-Rollen trotz CV).
+  if((dp.evalMode||"cross") === "tmes") {
+    const _idxs = [...new Set([...(dp.evalFileIdxs||[]), ...(dp.evalFileIdx!=null?[dp.evalFileIdx]:[])])].sort((a,b)=>a-b);
+    if(_idxs.length > 1) {
+      a(`  eval_file_index:`);
+      _idxs.forEach(i => a(`    - ${i}`));
+    } else if(_idxs.length === 1) {
+      a(`  eval_file_index: ${_idxs[0]}`);
+    }
   }
   // Explizite Feature-Auswahl (manuell oder Dictionary)
   const fs = dp.featureSelection||{};
@@ -950,7 +954,13 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           ].map(o => {
             const active = (dp.evalMode||"cross") === o.k;
             return (
-              <label key={o.k} onClick={()=>setDp(prev=>({...prev, evalMode:o.k}))} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",transition:"all 0.15s"}}>
+              <label key={o.k} onClick={()=>{
+                setDp(prev=>({...prev, evalMode:o.k, ...(o.k!=="tmes" ? {evalFileIdxs:[], evalFileIdx:null} : {})}));
+                // Wechsel weg von TMES macht eine evtl. früher erzeugte Eval-Maske
+                // ungültig — sonst analysiert der nächste Lauf still weiter im
+                // TMES-Regime ("gleiche Files, anderer Uplift").
+                if(o.k!=="tmes") setCfg(prev=>({...prev, eval_mask_file:""}));
+              }} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:"pointer",transition:"all 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <input type="radio" name="dp_evalMode" checked={active} readOnly style={{accentColor:"#D4A853",pointerEvents:"none"}}/>
                   <span style={{fontSize:13,fontWeight:600,color:active?"#7a5a00":C.dark}}>{o.label}</span>
@@ -1243,9 +1253,8 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
             <div style={{fontSize:10.5,color:"#999",marginTop:3}}>{dp.featurePath ? "Klicken zum Ersetzen" : "Klicken zum Hochladen"}</div>
           </div>
         )}
-        {dp.featurePath && (
-          <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn small onClick={async()=>{
+        <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <Btn small disabled={!dp.featurePath} onClick={async()=>{
               setDetecting(true); setDetectError(null);
               try {
                 const res = await fetch("./api/apply-dictionary", {
@@ -1277,18 +1286,16 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
                 {(dp.dictResult.missing_in_data||[]).length > 0 && <span style={{color:"#cf222e"}}> ({dp.dictResult.missing_in_data.length} fehlen)</span>}
               </span>
             )}
-          </div>
-        )}
-        {dp.featurePath && (
-          <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.</div>
-        )}
-        <div style={{marginTop:14}}>
+        </div>
+        <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Liest ROLE=INPUT aus dem Dictionary und belegt die Feature-Auswahl unten vor — Spalten außerhalb des Dictionaries werden abgewählt.{!dp.featurePath && " Zuerst oben ein Dictionary angeben."}</div>
+        <Divider/>
+        <div>
           <label style={{fontSize:12,fontWeight:600,color:C.dark,display:"block",marginBottom:3}}>Use-Case-Ausschlüsse (optional)</label>
           <textarea rows={3} style={{width:"100%",fontSize:12.5,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",boxSizing:"border-box"}}
             placeholder={"GINT_KFZ_SCHLUESSEL_NR_HERST, AKQ_WERBEWIDERSPRUCH\n(Komma- oder zeilengetrennt — schließt Features des Dictionaries für DIESEN Use Case aus)"}
             value={dp.excludeFeaturesText||""} onChange={e=>setDp(prev=>({...prev,excludeFeaturesText:e.target.value}))}/>
           <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-            <Btn small secondary onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
+            <Btn small secondary disabled={!dp.featurePath} onClick={checkExcludes}>Ausschlüsse prüfen</Btn>
             {excludeEntries.length>0 && !dictInputs && <span style={{fontSize:11.5,color:C.gray}}>{excludeEntries.length} Eintrag/Einträge — noch ungeprüft</span>}
             {dictInputs&&dictInputs.error && <span style={{fontSize:11.5,color:"#b00020"}}>{dictInputs.error}</span>}
             {unknownExcludes&&unknownExcludes.length===0 && excludeEntries.length>0 && <span style={{fontSize:11.5,color:"#1a7f37"}}>✓ alle {excludeEntries.length} im Dictionary ({dictInputs.n} INPUTs)</span>}
@@ -1815,7 +1822,7 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
                     e.preventDefault();
                     if(dis) return;
                     if(o.k==="cross") set({...cfg, validateOn:"cross", eval_mask_file:""});
-                    else if(o.k==="external") set({...cfg, validateOn:"external"});
+                    else if(o.k==="external") set({...cfg, validateOn:"external", eval_mask_file:""});
                   }} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid #D4A853":"1.5px solid "+C.border,background:active?"#fffbeb":"#fff",cursor:dis?"not-allowed":"pointer",opacity:(!active&&dis)?0.4:1,transition:"all 0.15s"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                       <input type="radio" name="eval_mode_files" checked={active} readOnly style={{accentColor:"#D4A853",pointerEvents:"none"}}/>
@@ -2294,7 +2301,7 @@ const PConfig = ({cfg,set}) => {
                 if(dis) return;
                 if(o.k==="cross") set({...cfg, validateOn:"cross", eval_mask_file:""});
                 else if(o.k==="tmes" && cfg.eval_mask_file) set({...cfg, validateOn:"cross"});
-                else if(o.k==="external") set({...cfg, validateOn:"external"});
+                else if(o.k==="external") set({...cfg, validateOn:"external", eval_mask_file:""});
               }} style={{padding:"14px 16px",borderRadius:10,border:active?"2px solid "+C.ruby:"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:dis?"not-allowed":"pointer",opacity:(!active&&dis)?0.4:1,textAlign:"left",transition:"all 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <div style={{width:14,height:14,borderRadius:7,border:active?"4px solid "+C.ruby:"2px solid #ccc",background:"#fff",flexShrink:0}}/>
@@ -3189,7 +3196,7 @@ const buildYaml = (cfg, sp, spFmt) => {
     if(cfg.eval_y_file) a(`  eval_y_file: ${cfg.eval_y_file}`);
     if(cfg.eval_s_file) a(`  eval_s_file: ${cfg.eval_s_file}`);
   }
-  if(cfg.eval_mask_file) {
+  if(cfg.eval_mask_file && cfg.validateOn !== "external") {
     if(Array.isArray(cfg.eval_mask_file)) {
       a(`  eval_mask_file:`);
       cfg.eval_mask_file.forEach(f => a(`    - ${f}`));

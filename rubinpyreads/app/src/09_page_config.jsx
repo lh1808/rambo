@@ -100,7 +100,7 @@ const PConfig = ({cfg,set}) => {
                 if(dis) return;
                 if(o.k==="cross") set({...cfg, validateOn:"cross", eval_mask_file:""});
                 else if(o.k==="tmes" && cfg.eval_mask_file) set({...cfg, validateOn:"cross"});
-                else if(o.k==="external") set({...cfg, validateOn:"external"});
+                else if(o.k==="external") set({...cfg, validateOn:"external", eval_mask_file:""});
               }} style={{padding:"14px 16px",borderRadius:10,border:active?"2px solid "+C.ruby:"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:dis?"not-allowed":"pointer",opacity:(!active&&dis)?0.4:1,textAlign:"left",transition:"all 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <div style={{width:14,height:14,borderRadius:7,border:active?"4px solid "+C.ruby:"2px solid #ccc",background:"#fff",flexShrink:0}}/>
