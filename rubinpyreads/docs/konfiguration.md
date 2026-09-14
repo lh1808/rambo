@@ -210,6 +210,8 @@ data_prep:
   fill_na_method: "median"  # "median" | "mean" | "zero" | "mode" | "max" | null
 
   deduplicate: true                   # Kunden auf 1 Eintrag pro ID reduzieren
+
+**Verhalten bei mehreren Dateien:** Bei ID-Überschneidungen zwischen Dateien wird je ID ein **zufälliger Vertreter** behalten (seed-reproduzierbar über `constants.SEED`, die ursprüngliche Zeilenordnung bleibt erhalten) — nicht „erste Datei gewinnt“. Das verhindert Selektionsbias gegen spätere Dateien (z. B. das TMES-Eval-File); das Log zeigt die Zeilen je Datei vor und nach der Deduplizierung.
   deduplicate_id_column: "PARTNER_ID" # Spalte mit der Kunden-ID
 
   # Optional: Separater Eval-Datensatz. Der Preprocessor wird nur auf den

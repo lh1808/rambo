@@ -678,7 +678,27 @@ class DataPrepPipeline:
                     f"Verfügbare Spalten: {list(df.columns)[:20]}"
                 )
             n_before = len(df)
-            df = df.drop_duplicates(subset=[id_col], keep="first").reset_index(drop=True)
+            # Zufälliger Vertreter je ID statt "erstes File gewinnt": Bei
+            # Duplikaten ÜBER Dateien hinweg würde keep="first" auf dem
+            # konkatenierten Frame systematisch die früheren Dateien bevorzugen
+            # (spätere — z. B. das TMES-Eval-File — verlören alle
+            # Überschneidungen: Selektionsbias). Deshalb: seed-reproduzierbar
+            # mischen → dedupen → ursprüngliche Zeilenordnung wiederherstellen.
+            _dedup_seed = int(getattr(self.cfg.constants, "random_seed", 42) or 42)
+            if "__file_source__" in df.columns:
+                _src_before = df["__file_source__"].value_counts().to_dict()
+            df = (
+                df.sample(frac=1.0, random_state=_dedup_seed)
+                  .drop_duplicates(subset=[id_col], keep="first")
+                  .sort_index()
+                  .reset_index(drop=True)
+            )
+            if "__file_source__" in df.columns:
+                _src_after = df["__file_source__"].value_counts().to_dict()
+                self._logger.info(
+                    "Deduplizierung: zufälliger Vertreter je '%s' (Seed %d) — Zeilen je Datei vorher %s → nachher %s.",
+                    id_col, _dedup_seed, _src_before, _src_after,
+                )
             n_after = len(df)
             n_removed = n_before - n_after
             if n_removed > 0:
