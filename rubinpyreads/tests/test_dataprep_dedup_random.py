@@ -53,6 +53,13 @@ class TestDedupRandomAcrossFiles:
         X2 = _run(tmp_path, "b2")
         assert X1["ALTER"].tolist() == X2["ALTER"].tolist()
 
+    def test_file_source_artifact_written_for_multi_file(self, tmp_path):
+        # Nebenprodukt der Mehrdatei-Läufe: file_source.parquet ermöglicht
+        # die Je-Datei-Qini-Aufschlüsselung im Report.
+        X = _run(tmp_path, "fs")
+        fs = pd.read_parquet(tmp_path / "fs" / "out" / "file_source.parquet")["file_source"]
+        assert len(fs) == len(X) and fs.nunique() == 2
+
     def test_different_seed_changes_selection(self, tmp_path):
         X1 = _run(tmp_path, "c1", seed=7)
         X2 = _run(tmp_path, "c2", seed=8)

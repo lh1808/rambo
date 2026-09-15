@@ -76,3 +76,62 @@ class TestDataFileRoles:
         # Pipeline-Verhalten gespiegelt: external ignoriert eine gesetzte Maske
         html = _html(tmp_path, eval_file_index=[5], eval_files=["h.parquet"], validate_on="external")
         assert _badges(html)["batch_05.parquet"] == "Training"
+
+
+
+class TestPerFileQini:
+    """Je-Datei-Qini (Diagnose gepoolter Experimente): Metrik-Helper und
+    Report-Tabelle. Hintergrund: Gepoolte Qini kann Schein-Uplift belohnen,
+    der nur Datei-Zugehörigkeit erkennt — die Aufschlüsselung macht das sichtbar."""
+
+    def test_rows_per_file_plus_total_and_min_arm(self):
+        import numpy as np
+        from rubin.evaluation.uplift_metrics import per_file_qini_rows
+        rng = np.random.default_rng(0)
+        n = 400
+        fs = np.array(["a.parquet"] * 300 + ["b.parquet"] * 100)
+        t = (rng.random(n) > 0.5).astype(int)
+        y = (rng.random(n) < 0.1 + 0.05 * t).astype(float)
+        score = rng.normal(size=n)
+        rows = per_file_qini_rows(y, t, score, fs, min_arm=60)
+        assert [r["file"] for r in rows] == ["a.parquet", "b.parquet", "GESAMT"]
+        assert rows[0]["qini"] is not None            # 300 Zeilen → beide Arme > 60
+        assert rows[1]["qini"] is None                # 100 Zeilen → Arm < 60 → Platzhalter
+        assert rows[2]["n"] == n and rows[2]["qini"] is not None
+        assert abs(rows[2]["treat_rate"] - t.mean()) < 1e-9
+
+    def test_report_renders_table(self, tmp_path):
+        from rubin.reporting.html_report import ReportCollector, generate_html_report
+        c = ReportCollector()
+        c.per_file_qini = [
+            {"file": "f<1>.parquet", "n": 100, "treat_rate": 0.5,
+             "y_rate_t": 0.1, "y_rate_c": 0.08, "qini": 0.01},
+            {"file": "GESAMT", "n": 100, "treat_rate": 0.5,
+             "y_rate_t": 0.1, "y_rate_c": 0.08, "qini": None},
+        ]
+        out = tmp_path / "r.html"
+        generate_html_report(c, str(out))
+        h = out.read_text(encoding="utf-8")
+        assert "Qini je Quelldatei" in h and "f&lt;1&gt;.parquet" in h and "0.0100" in h
+
+    def test_report_renders_historical_column_and_all_models_details(self, tmp_path):
+        from rubin.reporting.html_report import ReportCollector, generate_html_report
+        c = ReportCollector()
+        c.per_file_qini = [
+            {"file": "a.parquet", "n": 100, "treat_rate": 0.5,
+             "y_rate_t": 0.1, "y_rate_c": 0.08, "qini": 0.05},
+            {"file": "GESAMT", "n": 100, "treat_rate": 0.5,
+             "y_rate_t": 0.1, "y_rate_c": 0.08, "qini": 0.05},
+        ]
+        c.per_file_qini_champion = "NonParamDML"
+        c.per_file_qini_hist_name = "AFF"
+        c.per_file_qini_models = {
+            "NonParamDML": {"a.parquet": 0.05, "GESAMT": 0.05},
+            "SLearner": {"a.parquet": 0.02, "GESAMT": None},
+            "AFF": {"a.parquet": 0.04, "GESAMT": 0.03},
+        }
+        out = tmp_path / "r2.html"
+        generate_html_report(c, str(out))
+        h = out.read_text(encoding="utf-8")
+        assert "Qini NonParamDML (Champion)" in h and "Qini AFF (historisch)" in h
+        assert "alle Modelle" in h and "SLearner" in h and "0.0400" in h
