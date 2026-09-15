@@ -1450,7 +1450,9 @@ class AnalysisPipeline:
                 int(np.asarray(eval_mask).sum()), len(X),
             )
 
+        self._eval_scores_ctx_full = {}  # mname -> (y, t, score) UNMASKIERT (für Train-Zeilen der Je-Datei-Qini)
         for mname, dfp in preds.items():
+            _dfp_full = dfp
             # ── Train Many, Evaluate Some: Nur Eval-Zeilen für Metriken ──
             if eval_mask is not None and holdout_data is None:
                 dfp = dfp.loc[eval_mask].reset_index(drop=True)
@@ -1488,6 +1490,12 @@ class AnalysisPipeline:
                     s = dfp[pred_col].to_numpy()
                     curve = uplift_curve(y=y, t=t, score=s)
                     self._eval_scores_ctx[mname] = (y, t, s)
+                    _pc = f"Predictions_{mname}"
+                    if _pc in _dfp_full.columns:
+                        self._eval_scores_ctx_full[mname] = (
+                            _dfp_full["Y"].to_numpy(), _dfp_full["T"].to_numpy(),
+                            _dfp_full[_pc].to_numpy(),
+                        )
                     eval_summary[mname] = {
                         "qini": float(qini_coefficient(curve)),
                         "auuc": float(auuc(curve)),
@@ -2025,26 +2033,51 @@ class AnalysisPipeline:
         if not os.path.exists(fs_path):
             return {}
         fs = pd.read_parquet(fs_path)["file_source"].astype(str).to_numpy()
+        fs_full, tmes_mask = fs, None
         if len(fs) != len(y):
             _mask = getattr(self, "_eval_scores_mask", None)
             if _mask is not None and len(_mask) == len(fs) and int(_mask.sum()) == len(y):
                 # TMES: Eval-Arrays sind das Masken-Subset — Zuordnung darauf
-                # ausrichten; die Tabelle zeigt dann die EVAL-Dateien.
+                # ausrichten; Train-only-Dateien werden unten aus dem vollen
+                # OOF-Kontext ergänzt (Rolle "Training").
+                tmes_mask = _mask
                 fs = fs[_mask]
             else:
                 self._logger.info("Je-Datei-Qini: Längen-Mismatch file_source=%d vs eval=%d — übersprungen.", len(fs), len(y))
                 return {}
         from rubin.evaluation.uplift_metrics import per_file_qini_rows
         rows = per_file_qini_rows(y, t, score, fs)
+        role_eval = tmes_mask is not None
+        for r in rows:
+            r["role"] = ("Evaluation" if role_eval else "")
+        if tmes_mask is not None:
+            # Train-only-Dateien: Qini auf ihren OOF-Zeilen (= CV-Metrik),
+            # klar als "Training" gekennzeichnet; GESAMT bleibt Eval-basiert.
+            full = (getattr(self, "_eval_scores_ctx_full", {}) or {}).get(champion_name)
+            if full is not None and len(full[0]) == len(fs_full):
+                yf, tf, sf = full
+                train_fs = fs_full[~tmes_mask]
+                if len(train_fs):
+                    tr_rows = per_file_qini_rows(yf[~tmes_mask], tf[~tmes_mask], sf[~tmes_mask], train_fs)
+                    tr_rows = [r for r in tr_rows if r["file"] != "GESAMT"]
+                    for r in tr_rows:
+                        r["role"] = "Training"
+                    rows = [r for r in rows if r["file"] != "GESAMT"] + tr_rows + [r for r in rows if r["file"] == "GESAMT"]
         self._logger.info("Je-Datei-Qini (Champion %s): %s", champion_name,
                           {r["file"]: (round(r["qini"], 4) if r["qini"] is not None else None) for r in rows})
         # Zusätzlich: Qini je Datei für ALLE bewerteten Scores (Modelle + ggf.
         # historischer Score) — für die Vergleichsspalte und die Detail-Tabelle.
         models: dict = {}
+        full_ctx = getattr(self, "_eval_scores_ctx_full", {}) or {}
         for name, (yy, tt, ss) in ctx.items():
             if len(yy) != len(fs):
                 continue
             models[name] = {r["file"]: r["qini"] for r in per_file_qini_rows(yy, tt, ss, fs)}
+            if tmes_mask is not None and name in full_ctx and len(full_ctx[name][0]) == len(fs_full):
+                yf, tf, sf = full_ctx[name]
+                for r in per_file_qini_rows(yf[~tmes_mask], tf[~tmes_mask], sf[~tmes_mask], fs_full[~tmes_mask]):
+                    if r["file"] != "GESAMT":
+                        models[name][r["file"]] = r["qini"]
         hist_name = ""
         try:
             if getattr(cfg.historical_score, "name", None) and cfg.historical_score.name in models:

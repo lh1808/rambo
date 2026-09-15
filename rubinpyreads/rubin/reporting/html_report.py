@@ -395,7 +395,12 @@ def _assessment_card(data, metrics_list, title_override=None):
 
 
 def _render_per_file_qini(collector) -> str:
-    """Qini + Raten je Quelldatei (Champion) — Diagnose gepoolter Experimente."""
+    """Qini + Raten je Quelldatei (Champion) — Diagnose gepoolter Experimente.
+
+    Bedienung: Kernaussage-Banner (Champion vs. historisch), klick-sortierbare
+    Spalten (GESAMT bleibt unten fixiert), Qini-Mini-Balken, Zeilen-Hover,
+    Sticky-Header, tabellarische Ziffern. Ohne JS bleibt die Tabelle statisch
+    nutzbar (progressive enhancement im Stil der Report-Lightbox)."""
     pfq = collector.per_file_qini
     if not pfq:
         return ""
@@ -404,47 +409,137 @@ def _render_per_file_qini(collector) -> str:
     def _fmt_rate(v):
         return "\u2013" if v is None else f"{v:.2%}"
     def _fmt_qini(v):
-        return "\u2013" if v is None else f"{v:.4f}"
+        return ("<span title='unter 50 Beobachtungen je Arm in dieser Datei'>\u2013</span>"
+                if v is None else f"{v:.5f}")
+    _role_badge = {
+        "Training": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#eef2f7;color:#3b556e;white-space:nowrap">Training</span>',
+        "Evaluation": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#fff3cd;color:#856404;white-space:nowrap">Evaluation</span>',
+    }
     models = collector.per_file_qini_models or {}
     hist = collector.per_file_qini_hist_name or ""
     champ = collector.per_file_qini_champion or ""
     hist_map = models.get(hist, {}) if hist else {}
+    has_role = any(r.get("role") for r in pfq)
+    file_rows = [r for r in pfq if r["file"] != "GESAMT"]
+    total_rows = [r for r in pfq if r["file"] == "GESAMT"]
+    max_abs_q = max([abs(r["qini"]) for r in pfq if r["qini"] is not None] or [0.0])
+
+    # Kernaussage-Banner: auf wie vielen Dateien schlägt der Champion den historischen Score?
+    banner = ""
+    if hist:
+        # Kernaussage nur über die belastbaren EVALUATION-Zeilen (Training ist Kontext)
+        _cmp_rows = [r for r in file_rows if not has_role or r.get("role") != "Training"]
+        comp = [(r["qini"], hist_map.get(r["file"])) for r in _cmp_rows]
+        comp = [(q, h) for q, h in comp if q is not None and h is not None]
+        wins = sum(1 for q, h in comp if q > h)
+        if comp:
+            tone = ("#e8f5ec", "#1a7f37") if wins == len(comp) else (("#fef2f2", "#cf222e") if wins == 0 else ("#fffbeb", "#856404"))
+            suffix = " (Evaluation)" if has_role else ""
+            banner = (
+                f"<div style='display:inline-block;margin-bottom:10px;padding:6px 14px;border-radius:8px;"
+                f"background:{tone[0]};color:{tone[1]};font-weight:600'>"
+                f"{_esc(champ)} schl\u00e4gt {_esc(hist)} auf {wins} von {len(comp)} Dateien{suffix}</div>"
+            )
+
+    def _bar(q):
+        if q is None or max_abs_q <= 0:
+            return ""
+        w = max(2, int(round(56 * abs(q) / max_abs_q)))
+        color = "#6B0D15" if q >= 0 else "#cf222e"
+        return (f"<span style='display:inline-block;vertical-align:middle;margin-left:8px;height:8px;"
+                f"width:{w}px;border-radius:4px;background:{color};opacity:.75'></span>")
+
+    def _delta_cell(q, h):
+        if q is None or h is None:
+            return "<td style='text-align:right' data-v='-inf'>\u2013</td>"
+        d = q - h
+        color = "#1a7f37" if d > 0 else ("#cf222e" if d < 0 else "#57606a")
+        sign = "+" if d > 0 else ""
+        return f"<td style='text-align:right;color:{color};font-weight:600' data-v='{d}'>{sign}{d:.5f}</td>"
+
+    def _num_td(v, fmt, extra=""):
+        dv = "-inf" if v is None else str(v)
+        return f"<td style='text-align:right' data-v='{dv}'>{fmt(v)}{extra}</td>"
+
+    def _row_html(r, total=False):
+        cls = " class='pfq-total'" if total else ""
+        name_cell = ("<strong>GESAMT" + (" (Evaluation)" if has_role else "") + "</strong>") if total else _esc(r["file"])
+        role_cell = ""
+        if has_role:
+            role_cell = "<td>" + ("" if total else _role_badge.get(r.get("role", ""), "")) + "</td>"
+        h_q = hist_map.get(r["file"])
+        hist_cells = (_num_td(h_q, _fmt_qini) + _delta_cell(r["qini"], h_q)) if hist else ""
+        return (
+            f"<tr{cls}><td data-v='{_esc(r['file'])}'>{name_cell}</td>{role_cell}"
+            + _num_td(r["n"], lambda v: f"{v:,}")
+            + _num_td(r["treat_rate"], _fmt_rate)
+            + _num_td(r["y_rate_t"], _fmt_rate)
+            + _num_td(r["y_rate_c"], _fmt_rate)
+            + _num_td(r["qini"], _fmt_qini, extra=_bar(r["qini"]))
+            + hist_cells + "</tr>"
+        )
+
+    body = "".join(_row_html(r) for r in file_rows) + "".join(_row_html(r, total=True) for r in total_rows)
+    role_head = "<th>Rolle</th>" if has_role else ""
+    hist_head = (f"<th class='pfq-s'>Qini {_esc(hist)}</th><th class='pfq-s'>\u0394 Champion \u2212 {_esc(hist)}</th>") if hist else ""
     champ_label = _esc(champ) if champ else "Champion"
-    hist_head = f"<th>Qini {_esc(hist)} (historisch)</th>" if hist else ""
-    rows = "".join(
-        f"<tr><td>{_esc(r['file'])}</td><td style='text-align:right'>{r['n']:,}</td>"
-        f"<td style='text-align:right'>{_fmt_rate(r['treat_rate'])}</td>"
-        f"<td style='text-align:right'>{_fmt_rate(r['y_rate_t'])}</td>"
-        f"<td style='text-align:right'>{_fmt_rate(r['y_rate_c'])}</td>"
-        f"<td style='text-align:right'>{_fmt_qini(r['qini'])}</td>"
-        + (f"<td style='text-align:right'>{_fmt_qini(hist_map.get(r['file']))}</td>" if hist else "")
-        + "</tr>"
-        for r in pfq
+    note_train = (
+        " Zeilen mit Rolle <em>Training</em> sind auf den leakage-freien OOF-Predictions der jeweiligen"
+        " Datei gerechnet (wie Cross-Validation); die GESAMT-Zeile und die Report-Hauptmetriken beziehen"
+        " sich auf die Evaluation." if has_role else ""
     )
     html = (
-        "<p class='muted'>Diagnose bei gepoolten Experimenten: Stark unterschiedliche Basisraten oder"
-        " deutlich auseinanderlaufende Qini-Werte zwischen den Dateien deuten auf heterogene Experimente"
-        " (Perioden-Effekte, unterschiedliche Treatments) hin \u2014 der gepoolte Score ist dann mit"
-        " Vorsicht zu interpretieren. \u2013 bei Qini: zu wenige Beobachtungen je Arm in dieser Datei.</p>"
-        f"<table><thead><tr><th>Datei</th><th>N</th><th>Treatment-Rate</th>"
-        f"<th>Y-Rate (Treatment)</th><th>Y-Rate (Control)</th><th>Qini {champ_label} (Champion)</th>{hist_head}</tr></thead>"
-        f"<tbody>{rows}</tbody></table>"
+        "<style>"
+        "#pfq-tbl{font-variant-numeric:tabular-nums}"
+        "#pfq-tbl thead th{position:sticky;top:0;background:#fff;z-index:1}"
+        "#pfq-tbl thead th.pfq-s{cursor:pointer;user-select:none}"
+        "#pfq-tbl thead th.pfq-s:hover{color:#6B0D15}"
+        "#pfq-tbl tbody tr:hover{background:#faf6f6}"
+        "#pfq-tbl tbody tr.pfq-total{background:#faf6f6;font-weight:600;border-top:2px solid #d0c8c9}"
+        "#pfq-tbl tbody tr.pfq-total:hover{background:#f3ecec}"
+        "</style>"
+        + banner +
+        "<p class='muted' style='max-width:900px'>Diagnose bei gepoolten Experimenten: Stark unterschiedliche"
+        " Basisraten oder deutlich auseinanderlaufende Qini-Werte zwischen den Dateien deuten auf heterogene"
+        " Experimente (Perioden-Effekte, unterschiedliche Treatments) hin \u2014 der gepoolte Score ist dann"
+        " mit Vorsicht zu interpretieren. \u2013 bei Qini: zu wenige Beobachtungen je Arm (Tooltip)."
+        + note_train +
+        " Spalten mit \u21c5 sind per Klick sortierbar; die GESAMT-Zeile bleibt unten.</p>"
+        f"<table id='pfq-tbl'><thead><tr><th class='pfq-s'>Datei</th>{role_head}<th class='pfq-s'>N</th>"
+        f"<th class='pfq-s'>Treatment-Rate</th><th class='pfq-s'>Y-Rate (Treatment)</th>"
+        f"<th class='pfq-s'>Y-Rate (Control)</th><th class='pfq-s'>Qini {champ_label}</th>{hist_head}</tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        "<script>(function(){var t=document.getElementById('pfq-tbl');if(!t)return;"
+        "var dir={};t.querySelectorAll('thead th.pfq-s').forEach(function(th){"
+        "th.innerHTML+=' \u21c5';"
+        "th.addEventListener('click',function(){"
+        "var idx=Array.prototype.indexOf.call(th.parentNode.children,th);"
+        "var tb=t.tBodies[0];var rows=Array.prototype.slice.call(tb.rows);"
+        "var tot=rows.filter(function(r){return r.classList.contains('pfq-total')});"
+        "rows=rows.filter(function(r){return !r.classList.contains('pfq-total')});"
+        "dir[idx]=!dir[idx];var asc=dir[idx];"
+        "rows.sort(function(a,b){var av=a.cells[idx].getAttribute('data-v'),bv=b.cells[idx].getAttribute('data-v');"
+        "var an=av==='-inf'?-Infinity:parseFloat(av),bn=bv==='-inf'?-Infinity:parseFloat(bv);"
+        "if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;"
+        "return asc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));});"
+        "rows.concat(tot).forEach(function(r){tb.appendChild(r)});});});})();</script>"
     )
     other = {m: q for m, q in models.items() if m not in (champ,)}
     if other:
         files = [r["file"] for r in pfq]
         mnames = sorted(other.keys())
         head = "".join(f"<th>{_esc(m)}{' (historisch)' if m == hist else ''}</th>" for m in mnames)
-        body = "".join(
-            "<tr><td>" + _esc(f) + "</td>"
-            + "".join(f"<td style='text-align:right'>{_fmt_qini(other[m].get(f))}</td>" for m in mnames)
+        obody = "".join(
+            "<tr><td>" + (_esc(f) if f != "GESAMT" else "<strong>GESAMT</strong>") + "</td>"
+            + "".join(f"<td style='text-align:right'>{('\u2013' if other[m].get(f) is None else format(other[m].get(f), '.5f'))}</td>" for m in mnames)
             + "</tr>"
             for f in files
         )
         html += (
-            "<details style='margin-top:10px'><summary>Qini je Datei \u2014 alle Modelle</summary>"
-            f"<table style='margin-top:8px'><thead><tr><th>Datei</th>{head}</tr></thead>"
-            f"<tbody>{body}</tbody></table></details>"
+            "<details style='margin-top:12px'><summary style='cursor:pointer;font-weight:600'>Qini je Datei"
+            " \u2014 alle Modelle</summary>"
+            f"<table style='margin-top:8px;font-variant-numeric:tabular-nums'><thead><tr><th>Datei</th>{head}</tr></thead>"
+            f"<tbody>{obody}</tbody></table></details>"
         )
     return html
 
@@ -1496,11 +1591,6 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     if _het_html:
         _sec("heterogeneity", "Heterogenität", _het_html)
 
-    # ── 1c. Qini je Quelldatei (Champion) ──
-    _pfq_html = _render_per_file_qini(collector)
-    if _pfq_html:
-        _sec("per_file_qini", "Qini je Quelldatei", _pfq_html)
-
     # ── 2. Datengrundlage ──
     _sec("data", "Datengrundlage", _render_data(collector, ds, eds, is_external, _is_tmes))
 
@@ -1542,6 +1632,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     if collector.model_metrics:
         _nav_label("Ergebnisse")
         _sec("comparison", "Modellvergleich", _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_tmes))
+
+    # ── 6b. Qini je Quelldatei (Champion) — Vertiefung des Modellvergleichs ──
+    _pfq_html = _render_per_file_qini(collector)
+    if _pfq_html:
+        _sec("per_file_qini", "Qini je Quelldatei", _pfq_html)
 
     # ── 7. Modell-Details ──
     # Sortierung: gleiche Reihenfolge wie im Modellvergleich (Ranking nach Selektionsmetrik)

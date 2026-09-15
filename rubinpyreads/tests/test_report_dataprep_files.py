@@ -112,7 +112,12 @@ class TestPerFileQini:
         out = tmp_path / "r.html"
         generate_html_report(c, str(out))
         h = out.read_text(encoding="utf-8")
-        assert "Qini je Quelldatei" in h and "f&lt;1&gt;.parquet" in h and "0.0100" in h
+        assert "Qini je Quelldatei" in h and "f&lt;1&gt;.parquet" in h and "0.01000" in h
+        # Position: Vertiefung des Modellvergleichs — NACH der Datengrundlage
+        # (Regression gegen Zurückrutschen an den Report-Anfang)
+        assert h.find('id="data"') < h.find('id="per_file_qini"')
+        # CV-Fall: keine TMES-Rollen-Artefakte
+        assert "GESAMT (Evaluation)" not in h and ">Training</span>" not in h
 
     def test_report_renders_historical_column_and_all_models_details(self, tmp_path):
         from rubin.reporting.html_report import ReportCollector, generate_html_report
@@ -133,8 +138,10 @@ class TestPerFileQini:
         out = tmp_path / "r2.html"
         generate_html_report(c, str(out))
         h = out.read_text(encoding="utf-8")
-        assert "Qini NonParamDML (Champion)" in h and "Qini AFF (historisch)" in h
-        assert "alle Modelle" in h and "SLearner" in h and "0.0400" in h
+        assert "Qini NonParamDML" in h and "Qini AFF" in h
+        # Bedienungs-Elemente: Kernaussage-Banner, Sortier-Attribute, fixierte GESAMT-Zeile
+        assert "schl\u00e4gt AFF auf" in h and "pfq-s" in h and "pfq-total" in h
+        assert "alle Modelle" in h and "SLearner" in h and "0.04000" in h
 
 
 class TestPerFileQiniTmes:
@@ -163,14 +170,50 @@ class TestPerFileQiniTmes:
         )
         cfg = SimpleNamespace(data_files=SimpleNamespace(x_file=str(tmp_path / "X.parquet")),
                               historical_score=SimpleNamespace(name=None))
+        fake._eval_scores_ctx_full = {}
         res = AnalysisPipeline._compute_per_file_qini(fake, cfg, "Champ")
         assert [r["file"] for r in res["rows"]] == ["eval_b.parquet", "eval_c.parquet", "GESAMT"]
+        assert all(r["role"] == "Evaluation" for r in res["rows"])
         assert res["rows"][2]["n"] == n_eval
         # Konsistenz-Anker: GESAMT-Qini der Sektion == direkter Qini auf (y,t,score)
         from rubin.evaluation.uplift_metrics import qini_coefficient, uplift_curve
         y2, t2, s2 = fake._eval_scores_ctx["Champ"]
         expected = float(qini_coefficient(uplift_curve(y=y2, t=t2, score=s2)))
         assert abs(res["rows"][2]["qini"] - expected) < 1e-12
+
+    def test_tmes_includes_train_only_files_with_role(self, tmp_path):
+        """Train-only-Dateien erscheinen mit Rolle "Training" (Qini auf ihren
+        leakage-freien OOF-Zeilen); Eval-Dateien und GESAMT bleiben Eval-basiert."""
+        import numpy as np
+        import pandas as pd
+        import logging
+        from types import SimpleNamespace
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        rng = np.random.default_rng(1)
+        n_full = 300
+        fs_full = np.array(["train_a.parquet"] * 180 + ["eval_b.parquet"] * 120)
+        mask = np.zeros(n_full, dtype=bool)
+        mask[180:] = True
+        pd.DataFrame({"file_source": fs_full}).to_parquet(tmp_path / "file_source.parquet")
+        y = (rng.random(n_full) < 0.1).astype(float)
+        t = (rng.random(n_full) > 0.5).astype(int)
+        sc = rng.normal(size=n_full)
+        fake = SimpleNamespace(
+            _logger=logging.getLogger("t"),
+            _eval_scores_ctx={"Champ": (y[mask], t[mask], sc[mask])},
+            _eval_scores_ctx_full={"Champ": (y, t, sc)},
+            _eval_scores_mask=mask,
+        )
+        cfg = SimpleNamespace(data_files=SimpleNamespace(x_file=str(tmp_path / "X.parquet")),
+                              historical_score=SimpleNamespace(name=None),
+                              data_processing=SimpleNamespace(validate_on="cross"))
+        res = AnalysisPipeline._compute_per_file_qini(fake, cfg, "Champ")
+        assert [(r["file"], r["role"]) for r in res["rows"]] == [
+            ("eval_b.parquet", "Evaluation"), ("train_a.parquet", "Training"), ("GESAMT", "Evaluation")]
+        from rubin.evaluation.uplift_metrics import qini_coefficient, uplift_curve
+        exp = float(qini_coefficient(uplift_curve(y=y[~mask], t=t[~mask], score=sc[~mask])))
+        tr = [r for r in res["rows"] if r["role"] == "Training"][0]
+        assert abs(tr["qini"] - exp) < 1e-12 and tr["n"] == 180
 
     def test_external_guard_disables_section(self, tmp_path):
         import numpy as np
