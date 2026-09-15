@@ -135,3 +135,54 @@ class TestPerFileQini:
         h = out.read_text(encoding="utf-8")
         assert "Qini NonParamDML (Champion)" in h and "Qini AFF (historisch)" in h
         assert "alle Modelle" in h and "SLearner" in h and "0.0400" in h
+
+
+class TestPerFileQiniTmes:
+    def test_tmes_mask_aligns_file_source_to_eval_files(self, tmp_path):
+        """TMES: Eval-Arrays sind das Masken-Subset — die volle file_source-
+        Zuordnung wird auf die Maske ausgerichtet; die Tabelle zeigt die
+        EVAL-Dateien (realer Vorfall: Sektion fehlte bei TMES-Läufen komplett,
+        weil der Längen-Check konservativ übersprang)."""
+        import numpy as np
+        import pandas as pd
+        import logging
+        from types import SimpleNamespace
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        rng = np.random.default_rng(1)
+        n_full, n_eval = 300, 120
+        fs_full = np.array(["train_a.parquet"] * 180 + ["eval_b.parquet"] * 60 + ["eval_c.parquet"] * 60)
+        mask = np.zeros(n_full, dtype=bool)
+        mask[180:] = True
+        pd.DataFrame({"file_source": fs_full}).to_parquet(tmp_path / "file_source.parquet")
+        y = (rng.random(n_eval) < 0.1).astype(float)
+        t = (rng.random(n_eval) > 0.5).astype(int)
+        fake = SimpleNamespace(
+            _logger=logging.getLogger("t"),
+            _eval_scores_ctx={"Champ": (y, t, rng.normal(size=n_eval))},
+            _eval_scores_mask=mask,
+        )
+        cfg = SimpleNamespace(data_files=SimpleNamespace(x_file=str(tmp_path / "X.parquet")),
+                              historical_score=SimpleNamespace(name=None))
+        res = AnalysisPipeline._compute_per_file_qini(fake, cfg, "Champ")
+        assert [r["file"] for r in res["rows"]] == ["eval_b.parquet", "eval_c.parquet", "GESAMT"]
+        assert res["rows"][2]["n"] == n_eval
+        # Konsistenz-Anker: GESAMT-Qini der Sektion == direkter Qini auf (y,t,score)
+        from rubin.evaluation.uplift_metrics import qini_coefficient, uplift_curve
+        y2, t2, s2 = fake._eval_scores_ctx["Champ"]
+        expected = float(qini_coefficient(uplift_curve(y=y2, t=t2, score=s2)))
+        assert abs(res["rows"][2]["qini"] - expected) < 1e-12
+
+    def test_external_guard_disables_section(self, tmp_path):
+        import numpy as np
+        import pandas as pd
+        import logging
+        from types import SimpleNamespace
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        pd.DataFrame({"file_source": ["a"] * 5 + ["b"] * 5}).to_parquet(tmp_path / "file_source.parquet")
+        fake = SimpleNamespace(_logger=logging.getLogger("t"),
+                               _eval_scores_ctx={"C": (np.zeros(10), np.zeros(10, int), np.zeros(10))},
+                               _eval_scores_mask=None)
+        cfg = SimpleNamespace(data_files=SimpleNamespace(x_file=str(tmp_path / "X.parquet")),
+                              historical_score=SimpleNamespace(name=None),
+                              data_processing=SimpleNamespace(validate_on="external"))
+        assert AnalysisPipeline._compute_per_file_qini(fake, cfg, "C") == {}

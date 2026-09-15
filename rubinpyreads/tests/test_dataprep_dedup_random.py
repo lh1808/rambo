@@ -60,6 +60,38 @@ class TestDedupRandomAcrossFiles:
         fs = pd.read_parquet(tmp_path / "fs" / "out" / "file_source.parquet")["file_source"]
         assert len(fs) == len(X) and fs.nunique() == 2
 
+    def test_file_source_uses_filenames_and_survives_tmes(self, tmp_path):
+        """Zuordnung trägt Dateinamen (nicht Indizes) und ist bei TMES VOLL
+        (X wird ungesplittet gespeichert; die Analyse richtet über die Maske
+        aus). Realer Vorfall: Indizes '0'/'1' statt Namen."""
+        import numpy as np
+        import yaml
+        tmp = tmp_path / "tm"
+        tmp.mkdir()
+        ids = np.arange(80)
+        for j, name in enumerate(["f1.csv", "f2.csv"]):
+            pd.DataFrame({"KUNDE_ID": ids + j * 1000, "ALTER": 30 + j, "BEITRAG": 100.0,
+                          "T": (ids % 2), "Y": ((ids // 2) % 2)}).to_csv(tmp / name, index=False)
+        outd = tmp / "out"
+        outd.mkdir()
+        cfg = {"mlflow": {"experiment_name": "t"},
+               "constants": {"SEED": 7, "work_dir": str(tmp / "runs")},
+               "data_files": {"x_file": str(outd / "X.parquet"),
+                              "y_file": str(outd / "Y.parquet"),
+                              "t_file": str(outd / "T.parquet")},
+               "data_prep": {"data_path": [str(tmp / "f1.csv"), str(tmp / "f2.csv")],
+                             "output_path": str(outd), "target": "Y", "treatment": "T",
+                             "features": ["ALTER", "BEITRAG"], "eval_file_index": 1,
+                             "score_name": None, "log_to_mlflow": False}}
+        p = tmp / "c.yml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        DataPrepPipeline.from_config_path(str(p)).run()
+        X = pd.read_parquet(outd / "X.parquet")
+        fs = pd.read_parquet(outd / "file_source.parquet")["file_source"]
+        mask = np.load(outd / "eval_mask.npy").astype(bool)
+        assert len(X) == len(fs) == len(mask) == 160
+        assert set(fs[mask]) == {"f2.csv"} and set(fs[~mask]) == {"f1.csv"}
+
     def test_different_seed_changes_selection(self, tmp_path):
         X1 = _run(tmp_path, "c1", seed=7)
         X2 = _run(tmp_path, "c2", seed=8)

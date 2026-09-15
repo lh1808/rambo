@@ -1274,6 +1274,12 @@ class AnalysisPipeline:
         fitted_tester_bt wird für Surrogate-DRTester weiterverwendet."""
         eval_summary: Dict[str, Dict[str, float]] = {}
         self._eval_scores_ctx = {}  # mname -> (y, t, score) für Je-Datei-Qini
+        # Bei TMES sind die Eval-Arrays das Masken-Subset — die Maske erlaubt
+        # später das Ausrichten der vollen file_source-Zuordnung darauf.
+        self._eval_scores_mask = (
+            np.asarray(eval_mask).astype(bool)
+            if (eval_mask is not None and holdout_data is None) else None
+        )
         policy_values_dict: Dict[str, pd.DataFrame] = {}
         is_mt = is_multi_treatment(T)
         _is_rct = getattr(cfg, "study_type", "rct") == "rct"
@@ -2006,14 +2012,28 @@ class AnalysisPipeline:
         ctx = getattr(self, "_eval_scores_ctx", {}) or {}
         if champion_name not in ctx:
             return {}
+        # External-Eval: Die Metriken laufen auf dem Holdout-Datensatz — die
+        # file_source-Zuordnung beschreibt aber die TRAININGS-Dateien. Eine
+        # Aufschlüsselung wäre semantisch falsch → Sektion bewusst aus.
+        try:
+            if str(getattr(cfg.data_processing, "validate_on", "cross")).lower() == "external":
+                return {}
+        except Exception:
+            pass
         y, t, score = ctx[champion_name]
         fs_path = os.path.join(os.path.dirname(str(cfg.data_files.x_file)), "file_source.parquet")
         if not os.path.exists(fs_path):
             return {}
         fs = pd.read_parquet(fs_path)["file_source"].astype(str).to_numpy()
         if len(fs) != len(y):
-            self._logger.info("Je-Datei-Qini: Längen-Mismatch file_source=%d vs eval=%d — übersprungen.", len(fs), len(y))
-            return {}
+            _mask = getattr(self, "_eval_scores_mask", None)
+            if _mask is not None and len(_mask) == len(fs) and int(_mask.sum()) == len(y):
+                # TMES: Eval-Arrays sind das Masken-Subset — Zuordnung darauf
+                # ausrichten; die Tabelle zeigt dann die EVAL-Dateien.
+                fs = fs[_mask]
+            else:
+                self._logger.info("Je-Datei-Qini: Längen-Mismatch file_source=%d vs eval=%d — übersprungen.", len(fs), len(y))
+                return {}
         from rubin.evaluation.uplift_metrics import per_file_qini_rows
         rows = per_file_qini_rows(y, t, score, fs)
         self._logger.info("Je-Datei-Qini (Champion %s): %s", champion_name,

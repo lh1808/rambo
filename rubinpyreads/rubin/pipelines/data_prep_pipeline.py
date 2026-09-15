@@ -750,7 +750,16 @@ class DataPrepPipeline:
         # rechnen kann (Diagnose bei gepoolten, heterogenen Experimenten).
         self._file_source_vals = None
         if "__file_source__" in df.columns:
-            _fs = df["__file_source__"].astype(str)
+            import os as _os
+            # __file_source__ trägt den Datei-INDEX — für lesbare Report-Zeilen
+            # auf den Dateinamen (Basename aus data_prep.data_path) mappen.
+            _paths = [str(p) for p in (dp.data_path or [])]
+            def _label(v):
+                sv = str(v)
+                if sv.isdigit() and int(sv) < len(_paths):
+                    return _os.path.basename(_paths[int(sv)])
+                return _os.path.basename(sv) or sv
+            _fs = df["__file_source__"].map(_label)
             if _fs.nunique() > 1:
                 self._file_source_vals = _fs.tolist()
             df = df.drop(columns=["__file_source__"])
