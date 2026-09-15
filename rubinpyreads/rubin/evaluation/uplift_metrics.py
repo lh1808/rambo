@@ -673,3 +673,40 @@ def mt_eval_summary(
     result["best_treatment_distribution"] = dist
 
     return result
+
+
+def per_file_qini_rows(y, t, score, file_source, min_arm: int = 50):
+    """Qini + Raten je Quelldatei (Diagnose bei gepoolten Experimenten).
+
+    Gepoolte Qini kann Schein-Uplift belohnen, der nur Datei-Zugehörigkeit
+    (Perioden-Niveaus) erkennt; diese Aufschlüsselung macht Heterogenität
+    zwischen Experimenten sichtbar. Gibt eine Liste von Zeilen-Dicts zurück
+    (eine je Datei, sortiert, plus "GESAMT"); qini ist None, wenn ein Arm
+    innerhalb der Datei weniger als min_arm Beobachtungen hat.
+    """
+    import numpy as _np
+    y = _np.asarray(y, dtype=float)
+    t = _np.asarray(t)
+    score = _np.asarray(score, dtype=float)
+    fs = _np.asarray(file_source)
+    rows = []
+
+    def _row(label, m):
+        yy, tt, ss = y[m], t[m], score[m]
+        t_mask = tt == 1
+        n_t, n_c = int(t_mask.sum()), int((~t_mask).sum())
+        q = None
+        if min(n_t, n_c) >= min_arm:
+            q = float(qini_coefficient(uplift_curve(y=yy, t=tt.astype(int), score=ss)))
+        return {
+            "file": str(label), "n": int(m.sum()),
+            "treat_rate": (n_t / max(1, n_t + n_c)),
+            "y_rate_t": (float(yy[t_mask].mean()) if n_t else None),
+            "y_rate_c": (float(yy[~t_mask].mean()) if n_c else None),
+            "qini": q,
+        }
+
+    for label in sorted(_np.unique(fs).tolist()):
+        rows.append(_row(label, fs == label))
+    rows.append(_row("GESAMT", _np.ones(len(y), dtype=bool)))
+    return rows

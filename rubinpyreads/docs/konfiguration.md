@@ -230,7 +230,7 @@ data_prep:
   die zwischen Use Cases variieren.
 - In der Praxis ist es wichtig, dass diese Parameter *nicht* als Code-"Globals" gepflegt werden,
 
-**Deduplizierung:** Wenn `deduplicate: true`, wird der Datensatz direkt nach dem Einlesen auf einen Eintrag pro `deduplicate_id_column` reduziert (erster Eintrag wird behalten). Dies geschieht *vor* der Feature-Reduktion über das Feature-Dictionary, da die ID-Spalte typischerweise kein Feature ist. Anzahl entfernter Duplikate wird geloggt.
+**Deduplizierung:** Wenn `deduplicate: true`, wird der Datensatz direkt nach dem Einlesen auf einen Eintrag pro `deduplicate_id_column` reduziert (je ID wird ein zufälliger Vertreter behalten — seed-reproduzierbar, siehe unten). Dies geschieht *vor* der Feature-Reduktion über das Feature-Dictionary, da die ID-Spalte typischerweise kein Feature ist. Anzahl entfernter Duplikate wird geloggt.
 
 **MLflow-Logging:** Bei `log_to_mlflow: true` wird ein eigener MLflow-Run mit zufällig generiertem Namen erzeugt (z. B. „Datenaufbereitung – roter-falke"). Experiment-Name und Run-Name werden als `.mlflow_experiment` und `.mlflow_run_name` im Output-Verzeichnis persistiert. Die Web-UI übernimmt den Experiment-Namen automatisch auf die Konfigurationsseite.
 

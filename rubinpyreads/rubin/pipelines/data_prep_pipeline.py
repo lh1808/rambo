@@ -744,8 +744,15 @@ class DataPrepPipeline:
                         _idx_str, n_eval, n_total, n_eval / max(n_total, 1) * 100,
                     )
 
-        # __file_source__ aufräumen
+        # __file_source__ aufräumen — Zuordnung vorher puffern: Sie wird beim
+        # Save als file_source.parquet neben X/Y/T abgelegt (falls mehrere
+        # Dateien), damit die Analyse eine Qini-Aufschlüsselung JE QUELLDATEI
+        # rechnen kann (Diagnose bei gepoolten, heterogenen Experimenten).
+        self._file_source_vals = None
         if "__file_source__" in df.columns:
+            _fs = df["__file_source__"].astype(str)
+            if _fs.nunique() > 1:
+                self._file_source_vals = _fs.tolist()
             df = df.drop(columns=["__file_source__"])
 
         _progress("Feature-Extraktion")
@@ -976,6 +983,13 @@ class DataPrepPipeline:
         preproc.dtypes_after = Xp.dtypes.apply(lambda x: x.name).to_dict()
         try:
             Xp.to_parquet(out_dir / "X.parquet")
+            _fsv = getattr(self, "_file_source_vals", None)
+            if _fsv is not None:
+                if len(_fsv) == len(Xp):
+                    pd.DataFrame({"file_source": _fsv}, index=Xp.index).to_parquet(out_dir / "file_source.parquet")
+                    self._logger.info("file_source.parquet gespeichert (%d Zeilen, %d Dateien) — ermöglicht Qini je Quelldatei im Report.", len(_fsv), len(set(_fsv)))
+                else:
+                    self._logger.info("file_source-Zuordnung übersprungen (Längen-Mismatch %d != %d).", len(_fsv), len(Xp))
         except ImportError as e:
             raise ImportError(
                 "X.parquet konnte nicht geschrieben werden, weil kein Parquet-Engine verfügbar ist. "

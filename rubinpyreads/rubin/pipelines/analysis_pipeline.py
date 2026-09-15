@@ -1273,6 +1273,7 @@ class AnalysisPipeline:
         Returns: (eval_summary, policy_values_dict, fitted_tester_bt)
         fitted_tester_bt wird für Surrogate-DRTester weiterverwendet."""
         eval_summary: Dict[str, Dict[str, float]] = {}
+        self._eval_scores_ctx = {}  # mname -> (y, t, score) für Je-Datei-Qini
         policy_values_dict: Dict[str, pd.DataFrame] = {}
         is_mt = is_multi_treatment(T)
         _is_rct = getattr(cfg, "study_type", "rct") == "rct"
@@ -1480,6 +1481,7 @@ class AnalysisPipeline:
                 if pred_col in dfp.columns:
                     s = dfp[pred_col].to_numpy()
                     curve = uplift_curve(y=y, t=t, score=s)
+                    self._eval_scores_ctx[mname] = (y, t, s)
                     eval_summary[mname] = {
                         "qini": float(qini_coefficient(curve)),
                         "auuc": float(auuc(curve)),
@@ -1843,6 +1845,7 @@ class AnalysisPipeline:
         eval_y = holdout_data[2] if holdout_data is not None else (Y[eval_mask] if use_mask else Y)
         eval_t = holdout_data[1] if holdout_data is not None else (T[eval_mask] if use_mask else T)
         curve_h = uplift_curve(y=eval_y, t=eval_t, score=hist_score)
+        self._eval_scores_ctx[hist_name] = (np.asarray(eval_y), np.asarray(eval_t), np.asarray(hist_score, dtype=float))
         eval_summary[hist_name] = {
             "qini": float(qini_coefficient(curve_h)),
             "auuc": float(auuc(curve_h)),
@@ -1994,6 +1997,41 @@ class AnalysisPipeline:
         if champion is None and entries:
             champion = entries[0].name
         return champion
+
+    def _compute_per_file_qini(self, cfg, champion_name):
+        """Qini + Raten je Quelldatei für den Champion — nur wenn DataPrep
+        eine file_source.parquet neben den X/Y/T-Artefakten abgelegt hat
+        (mehrere Eingangsdateien) und die Länge zum Eval-Kontext passt."""
+        import os
+        ctx = getattr(self, "_eval_scores_ctx", {}) or {}
+        if champion_name not in ctx:
+            return {}
+        y, t, score = ctx[champion_name]
+        fs_path = os.path.join(os.path.dirname(str(cfg.data_files.x_file)), "file_source.parquet")
+        if not os.path.exists(fs_path):
+            return {}
+        fs = pd.read_parquet(fs_path)["file_source"].astype(str).to_numpy()
+        if len(fs) != len(y):
+            self._logger.info("Je-Datei-Qini: Längen-Mismatch file_source=%d vs eval=%d — übersprungen.", len(fs), len(y))
+            return {}
+        from rubin.evaluation.uplift_metrics import per_file_qini_rows
+        rows = per_file_qini_rows(y, t, score, fs)
+        self._logger.info("Je-Datei-Qini (Champion %s): %s", champion_name,
+                          {r["file"]: (round(r["qini"], 4) if r["qini"] is not None else None) for r in rows})
+        # Zusätzlich: Qini je Datei für ALLE bewerteten Scores (Modelle + ggf.
+        # historischer Score) — für die Vergleichsspalte und die Detail-Tabelle.
+        models: dict = {}
+        for name, (yy, tt, ss) in ctx.items():
+            if len(yy) != len(fs):
+                continue
+            models[name] = {r["file"]: r["qini"] for r in per_file_qini_rows(yy, tt, ss, fs)}
+        hist_name = ""
+        try:
+            if getattr(cfg.historical_score, "name", None) and cfg.historical_score.name in models:
+                hist_name = str(cfg.historical_score.name)
+        except Exception:
+            pass
+        return {"rows": rows, "models": models, "hist_name": hist_name, "champion": champion_name}
 
     def _compute_heterogeneity_assessment(self, cfg, eval_summary, champion_name):
         """Bewertet die gefundene Heterogenität und den historischen Vergleich.
@@ -3979,6 +4017,17 @@ class AnalysisPipeline:
                     except Exception:
                         pass
 
+                # ── Qini je Quelldatei (Champion) — Diagnose gepoolter Experimente ──
+                if report.champion_name:
+                    try:
+                        _pfq = self._compute_per_file_qini(cfg, report.champion_name)
+                        if _pfq:
+                            report.per_file_qini = _pfq["rows"]
+                            report.per_file_qini_models = _pfq["models"]
+                            report.per_file_qini_hist_name = _pfq["hist_name"]
+                            report.per_file_qini_champion = _pfq["champion"]
+                    except Exception as _e:
+                        self._logger.info("Je-Datei-Qini übersprungen: %s", _e)
                 # ── Heterogeneity Assessment ──
                 if eval_summary and report.champion_name:
                     try:

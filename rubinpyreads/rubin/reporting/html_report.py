@@ -94,6 +94,10 @@ class ReportCollector:
     explainability_info: Dict[str, Any] = field(default_factory=dict)
     ate_barplot: str = ""  # Base64-encoded ATE Barplot
     heterogeneity_assessment: Dict[str, Any] = field(default_factory=dict)
+    per_file_qini: List[Dict[str, Any]] = field(default_factory=list)
+    per_file_qini_models: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    per_file_qini_hist_name: str = ""
+    per_file_qini_champion: str = ""
     step_durations: Dict[str, float] = field(default_factory=dict)
     total_elapsed: float = 0.0
     dataprep_info: Dict[str, Any] = field(default_factory=dict)
@@ -388,6 +392,61 @@ def _assessment_card(data, metrics_list, title_override=None):
 
     card += '</div></div>'
     return card
+
+
+def _render_per_file_qini(collector) -> str:
+    """Qini + Raten je Quelldatei (Champion) — Diagnose gepoolter Experimente."""
+    pfq = collector.per_file_qini
+    if not pfq:
+        return ""
+    def _esc(x):
+        return str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _fmt_rate(v):
+        return "\u2013" if v is None else f"{v:.2%}"
+    def _fmt_qini(v):
+        return "\u2013" if v is None else f"{v:.4f}"
+    models = collector.per_file_qini_models or {}
+    hist = collector.per_file_qini_hist_name or ""
+    champ = collector.per_file_qini_champion or ""
+    hist_map = models.get(hist, {}) if hist else {}
+    champ_label = _esc(champ) if champ else "Champion"
+    hist_head = f"<th>Qini {_esc(hist)} (historisch)</th>" if hist else ""
+    rows = "".join(
+        f"<tr><td>{_esc(r['file'])}</td><td style='text-align:right'>{r['n']:,}</td>"
+        f"<td style='text-align:right'>{_fmt_rate(r['treat_rate'])}</td>"
+        f"<td style='text-align:right'>{_fmt_rate(r['y_rate_t'])}</td>"
+        f"<td style='text-align:right'>{_fmt_rate(r['y_rate_c'])}</td>"
+        f"<td style='text-align:right'>{_fmt_qini(r['qini'])}</td>"
+        + (f"<td style='text-align:right'>{_fmt_qini(hist_map.get(r['file']))}</td>" if hist else "")
+        + "</tr>"
+        for r in pfq
+    )
+    html = (
+        "<p class='muted'>Diagnose bei gepoolten Experimenten: Stark unterschiedliche Basisraten oder"
+        " deutlich auseinanderlaufende Qini-Werte zwischen den Dateien deuten auf heterogene Experimente"
+        " (Perioden-Effekte, unterschiedliche Treatments) hin \u2014 der gepoolte Score ist dann mit"
+        " Vorsicht zu interpretieren. \u2013 bei Qini: zu wenige Beobachtungen je Arm in dieser Datei.</p>"
+        f"<table><thead><tr><th>Datei</th><th>N</th><th>Treatment-Rate</th>"
+        f"<th>Y-Rate (Treatment)</th><th>Y-Rate (Control)</th><th>Qini {champ_label} (Champion)</th>{hist_head}</tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+    other = {m: q for m, q in models.items() if m not in (champ,)}
+    if other:
+        files = [r["file"] for r in pfq]
+        mnames = sorted(other.keys())
+        head = "".join(f"<th>{_esc(m)}{' (historisch)' if m == hist else ''}</th>" for m in mnames)
+        body = "".join(
+            "<tr><td>" + _esc(f) + "</td>"
+            + "".join(f"<td style='text-align:right'>{_fmt_qini(other[m].get(f))}</td>" for m in mnames)
+            + "</tr>"
+            for f in files
+        )
+        html += (
+            "<details style='margin-top:10px'><summary>Qini je Datei \u2014 alle Modelle</summary>"
+            f"<table style='margin-top:8px'><thead><tr><th>Datei</th>{head}</tr></thead>"
+            f"<tbody>{body}</tbody></table></details>"
+        )
+    return html
 
 
 def _render_heterogeneity(collector) -> str:
@@ -1436,6 +1495,11 @@ def generate_html_report(collector: ReportCollector, output_path: str) -> str:
     _het_html = _render_heterogeneity(collector)
     if _het_html:
         _sec("heterogeneity", "Heterogenität", _het_html)
+
+    # ── 1c. Qini je Quelldatei (Champion) ──
+    _pfq_html = _render_per_file_qini(collector)
+    if _pfq_html:
+        _sec("per_file_qini", "Qini je Quelldatei", _pfq_html)
 
     # ── 2. Datengrundlage ──
     _sec("data", "Datengrundlage", _render_data(collector, ds, eds, is_external, _is_tmes))

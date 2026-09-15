@@ -716,7 +716,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Bereinigung</div>
           <Row>
             <Col>
-              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren (keep=first). Verhindert Leakage bei Cross-Prediction."/>
+              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction."/>
               {dp.dedup&&<Inp label="ID-Spalte" value={dp.dedupCol||""} onChange={v=>setDp(prev=>({...prev,dedupCol:v}))} placeholder="PARTNER_ID"/>}
             </Col>
             {hasMulti && <Col>
