@@ -229,3 +229,111 @@ class TestPerFileQiniTmes:
                               historical_score=SimpleNamespace(name=None),
                               data_processing=SimpleNamespace(validate_on="external"))
         assert AnalysisPipeline._compute_per_file_qini(fake, cfg, "C") == {}
+
+
+class TestHistoricalScoreColumnFallback:
+    """Realer Vorfall: Der historische Vergleich fehlte "häufig" im Report.
+    Wurzel: historical_score.column zeigte auf den Original-Spaltennamen der
+    Rohdaten, DataPrep schreibt S.parquet aber immer mit Spalte "S" — der
+    Score wurde mit bloßer Log-Warnung ignoriert, und mit ihm verschwanden
+    ALLE Anzeigen (Modellvergleichs-Zeile, Heterogenitäts-Vergleich,
+    Qini-je-Datei-Spalte), da alle an eval_summary[hist_name] hängen."""
+
+    def test_exact_column_wins(self):
+        import logging
+        import pandas as pd
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        df = pd.DataFrame({"S": [1.0], "OTHER": [2.0]})
+        assert AnalysisPipeline._pick_score_column(df, "S", logging.getLogger("t")) == "S"
+
+    def test_single_column_fallback_rescues_wrong_name(self):
+        import logging
+        import pandas as pd
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        df = pd.DataFrame({"S": [1.0, 2.0]})
+        assert AnalysisPipeline._pick_score_column(df, "AFFINITAET", logging.getLogger("t")) == "S"
+
+    def test_ambiguous_multi_column_still_ignored(self):
+        import logging
+        import pandas as pd
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        df = pd.DataFrame({"A": [1.0], "B": [2.0]})
+        assert AnalysisPipeline._pick_score_column(df, "AFFINITAET", logging.getLogger("t")) is None
+
+
+class TestModelVsHistQiniDecoupled:
+    """Realer Vorfall: Der "Modell vs. historischer Score"-Qini-Plot erschien
+    nur beim SurrogateTree. Wurzel: Der Je-Modell-Loop hing im selben try wie
+    die DRTester-Bundle-Erzeugung des historischen Scores — ein bundle_h-Fehler
+    riss alle Modell-Vergleichsplots mit (der Surrogate-Block ist eigenständig
+    und überlebte). Jetzt: eigene Methode, eigener try je Modell."""
+
+    def _mk(self, n=300, seed=0):
+        import numpy as np
+        import pandas as pd
+        rng = np.random.default_rng(seed)
+        y = (rng.random(n) < 0.12).astype(float)
+        t = (rng.random(n) > 0.5).astype(int)
+        preds = {
+            "NonParamDML": pd.DataFrame({"Y": y, "T": t, "Predictions_NonParamDML": rng.normal(size=n)}),
+            "Kaputt": pd.DataFrame({"Y": y, "T": t, "Predictions_Kaputt": [float("nan")] * n}),
+        }
+        return preds, rng.normal(size=n)
+
+    def test_each_model_gets_plot_and_broken_model_is_isolated(self):
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import matplotlib
+        matplotlib.use("Agg")
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        from rubin.reporting.html_report import ReportCollector
+        preds, hist = self._mk()
+        fake = SimpleNamespace(_logger=logging.getLogger("t"), _report=ReportCollector())
+        AnalysisPipeline._plot_models_vs_hist_qini(fake, preds, hist, "AFF", None, MagicMock())
+        assert "qini_vs_AFF" in fake._report.model_plots.get("NonParamDML", {})
+
+    def test_tmes_mask_path_renders(self):
+        import numpy as np
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import matplotlib
+        matplotlib.use("Agg")
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        from rubin.reporting.html_report import ReportCollector
+        preds, hist = self._mk()
+        mask = np.zeros(300, dtype=bool)
+        mask[:180] = True
+        fake = SimpleNamespace(_logger=logging.getLogger("t"), _report=ReportCollector())
+        AnalysisPipeline._plot_models_vs_hist_qini(fake, preds, hist[mask], "AFF", mask, MagicMock())
+        assert "qini_vs_AFF" in fake._report.model_plots.get("NonParamDML", {})
+
+
+class TestHistUpliftBasics:
+    """Realer Vorfall: Der historische Score hatte im Report gar keine
+    Analyseplots. Standard-Uplift-Plots (Qini-Kurve, Percentile, bei RCT
+    Treatment-Balance) hingen für den hist-Score komplett am fehleranfälligen
+    DRTester-Bundle — jetzt eigene, bundle-unabhängige Erzeugung mit eigenem
+    Fehler-Scope (analog Phase 3 der Modelle)."""
+
+    def test_hist_gets_full_plot_card_rct_gating(self):
+        import numpy as np
+        import logging
+        import matplotlib
+        matplotlib.use("Agg")
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        from rubin.reporting.html_report import ReportCollector
+        rng = np.random.default_rng(0)
+        n = 300
+        y = (rng.random(n) < 0.12).astype(float)
+        t = (rng.random(n) > 0.5).astype(int)
+        hist = rng.integers(1, 11, n).astype(float)
+        for is_rct in (True, False):
+            fake = SimpleNamespace(_logger=logging.getLogger("t"), _report=ReportCollector())
+            AnalysisPipeline._plot_hist_uplift_basics(fake, "AFF", hist, y, t, is_rct, MagicMock())
+            keys = fake._report.model_plots.get("AFF", {})
+            assert "uplift_qini" in keys and "uplift_percentile" in keys
+            assert ("treatment_balance" in keys) == is_rct

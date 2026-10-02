@@ -96,3 +96,42 @@ class TestDedupRandomAcrossFiles:
         X1 = _run(tmp_path, "c1", seed=7)
         X2 = _run(tmp_path, "c2", seed=8)
         assert X1["ALTER"].tolist() != X2["ALTER"].tolist()
+
+
+class TestEvalMaskMlflowLogging:
+    def test_mask_and_file_source_logged_as_artifacts(self, tmp_path):
+        """Realer Vorfall: eval_mask.npy war in den mlflow-Logs nicht auffindbar —
+        TMES-Maske und Datei-Zuordnung werden jetzt als Run-Artefakte geloggt
+        (die geloggten Predictions enthalten ALLE Zeilen; erst die Maske macht
+        das Eval-Subset im Nachhinein rekonstruierbar)."""
+        import os
+        import numpy as np
+        import yaml
+        import mlflow
+        uri = f"sqlite:///{tmp_path / 'ml.db'}"
+        os.environ["MLFLOW_TRACKING_URI"] = uri
+        mlflow.set_tracking_uri(uri)
+        rng = np.random.default_rng(3)
+        for name in ["train_a.csv", "eval_b.csv"]:
+            pd.DataFrame({"ALTER": rng.integers(18, 80, 60), "BEITRAG": 100.0,
+                          "T": rng.integers(0, 2, 60), "Y": rng.integers(0, 2, 60)}
+                         ).to_csv(tmp_path / name, index=False)
+        outd = tmp_path / "out"
+        outd.mkdir()
+        cfg = {"mlflow": {"experiment_name": "mask_log_test"},
+               "constants": {"SEED": 1, "work_dir": str(tmp_path / "runs")},
+               "data_files": {"x_file": str(outd / "X.parquet"),
+                              "y_file": str(outd / "Y.parquet"),
+                              "t_file": str(outd / "T.parquet")},
+               "data_prep": {"data_path": [str(tmp_path / "train_a.csv"), str(tmp_path / "eval_b.csv")],
+                             "output_path": str(outd), "target": "Y", "treatment": "T",
+                             "features": ["ALTER", "BEITRAG"], "eval_file_index": 1,
+                             "score_name": None, "log_to_mlflow": True}}
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        DataPrepPipeline.from_config_path(str(p)).run()
+        client = mlflow.tracking.MlflowClient()
+        exp = client.get_experiment_by_name("mask_log_test")
+        run = client.search_runs(exp.experiment_id, order_by=["attributes.start_time DESC"])[0]
+        arts = {a.path for a in client.list_artifacts(run.info.run_id)}
+        assert "eval_mask.npy" in arts and "file_source.parquet" in arts

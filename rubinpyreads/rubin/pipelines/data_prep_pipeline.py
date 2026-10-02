@@ -1141,6 +1141,12 @@ class DataPrepPipeline:
             ]
             if S is not None:
                 artifact_files.append("S.parquet")
+            # TMES-Maske und Datei-Zuordnung mitloggen (falls erzeugt) — sonst ist
+            # im Nachhinein nicht aus den Logs rekonstruierbar, welche Zeilen der
+            # Evaluation dienten bzw. aus welcher Quelldatei sie stammen.
+            for _extra in ("eval_mask.npy", "file_source.parquet"):
+                if (out_dir / _extra).exists():
+                    artifact_files.append(_extra)
             if has_eval:
                 artifact_files.extend(["X_eval.parquet", "T_eval.parquet", "Y_eval.parquet"])
                 if (out_dir / "S_eval.parquet").exists():

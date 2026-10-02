@@ -175,14 +175,9 @@ class AnalysisPipeline:
         S_df: Optional[pd.DataFrame] = None
         if self.cfg.data_files.s_file:
             try:
-                col = self.cfg.historical_score.column
                 S_df = self._read_table(self.cfg.data_files.s_file)
-                if col not in S_df.columns:
-                    self._logger.warning(
-                        "Historischer Score: Spalte '%s' nicht in s_file gefunden. "
-                        "Verfügbare Spalten: %s. Score wird ignoriert.",
-                        col, list(S_df.columns)[:10],
-                    )
+                col = self._pick_score_column(S_df, self.cfg.historical_score.column, self._logger)
+                if col is None:
                     S_df = None
                 else:
                     S = S_df[col].to_numpy(dtype=float)
@@ -232,7 +227,7 @@ class AnalysisPipeline:
             Y = Y_df["Y"].loc[idx].to_numpy()
             if S is not None and S_df is not None:
                 try:
-                    col = self.cfg.historical_score.column
+                    col = self._pick_score_column(S_df, self.cfg.historical_score.column, self._logger) or self.cfg.historical_score.column
                     S = S_df[col].loc[idx].to_numpy(dtype=float)
                     S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
                 except Exception:
@@ -372,6 +367,31 @@ class AnalysisPipeline:
             )
 
         return X, T, Y, S, eval_mask
+
+    @staticmethod
+    def _pick_score_column(S_df, wanted: str, logger) -> "Optional[str]":
+        """Spalte des historischen Scores wählen. DataPrep schreibt S.parquet
+        IMMER mit Spalte "S" — wenn der konfigurierte Name fehlt, die Datei
+        aber genau eine Spalte hat, wird diese mit Info-Log verwendet statt
+        den Vergleich still zu verlieren (realer Vorfall: historischer
+        Vergleich fehlte im Report, weil als column der Original-Spaltenname
+        der Rohdaten eingetragen war)."""
+        if wanted in S_df.columns:
+            return wanted
+        if len(S_df.columns) == 1:
+            only = str(S_df.columns[0])
+            logger.info(
+                "Historischer Score: Spalte '%s' nicht gefunden — nutze die einzige Spalte '%s' der s_file.",
+                wanted, only,
+            )
+            return only
+        logger.warning(
+            "Historischer Score: Spalte '%s' nicht in s_file gefunden. "
+            "Verfügbare Spalten: %s. Score wird ignoriert — der historische "
+            "Vergleich fehlt dadurch im Report.",
+            wanted, list(S_df.columns)[:10],
+        )
+        return None
 
     def _validate_treatment_arms(self, T: np.ndarray, context: str = "Trainingsdaten") -> None:
         """Fail-fast-Validierung der Treatment-Arme gegen ``treatment.type``.
@@ -1701,6 +1721,14 @@ class AnalysisPipeline:
         if hist_score_eval is not None and is_mt:
             self._logger.info("Historischer Score (S) vorhanden, wird aber bei Multi-Treatment übersprungen.")
 
+        if hist_score_eval is None and getattr(cfg.data_files, "s_file", None):
+            self._logger.warning(
+                "Historischer Vergleich ENTFÄLLT, obwohl s_file konfiguriert ist (%s) — "
+                "der Score konnte nicht geladen werden (siehe frühere Warnung zu Spalte '%s'). "
+                "Dadurch fehlen im Report: Zeile im Modellvergleich, historischer Teil der "
+                "Heterogenitäts-Sektion und die Vergleichsspalte in 'Qini je Quelldatei'.",
+                cfg.data_files.s_file, cfg.historical_score.column,
+            )
         if hist_score_eval is not None and not is_mt:
             eval_summary, policy_values_dict = self._evaluate_historical_score(
                 cfg, X, T, Y, holdout_data, preds, hist_score_eval, eval_summary, policy_values_dict, mlflow,
@@ -1843,6 +1871,51 @@ class AnalysisPipeline:
 
         return eval_summary, policy_values_dict
 
+    def _plot_hist_uplift_basics(self, hist_name, hist_score, eval_y, eval_t, is_rct, mlflow):
+        """Standard-Uplift-Plots (Qini-Kurve, Uplift-by-Percentile, bei RCT
+        Treatment-Balance) für den HISTORISCHEN Score — bundle-unabhängig,
+        damit der Score im Report eine vollwertige Plot-Karte hat, auch wenn
+        der DRTester-Block scheitert (realer Vorfall: historischer Score ohne
+        jeden Analyseplot im Report)."""
+        import matplotlib.pyplot as plt
+        try:
+            sk_qini, sk_pct, sk_tb = generate_uplift_plots(np.asarray(hist_score, dtype=float), np.asarray(eval_t), np.asarray(eval_y))
+            if not is_rct:
+                sk_tb = None
+            for fig, key in [(sk_qini, "uplift_qini"), (sk_pct, "uplift_percentile"), (sk_tb, "treatment_balance")]:
+                if fig is None:
+                    continue
+                _log_figure_fast(mlflow, fig, f"{key}__{hist_name}.png")
+                if hasattr(self, '_report'):
+                    self._report.add_plot(hist_name, key, fig)
+                plt.close(fig)
+        except Exception:
+            self._logger.warning("Uplift-Plots für historischen Score %s fehlgeschlagen.", hist_name, exc_info=True)
+
+    def _plot_models_vs_hist_qini(self, preds, hist_score, hist_name, eval_mask, mlflow):
+        """Custom-Qini "Modell vs. historischer Score" je Modell — eigener
+        Fehler-Scope pro Modell, entkoppelt vom DRTester-Block."""
+        import matplotlib.pyplot as plt
+        from rubin.evaluation.score_plots import plot_custom_qini_curve
+        for mname, dfp in preds.items():
+            pred_col = f"Predictions_{mname}"
+            if pred_col not in dfp.columns:
+                continue
+            try:
+                dfp_cmp = dfp.loc[eval_mask].reset_index(drop=True) if eval_mask is not None else dfp
+                df_cmp = pd.DataFrame({
+                    "Y": dfp_cmp["Y"].to_numpy(), "T": dfp_cmp["T"].to_numpy(),
+                    mname: dfp_cmp[pred_col].to_numpy(dtype=float), hist_name: hist_score,
+                })
+                fig, ax = plt.subplots(figsize=(10, 6))
+                plot_custom_qini_curve(data=df_cmp, causal_score_label=mname, affinity_score_label=hist_name, ax=ax, relative_axes=True)
+                _log_figure_fast(mlflow, fig, f"custom_qini__{mname}_vs_{hist_name}.png")
+                if hasattr(self, '_report'):
+                    self._report.add_plot(mname, f"qini_vs_{hist_name}", fig)
+                plt.close(fig)
+            except Exception:
+                self._logger.warning("Qini-Vergleich vs. historischen Score für %s fehlgeschlagen.", mname, exc_info=True)
+
     def _evaluate_historical_score(self, cfg, X, T, Y, holdout_data, preds, hist_score_eval, eval_summary, policy_values_dict, mlflow, fitted_tester=None, eval_mask=None):
         """Vergleich der kausalen Modelle gegen einen historischen Score."""
         import matplotlib.pyplot as plt
@@ -1867,6 +1940,10 @@ class AnalysisPipeline:
             "uplift_at_20pct": float(uplift_at_k(curve_h, k_fraction=0.20)),
             "uplift_at_50pct": float(uplift_at_k(curve_h, k_fraction=0.50)),
         }
+        # Standard-Uplift-Plots für den historischen Score — bewusst VOR dem
+        # DRTester-Block und mit eigenem Fehler-Scope (bundle-unabhängig).
+        self._plot_hist_uplift_basics(hist_name, hist_score, eval_y, eval_t,
+                                      getattr(cfg, "study_type", "rct") == "rct", mlflow)
         if getattr(cfg, "study_type", "rct") == "rct":
             # Politik-Schwelle für den historischen Score: Median statt 0.
             # threshold=0.0 ist nur für CATE-Skalen sinnvoll (natürlicher
@@ -1952,24 +2029,13 @@ class AnalysisPipeline:
                 bundle_h.add_to_report(self._report, hist_name)
             bundle_h.close_figures()
 
-            for mname, dfp in preds.items():
-                pred_col = f"Predictions_{mname}"
-                if pred_col not in dfp.columns:
-                    continue
-                # Bei eval_mask: preds auf Eval-Subset filtern
-                dfp_cmp = dfp.loc[eval_mask].reset_index(drop=True) if use_mask else dfp
-                df_cmp = pd.DataFrame({
-                    "Y": dfp_cmp["Y"].to_numpy(), "T": dfp_cmp["T"].to_numpy(),
-                    mname: dfp_cmp[pred_col].to_numpy(dtype=float), hist_name: hist_score,
-                })
-                fig, ax = plt.subplots(figsize=(10, 6))
-                plot_custom_qini_curve(data=df_cmp, causal_score_label=mname, affinity_score_label=hist_name, ax=ax, relative_axes=True)
-                _log_figure_fast(mlflow, fig, f"custom_qini__{mname}_vs_{hist_name}.png")
-                if hasattr(self, '_report'):
-                    self._report.add_plot(mname, f"qini_vs_{hist_name}", fig)
-                plt.close(fig)
         except Exception:
             self._logger.warning("DRTester/Uplift-Plots für historischen Score fehlgeschlagen.", exc_info=True)
+        # Je-Modell-Vergleichsplots UNABHÄNGIG vom DRTester-Block erzeugen:
+        # Ein bundle_h-Fehler (Bootstrap/Tester) darf nicht alle
+        # "Modell vs. historisch"-Qini-Plots mitreißen (realer Vorfall:
+        # Vergleich erschien nur beim SurrogateTree, dessen Block eigenständig ist).
+        self._plot_models_vs_hist_qini(preds, hist_score, hist_name, eval_mask if use_mask else None, mlflow)
 
         try:
             hist_pv = policy_values_dict.get(hist_name)
@@ -3546,6 +3612,15 @@ class AnalysisPipeline:
                 if dp_cfg_path.is_file():
                     mlflow.log_artifact(str(dp_cfg_path))
                     self._logger.info("DataPrep-Config nach MLflow geloggt: %s", dp_cfg_path)
+                # TMES-Maske + Datei-Zuordnung auch am ANALYSE-Lauf ablegen: Die
+                # geloggten Predictions enthalten ALLE Zeilen — erst diese beiden
+                # Artefakte machen den Lauf selbsterklärend (Eval-Subset = preds[mask],
+                # Wellen-Schnitte via file_source).
+                for _extra in ("eval_mask.npy", "file_source.parquet"):
+                    _p = x_dir / _extra
+                    if _p.is_file():
+                        mlflow.log_artifact(str(_p))
+                        self._logger.info("%s nach MLflow geloggt (Analyse-Lauf): %s", _extra, _p)
             except Exception:
                 pass  # Kein DataPrep-Output → kein Log, kein Fehler
 
