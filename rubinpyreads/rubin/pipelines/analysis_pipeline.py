@@ -944,6 +944,14 @@ class AnalysisPipeline:
             # Bei fehlenden Werten wird das Modell übersprungen.
             if name in ("CausalForestDML", "CausalForest") and has_missing:
                 n_missing_cols = int(X.isnull().any().sum())
+                _missing_cols = [str(c) for c in X.columns[X.isnull().any()][:15]]
+                self._logger.warning(
+                    "%s übersprungen – betroffene Spalten (max. 15): %s. "
+                    "Hinweis: Wenn DataPrep eine Fill-Strategie hatte, sind das "
+                    "typischerweise Spalten, die in den Eingangsdaten KOMPLETT leer "
+                    "waren (siehe missing_values.json bzw. DataPrep-Warnung).",
+                    name, _missing_cols,
+                )
                 self._logger.warning(
                     "%s übersprungen – Daten enthalten fehlende Werte "
                     "(%d Spalten betroffen). GRF-basierte Modelle können keine "

@@ -105,6 +105,27 @@ Dieses Artefakt ist zentral für reproduzierbares Scoring in Production."""
     else:
         fill_vals = {}
 
+    # Robustheit: Für Spalten, die in den Daten KOMPLETT leer sind, liefern
+    # max/mean selbst NaN (und mode gar keinen Wert) — fillna(NaN) wäre ein
+    # No-op und die Spalte bliebe voll NaN. Folge im Downstream: GRF-Modelle
+    # (CausalForest/CausalForestDML) werden wegen "fehlender Werte"
+    # übersprungen, obwohl eine Fill-Strategie konfiguriert war (realer
+    # Vorfall). Deshalb: deterministischer 0.0-Fallback + klare Warnung.
+    import logging as _logging
+    _all_nan_cols = []
+    if fill_na_method:  # nur bei AKTIVER Strategie — None heißt bewusst "NaN behalten"
+        for c in num_cols:
+            v = fill_vals.get(c)
+            if v is None or (isinstance(v, float) and v != v):
+                fill_vals[c] = 0.0
+                _all_nan_cols.append(c)
+    if _all_nan_cols:
+        _logging.getLogger("rubin.preprocessing").warning(
+            "Fill-Strategie '%s': %d Spalte(n) sind in den Daten KOMPLETT leer "
+            "(kein Wert zum Ableiten) — Fallback auf 0.0: %s. Prüfen, ob diese "
+            "Spalten ins Modell gehören (ggf. exclude_features).",
+            fill_na_method, len(_all_nan_cols), _all_nan_cols[:15],
+        )
     for c, v in fill_vals.items():
         X[c] = X[c].fillna(v)
 

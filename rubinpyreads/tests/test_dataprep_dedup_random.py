@@ -135,3 +135,39 @@ class TestEvalMaskMlflowLogging:
         run = client.search_runs(exp.experiment_id, order_by=["attributes.start_time DESC"])[0]
         arts = {a.path for a in client.list_artifacts(run.info.run_id)}
         assert "eval_mask.npy" in arts and "file_source.parquet" in arts
+
+
+class TestAllNanColumnFillFallback:
+    """Realer Vorfall: CausalForest wurde wegen "fehlender Werte" übersprungen,
+    obwohl DataPrep fill_na_method="max" hatte. Wurzel: Für KOMPLETT leere
+    Spalten liefert max/mean selbst NaN (mode gar nichts) — fillna(NaN) ist ein
+    No-op, die Spalte blieb voll NaN. Jetzt: 0.0-Fallback + Warnung."""
+
+    def test_all_nan_column_gets_zero_fallback(self, tmp_path):
+        import numpy as np
+        import yaml
+        import json
+        rng = np.random.default_rng(3)
+        n = 120
+        df = pd.DataFrame({"ALTER": rng.integers(18, 80, n).astype(float),
+                           "LEER": np.nan,
+                           "T": rng.integers(0, 2, n), "Y": rng.integers(0, 2, n)})
+        df.loc[rng.choice(n, 20, replace=False), "ALTER"] = np.nan
+        df.to_csv(tmp_path / "f.csv", index=False)
+        outd = tmp_path / "out"
+        outd.mkdir()
+        cfg = {"mlflow": {"experiment_name": "t"},
+               "constants": {"SEED": 1, "work_dir": str(tmp_path / "runs")},
+               "data_files": {"x_file": str(outd / "X.parquet"),
+                              "y_file": str(outd / "Y.parquet"),
+                              "t_file": str(outd / "T.parquet")},
+               "data_prep": {"data_path": [str(tmp_path / "f.csv")], "output_path": str(outd),
+                             "target": "Y", "treatment": "T", "features": ["ALTER", "LEER"],
+                             "fill_na_method": "max", "score_name": None, "log_to_mlflow": False}}
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        DataPrepPipeline.from_config_path(str(p)).run()
+        X = pd.read_parquet(outd / "X.parquet")
+        assert int(X.isnull().sum().sum()) == 0
+        mv = json.load(open(outd / "missing_values.json"))
+        assert mv.get("LEER") == 0.0 and mv.get("ALTER") == df["ALTER"].max()
