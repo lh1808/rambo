@@ -1738,6 +1738,18 @@ class AnalysisPipeline:
                 cfg.data_files.s_file, cfg.historical_score.column,
             )
         if hist_score_eval is not None and not is_mt:
+            # Full-Kontext des historischen Scores puffern (orientiert, UNMASKIERT):
+            # damit zeigt "Qini je Quelldatei" den historischen Vergleich auch auf
+            # Train-only-Dateien bei TMES (Delta-Spalte + Alle-Modelle-Matrix voll).
+            try:
+                if holdout_data is None and S is not None:
+                    from rubin.evaluation.uplift_metrics import orient_historical_score as _orient
+                    self._eval_scores_ctx_full[str(cfg.historical_score.name)] = (
+                        np.asarray(Y, dtype=float), np.asarray(T),
+                        np.asarray(_orient(S, cfg.historical_score.higher_is_better), dtype=float),
+                    )
+            except Exception:
+                self._logger.warning("Full-Kontext des historischen Scores nicht puffer-bar.", exc_info=True)
             eval_summary, policy_values_dict = self._evaluate_historical_score(
                 cfg, X, T, Y, holdout_data, preds, hist_score_eval, eval_summary, policy_values_dict, mlflow,
                 fitted_tester=fitted_tester_bt, eval_mask=eval_mask)
@@ -2093,18 +2105,21 @@ class AnalysisPipeline:
         import os
         ctx = getattr(self, "_eval_scores_ctx", {}) or {}
         if champion_name not in ctx:
+            self._logger.info("Je-Datei-Qini übersprungen: Champion '%s' nicht im Eval-Score-Kontext (z.B. Multi-Treatment oder Modell ohne Predictions).", champion_name)
             return {}
         # External-Eval: Die Metriken laufen auf dem Holdout-Datensatz — die
         # file_source-Zuordnung beschreibt aber die TRAININGS-Dateien. Eine
         # Aufschlüsselung wäre semantisch falsch → Sektion bewusst aus.
         try:
             if str(getattr(cfg.data_processing, "validate_on", "cross")).lower() == "external":
+                self._logger.info("Je-Datei-Qini übersprungen: validate_on=external (Metriken laufen auf dem Holdout, die Zuordnung beschreibt Trainingsdateien).")
                 return {}
         except Exception:
             pass
         y, t, score = ctx[champion_name]
         fs_path = os.path.join(os.path.dirname(str(cfg.data_files.x_file)), "file_source.parquet")
         if not os.path.exists(fs_path):
+            self._logger.info("Je-Datei-Qini übersprungen: %s nicht vorhanden (DataPrep vor dem Feature-Update oder nur eine Eingangsdatei).", fs_path)
             return {}
         fs = pd.read_parquet(fs_path)["file_source"].astype(str).to_numpy()
         fs_full, tmes_mask = fs, None

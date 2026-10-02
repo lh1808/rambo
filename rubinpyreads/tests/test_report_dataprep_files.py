@@ -53,19 +53,22 @@ class TestDataFileRoles:
         for f in FILES:
             assert f in html          # alle 12 sichtbar
         assert not re.search(r"\(\+\d+\)", html)  # kein Abschneide-Zähler (+N) mehr
-        assert "12 Datei(en) — 12 Training" in html
+        assert "12 Datei(en) — 12 Training + Evaluation" in html
 
-    def test_tmes_marks_masked_files_as_train_plus_eval(self, tmp_path):
+    def test_tmes_marks_masked_files_as_evaluation(self, tmp_path):
+        # Neue Semantik: TMES-Eval-Dateien tragen "Evaluation" (konsistent zur
+        # Qini-je-Quelldatei-Sektion); die Legende erklärt die OOF-Feinheit.
         html = _html(tmp_path, eval_file_index=[10, 11])
         roles = _badges(html)
-        assert roles["batch_10.parquet"] == "Training + Evaluation"
-        assert roles["batch_11.parquet"] == "Training + Evaluation"
+        assert roles["batch_10.parquet"] == "Evaluation"
+        assert roles["batch_11.parquet"] == "Evaluation"
         assert all(roles[f] == "Training" for f in FILES[:10])
-        assert "10 Training, 2 Training + Evaluation" in html
+        assert "10 Training, 2 Evaluation" in html
+        assert "NUR auf diesen Dateien" in html  # Legende
 
     def test_scalar_index_and_external_eval_files(self, tmp_path):
         html = _html(tmp_path, eval_file_index=3, validate_on="cv")
-        assert _badges(html)["batch_03.parquet"] == "Training + Evaluation"
+        assert _badges(html)["batch_03.parquet"] == "Evaluation"
         html = _html(tmp_path, eval_files=["holdout_2025.parquet"], validate_on="external")
         roles = _badges(html)
         assert roles["holdout_2025.parquet"] == "Evaluation"
@@ -76,6 +79,7 @@ class TestDataFileRoles:
         # Pipeline-Verhalten gespiegelt: external ignoriert eine gesetzte Maske
         html = _html(tmp_path, eval_file_index=[5], eval_files=["h.parquet"], validate_on="external")
         assert _badges(html)["batch_05.parquet"] == "Training"
+        assert "12 Training, 1 Evaluation" in html
 
 
 
@@ -141,6 +145,9 @@ class TestPerFileQini:
         assert "Qini NonParamDML" in h and "Qini AFF" in h
         # Bedienungs-Elemente: Kernaussage-Banner, Sortier-Attribute, fixierte GESAMT-Zeile
         assert "schl\u00e4gt AFF auf" in h and "pfq-s" in h and "pfq-total" in h
+        # v3: mittleres Delta im Banner, Uplift-Spalte, GESAMT-Konsistenz-Fußnote
+        assert "\u00d8 \u0394 Qini" in h and "Uplift beob. (pp)" in h
+        assert "identische Rechnung, identische Datenbasis" in h
         assert "alle Modelle" in h and "SLearner" in h and "0.04000" in h
 
 

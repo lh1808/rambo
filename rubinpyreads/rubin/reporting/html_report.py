@@ -397,10 +397,10 @@ def _assessment_card(data, metrics_list, title_override=None):
 def _render_per_file_qini(collector) -> str:
     """Qini + Raten je Quelldatei (Champion) — Diagnose gepoolter Experimente.
 
-    Bedienung: Kernaussage-Banner (Champion vs. historisch), klick-sortierbare
-    Spalten (GESAMT bleibt unten fixiert), Qini-Mini-Balken, Zeilen-Hover,
-    Sticky-Header, tabellarische Ziffern. Ohne JS bleibt die Tabelle statisch
-    nutzbar (progressive enhancement im Stil der Report-Lightbox)."""
+    v3: Kernaussage-Banner mit mittlerem Delta, automatische Interpretation
+    (Basisraten-Spreizung, Qini-Spannweite, Groessen-Dominanz, Training/Eval),
+    Spalte "Uplift beob. (pp)", N mit Anteil, Header-Tooltips, sortierbare
+    Spalten (GESAMT unten fixiert), Qini-Balken, Zebra, Overflow-Container."""
     pfq = collector.per_file_qini
     if not pfq:
         return ""
@@ -411,6 +411,10 @@ def _render_per_file_qini(collector) -> str:
     def _fmt_qini(v):
         return ("<span title='unter 50 Beobachtungen je Arm in dieser Datei'>\u2013</span>"
                 if v is None else f"{v:.5f}")
+    def _uplift_pp(r):
+        if r.get("y_rate_t") is None or r.get("y_rate_c") is None:
+            return None
+        return (r["y_rate_t"] - r["y_rate_c"]) * 100.0
     _role_badge = {
         "Training": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#eef2f7;color:#3b556e;white-space:nowrap">Training</span>',
         "Evaluation": '<span style="font-size:10.5px;padding:1px 8px;border-radius:10px;background:#fff3cd;color:#856404;white-space:nowrap">Evaluation</span>',
@@ -422,32 +426,70 @@ def _render_per_file_qini(collector) -> str:
     has_role = any(r.get("role") for r in pfq)
     file_rows = [r for r in pfq if r["file"] != "GESAMT"]
     total_rows = [r for r in pfq if r["file"] == "GESAMT"]
-    max_abs_q = max([abs(r["qini"]) for r in pfq if r["qini"] is not None] or [0.0])
+    n_sum = sum(r["n"] for r in file_rows) or 1
 
-    # Kernaussage-Banner: auf wie vielen Dateien schlägt der Champion den historischen Score?
+    # ── Kernaussage-Banner (Eval-Basis) + mittleres Delta ──
     banner = ""
+    deltas = []
     if hist:
-        # Kernaussage nur über die belastbaren EVALUATION-Zeilen (Training ist Kontext)
         _cmp_rows = [r for r in file_rows if not has_role or r.get("role") != "Training"]
         comp = [(r["qini"], hist_map.get(r["file"])) for r in _cmp_rows]
         comp = [(q, h) for q, h in comp if q is not None and h is not None]
-        wins = sum(1 for q, h in comp if q > h)
+        deltas = [q - h for q, h in comp]
+        wins = sum(1 for d in deltas if d > 0)
         if comp:
             tone = ("#e8f5ec", "#1a7f37") if wins == len(comp) else (("#fef2f2", "#cf222e") if wins == 0 else ("#fffbeb", "#856404"))
             suffix = " (Evaluation)" if has_role else ""
+            avg_d = sum(deltas) / len(deltas)
             banner = (
                 f"<div style='display:inline-block;margin-bottom:10px;padding:6px 14px;border-radius:8px;"
                 f"background:{tone[0]};color:{tone[1]};font-weight:600'>"
-                f"{_esc(champ)} schl\u00e4gt {_esc(hist)} auf {wins} von {len(comp)} Dateien{suffix}</div>"
+                f"{_esc(champ)} schl\u00e4gt {_esc(hist)} auf {wins} von {len(comp)} Dateien{suffix}"
+                f" &nbsp;\u00b7&nbsp; \u00d8 \u0394 Qini = {'+' if avg_d > 0 else ''}{avg_d:.5f}</div>"
             )
 
-    def _bar(q):
-        if q is None or max_abs_q <= 0:
-            return ""
-        w = max(2, int(round(56 * abs(q) / max_abs_q)))
-        color = "#6B0D15" if q >= 0 else "#cf222e"
-        return (f"<span style='display:inline-block;vertical-align:middle;margin-left:8px;height:8px;"
-                f"width:{w}px;border-radius:4px;background:{color};opacity:.75'></span>")
+    # ── Automatische Interpretation (datengetrieben, 2-4 Punkte) ──
+    notes = []
+    rates_c = [(r["file"], r["y_rate_c"]) for r in file_rows if r.get("y_rate_c") is not None]
+    if len(rates_c) >= 2:
+        lo = min(rates_c, key=lambda x: x[1]); hi = max(rates_c, key=lambda x: x[1])
+        spread_pp = (hi[1] - lo[1]) * 100.0
+        if spread_pp >= 2.0:
+            notes.append(
+                f"Die Basisraten (Control) spreizen um <strong>{spread_pp:.1f} pp</strong>"
+                f" ({_esc(lo[0])}: {_fmt_rate(lo[1])} bis {_esc(hi[0])}: {_fmt_rate(hi[1])})"
+                " \u2014 deutliches Zeichen heterogener Experimente (Perioden/Populationen)."
+            )
+    qinis = [(r["file"], r["qini"]) for r in file_rows if r.get("qini") is not None]
+    if len(qinis) >= 2:
+        qlo = min(qinis, key=lambda x: x[1]); qhi = max(qinis, key=lambda x: x[1])
+        notes.append(
+            f"Qini-Spannweite des Champions: <strong>{qlo[1]:.5f}</strong> ({_esc(qlo[0])})"
+            f" bis <strong>{qhi[1]:.5f}</strong> ({_esc(qhi[0])})."
+            + (" Der Score funktioniert nicht auf allen Dateien gleich gut \u2014 Kandidaten f\u00fcr getrennte Modelle oder Regime-Features pr\u00fcfen." if (qhi[1] > 0 and qlo[1] < 0.5 * qhi[1]) else "")
+        )
+    big = max(file_rows, key=lambda r: r["n"]) if file_rows else None
+    if big is not None and big["n"] / n_sum >= 0.45 and len(file_rows) >= 3:
+        notes.append(
+            f"<strong>{_esc(big['file'])}</strong> stellt {big['n'] / n_sum:.0%} der Zeilen"
+            " \u2014 gepoolte Kennzahlen und das Training werden von dieser Datei dominiert."
+        )
+    if has_role and deltas:
+        tr_cmp = [(r["qini"], hist_map.get(r["file"])) for r in file_rows if r.get("role") == "Training"]
+        tr_deltas = [q - h for q, h in tr_cmp if q is not None and h is not None]
+        if tr_deltas and deltas:
+            avg_tr = sum(tr_deltas) / len(tr_deltas); avg_ev = sum(deltas) / len(deltas)
+            if avg_tr - avg_ev > 0.005:
+                notes.append(
+                    "Auf den Trainings-Dateien liegt der Champion deutlich weiter vor dem historischen Score"
+                    f" (\u00d8 \u0394 {avg_tr:+.5f}) als auf der Evaluation ({avg_ev:+.5f})"
+                    " \u2014 Hinweis auf zeitliche Drift oder Regime-Unterschiede Richtung Eval-Periode."
+                )
+    interp = ""
+    if notes:
+        interp = ("<div style='max-width:900px;margin:4px 0 10px 0;padding:10px 14px;border-left:3px solid #6B0D15;"
+                  "background:#faf6f6;border-radius:0 8px 8px 0'><strong>Lesart dieser Tabelle:</strong><ul style='margin:6px 0 0 18px;padding:0'>"
+                  + "".join(f"<li style='margin:3px 0'>{n}</li>" for n in notes) + "</ul></div>")
 
     def _delta_cell(q, h):
         if q is None or h is None:
@@ -463,52 +505,67 @@ def _render_per_file_qini(collector) -> str:
 
     def _row_html(r, total=False):
         cls = " class='pfq-total'" if total else ""
-        name_cell = ("<strong>GESAMT" + (" (Evaluation)" if has_role else "") + "</strong>") if total else _esc(r["file"])
+        if total:
+            name_cell = ("<strong>GESAMT" + (" (Evaluation)" if has_role else "") + "</strong>")
+        else:
+            fn = _esc(r["file"])
+            name_cell = f"<span style='display:inline-block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom' title='{fn}'>{fn}</span>"
         role_cell = ""
         if has_role:
             role_cell = "<td>" + ("" if total else _role_badge.get(r.get("role", ""), "")) + "</td>"
+        n_txt = (lambda v: f"{v:,}" + ("" if total else f" <span style='color:#8a8a8a;font-size:11px'>({v / n_sum:.0%})</span>"))
+        up = _uplift_pp(r)
+        up_td = ("<td style='text-align:right' data-v='-inf'>\u2013</td>" if up is None
+                 else f"<td style='text-align:right' data-v='{up}'>{up:+.2f}</td>")
         h_q = hist_map.get(r["file"])
         hist_cells = (_num_td(h_q, _fmt_qini) + _delta_cell(r["qini"], h_q)) if hist else ""
         return (
             f"<tr{cls}><td data-v='{_esc(r['file'])}'>{name_cell}</td>{role_cell}"
-            + _num_td(r["n"], lambda v: f"{v:,}")
+            + _num_td(r["n"], n_txt)
             + _num_td(r["treat_rate"], _fmt_rate)
             + _num_td(r["y_rate_t"], _fmt_rate)
             + _num_td(r["y_rate_c"], _fmt_rate)
-            + _num_td(r["qini"], _fmt_qini, extra=_bar(r["qini"]))
+            + up_td
+            + _num_td(r["qini"], _fmt_qini)
             + hist_cells + "</tr>"
         )
 
     body = "".join(_row_html(r) for r in file_rows) + "".join(_row_html(r, total=True) for r in total_rows)
-    role_head = "<th>Rolle</th>" if has_role else ""
-    hist_head = (f"<th class='pfq-s'>Qini {_esc(hist)}</th><th class='pfq-s'>\u0394 Champion \u2212 {_esc(hist)}</th>") if hist else ""
+    role_head = "<th title='Evaluation: Zeilen der Eval-Maske (Report-Hauptmetrik). Training: leakage-freie OOF-Predictions dieser Datei.'>Rolle</th>" if has_role else ""
+    hist_head = ((f"<th class='pfq-s' title='Qini des historischen Scores auf derselben Datei'>Qini {_esc(hist)}</th>"
+                  f"<th class='pfq-s' title='Qini-Differenz Champion minus historischer Score: gr\u00fcn = Champion vorn'>\u0394 Champion \u2212 {_esc(hist)}</th>") if hist else "")
     champ_label = _esc(champ) if champ else "Champion"
-    note_train = (
-        " Zeilen mit Rolle <em>Training</em> sind auf den leakage-freien OOF-Predictions der jeweiligen"
-        " Datei gerechnet (wie Cross-Validation); die GESAMT-Zeile und die Report-Hauptmetriken beziehen"
-        " sich auf die Evaluation." if has_role else ""
-    )
     html = (
         "<style>"
+        "#pfq-wrap{overflow-x:auto}"
         "#pfq-tbl{font-variant-numeric:tabular-nums}"
         "#pfq-tbl thead th{position:sticky;top:0;background:#fff;z-index:1}"
         "#pfq-tbl thead th.pfq-s{cursor:pointer;user-select:none}"
         "#pfq-tbl thead th.pfq-s:hover{color:#6B0D15}"
+        "#pfq-tbl tbody tr:nth-child(even):not(.pfq-total){background:#fcfafa}"
         "#pfq-tbl tbody tr:hover{background:#faf6f6}"
         "#pfq-tbl tbody tr.pfq-total{background:#faf6f6;font-weight:600;border-top:2px solid #d0c8c9}"
         "#pfq-tbl tbody tr.pfq-total:hover{background:#f3ecec}"
         "</style>"
-        + banner +
-        "<p class='muted' style='max-width:900px'>Diagnose bei gepoolten Experimenten: Stark unterschiedliche"
-        " Basisraten oder deutlich auseinanderlaufende Qini-Werte zwischen den Dateien deuten auf heterogene"
-        " Experimente (Perioden-Effekte, unterschiedliche Treatments) hin \u2014 der gepoolte Score ist dann"
-        " mit Vorsicht zu interpretieren. \u2013 bei Qini: zu wenige Beobachtungen je Arm (Tooltip)."
-        + note_train +
-        " Spalten mit \u21c5 sind per Klick sortierbar; die GESAMT-Zeile bleibt unten.</p>"
-        f"<table id='pfq-tbl'><thead><tr><th class='pfq-s'>Datei</th>{role_head}<th class='pfq-s'>N</th>"
-        f"<th class='pfq-s'>Treatment-Rate</th><th class='pfq-s'>Y-Rate (Treatment)</th>"
-        f"<th class='pfq-s'>Y-Rate (Control)</th><th class='pfq-s'>Qini {champ_label}</th>{hist_head}</tr></thead>"
-        f"<tbody>{body}</tbody></table>"
+        + banner + interp +
+        "<p class='muted' style='max-width:900px'>Jede Zeile bewertet den Champion-Score NUR auf den Zeilen"
+        " einer Quelldatei \u2014 so wird sichtbar, ob der gepoolte Qini von einzelnen Experimenten getragen"
+        " wird. \u2013 bei Qini: zu wenige Beobachtungen je Arm (Tooltip). Spalten mit \u21c5 sind per Klick"
+        " sortierbar; die GESAMT-Zeile bleibt unten."
+        + (" Zeilen mit Rolle <em>Training</em> sind auf den leakage-freien OOF-Predictions der jeweiligen"
+           " Datei gerechnet; GESAMT und die Report-Hauptmetriken beziehen sich auf die Evaluation." if has_role else "")
+        + "</p>"
+        f"<div id='pfq-wrap'><table id='pfq-tbl'><thead><tr>"
+        f"<th class='pfq-s'>Datei</th>{role_head}"
+        f"<th class='pfq-s' title='Zeilen dieser Datei (Anteil an allen Tabellen-Zeilen)'>N</th>"
+        f"<th class='pfq-s' title='Anteil Treatment-Zeilen in dieser Datei'>Treatment-Rate</th>"
+        f"<th class='pfq-s' title='Outcome-Rate der Treatment-Gruppe'>Y-Rate (Treatment)</th>"
+        f"<th class='pfq-s' title='Outcome-Rate der Control-Gruppe (Basisrate)'>Y-Rate (Control)</th>"
+        f"<th class='pfq-s' title='Beobachteter Roh-Uplift: Y-Rate Treatment minus Control, in Prozentpunkten'>Uplift beob. (pp)</th>"
+        f"<th class='pfq-s' title='Qini-Koeffizient des Champion-Scores, gerechnet nur auf dieser Datei'>Qini {champ_label}</th>{hist_head}"
+        f"</tr></thead><tbody>{body}</tbody></table></div>"
+        "<p class='muted' style='font-size:11px;margin-top:6px'>Die GESAMT-Zeile entspricht exakt der"
+        " Qini-Hauptmetrik des Champions im Modellvergleich (identische Rechnung, identische Datenbasis).</p>"
         "<script>(function(){var t=document.getElementById('pfq-tbl');if(!t)return;"
         "var dir={};t.querySelectorAll('thead th.pfq-s').forEach(function(th){"
         "th.innerHTML+=' \u21c5';"
@@ -536,8 +593,8 @@ def _render_per_file_qini(collector) -> str:
             for f in files
         )
         html += (
-            "<details style='margin-top:12px'><summary style='cursor:pointer;font-weight:600'>Qini je Datei"
-            " \u2014 alle Modelle</summary>"
+            f"<details style='margin-top:12px'><summary style='cursor:pointer;font-weight:600'>Qini je Datei"
+            f" \u2014 alle Modelle ({len(mnames)})</summary>"
             f"<table style='margin-top:8px;font-variant-numeric:tabular-nums'><thead><tr><th>Datei</th>{head}</tr></thead>"
             f"<tbody>{obody}</tbody></table></details>"
         )
@@ -790,14 +847,25 @@ def _render_dataprep(collector, cs) -> str:
     _eval_idx = set([_efi] if isinstance(_efi, int) else list(_efi)) if _efi is not None else set()
     if str((cs or {}).get("validate_on") or "") == "external":
         _eval_idx = set()
-    _n_te = sum(1 for i in _eval_idx if 0 <= i < len(data_files))
-    _n_t = len(data_files) - _n_te
+    # external (separater Eval-Datensatz) hat Vorrang: ein evtl. klebender
+    # eval_file_index wird ignoriert (Spiegel des Pipeline-Verhaltens).
+    if eval_files:
+        _eval_idx = set()
+    _n_e = sum(1 for i in _eval_idx if 0 <= i < len(data_files))
+    if _eval_idx:
+        _n_t = len(data_files) - _n_e          # TMES: Training / Evaluation
+        _n_te = 0
+    else:
+        _n_t = len(data_files) if eval_files else 0   # external: reine Trainingsdateien
+        _n_te = 0 if eval_files else len(data_files)  # CV: alles Training + Evaluation
     if data_files or eval_files:
         _parts = []
         if _n_t:
             _parts.append(f"{_n_t} Training")
         if _n_te:
             _parts.append(f"{_n_te} Training + Evaluation")
+        if _n_e:
+            _parts.append(f"{_n_e} Evaluation")
         if eval_files:
             _parts.append(f"{len(eval_files)} Evaluation")
         _summary = f"{len(data_files) + len(eval_files)} Datei(en)" + (f" — {', '.join(_parts)}" if _parts else "")
@@ -836,14 +904,34 @@ def _render_dataprep(collector, cs) -> str:
         }
         h += '<h3>Quelldateien nach Rolle</h3>'
         h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 18px;font-size:12.5px">'
+        _has_tmes_idx = bool(_eval_idx)
         for i, f in enumerate(data_files):
-            badge = _b["te"] if i in _eval_idx else _b["t"]
+            # Rollen-Semantik: TMES -> Eval-Index-Dateien sind "Evaluation"
+            # (Metriken nur dort; konsistent zur Sektion "Qini je Quelldatei"),
+            # uebrige "Training". OHNE Eval-Index (Cross-Validation) ist JEDE
+            # Datei Training UND Evaluation (leakage-freie OOF-Predictions) --
+            # ein reines "Training"-Badge waere falsch.
+            if _has_tmes_idx:
+                badge = _b["e"] if i in _eval_idx else _b["t"]
+            elif eval_files:
+                badge = _b["t"]   # external: data_files sind reine Trainingsdateien
+            else:
+                badge = _b["te"]  # Cross-Validation: Training UND Evaluation (OOF)
             h += ('<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0">'
                   f'<span style="overflow-wrap:anywhere">{escape(str(f).rsplit("/", 1)[-1])}</span>{badge}</div>')
         for f in eval_files:
             h += ('<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0">'
                   f'<span style="overflow-wrap:anywhere">{escape(str(f).rsplit("/", 1)[-1])}</span>{_b["e"]}</div>')
         h += '</div>'
+        _leg = []
+        if _has_tmes_idx:
+            _leg.append("<strong>Evaluation</strong>: Alle Report-Metriken werden NUR auf diesen Dateien gerechnet; ihre Zeilen flie\u00dfen zus\u00e4tzlich leakage-frei (Out-of-Fold) ins Training ein.")
+            _leg.append("<strong>Training</strong>: Zeilen dienen nur dem Lernen \u2014 keine Report-Metriken auf diesen Dateien (die Sektion \u201eQini je Quelldatei\u201c zeigt sie separat mit OOF-Qini).")
+        elif eval_files:
+            _leg.append("<strong>Training</strong>: Trainingsdaten. <strong>Evaluation</strong>: separater Eval-Datensatz \u2014 alle Report-Metriken werden dort gerechnet.")
+        else:
+            _leg.append("<strong>Training + Evaluation</strong>: Cross-Validation \u2014 jede Datei dient dem Training UND wird \u00fcber leakage-freie Out-of-Fold-Predictions evaluiert.")
+        h += "<p class='muted' style='font-size:11.5px;margin-top:8px'>" + " ".join(_leg) + "</p>"
     # Verarbeitungsschritte
     processing_steps = []
     fill_na = dpi.get("fill_na_method")
