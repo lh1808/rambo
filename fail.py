@@ -1,118 +1,373 @@
-"""CLI (typer)."""
+clv_pkw.json
 
-import typer
+{
+  "estimator": "lgbm",
+  "outcome": "target",
+  "distribution": "normal",
+  "data": {
+    "path": ".data/train/clv_pkw.parquet"
+  },
+  "sample": "sample",
+  "features": [
+    "age",
+    "n_deckungen",
+    "n_products",
+    "years_since_first_contract",
+    "n_contracts",
+    "share_annual_payment",
+    "any_kombi_bonus",
+    "familienstand",
+    "anzahl_kinder",
+    "online_huk24",
+    "online_hukde",
+    "versandweg_huk24",
+    "n_dunnings",
+    "max_dunning_level",
+    "prev_exposure_CAMPINGFAHRZEUGE|ASSV",
+    "prev_exposure_CAMPINGFAHRZEUGE|FAU",
+    "prev_exposure_CAMPINGFAHRZEUGE|KH",
+    "prev_exposure_CAMPINGFAHRZEUGE|KU",
+    "prev_exposure_CAMPINGFAHRZEUGE|KUFU",
+    "prev_exposure_CAMPINGFAHRZEUGE|SBR",
+    "prev_exposure_CAMPINGFAHRZEUGE|TK",
+    "prev_exposure_CAMPINGFAHRZEUGE|VK",
+    "prev_exposure_KRAFTRAEDER|ASSV",
+    "prev_exposure_KRAFTRAEDER|KH",
+    "prev_exposure_KRAFTRAEDER|KU",
+    "prev_exposure_KRAFTRAEDER|SBR",
+    "prev_exposure_KRAFTRAEDER|TK",
+    "prev_exposure_KRAFTRAEDER|VK",
+    "prev_exposure_PH|AMTS_VERMOEGENS_HAFTPFLICHT_UND_ZUSATZ",
+    "prev_exposure_PH|PLUS",
+    "prev_exposure_PH|PRIVATHAFTPFLICHT",
+    "prev_exposure_PKW|ASSV",
+    "prev_exposure_PKW|FAU",
+    "prev_exposure_PKW|KH",
+    "prev_exposure_PKW|KU",
+    "prev_exposure_PKW|KUFU",
+    "prev_exposure_PKW|SBR",
+    "prev_exposure_PKW|TK",
+    "prev_exposure_PKW|UMD",
+    "prev_exposure_PKW|VK",
+    "prev_exposure_WG|FEUER",
+    "prev_exposure_WG|LEITUNGSWASSER",
+    "prev_exposure_WG|NEBENPRODUKTE",
+    "prev_exposure_WG|STURM",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|ASSV",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|FAU",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|KH",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|KU",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|KUFU",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|SBR",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|TK",
+    "prev_earned_premium_CAMPINGFAHRZEUGE|VK",
+    "prev_earned_premium_KRAFTRAEDER|ASSV",
+    "prev_earned_premium_KRAFTRAEDER|KH",
+    "prev_earned_premium_KRAFTRAEDER|KU",
+    "prev_earned_premium_KRAFTRAEDER|SBR",
+    "prev_earned_premium_KRAFTRAEDER|TK",
+    "prev_earned_premium_KRAFTRAEDER|VK",
+    "prev_earned_premium_PH|AMTS_VERMOEGENS_HAFTPFLICHT_UND_ZUSATZ",
+    "prev_earned_premium_PH|PLUS",
+    "prev_earned_premium_PH|PRIVATHAFTPFLICHT",
+    "prev_earned_premium_PKW|ASSV",
+    "prev_earned_premium_PKW|FAU",
+    "prev_earned_premium_PKW|KH",
+    "prev_earned_premium_PKW|KU",
+    "prev_earned_premium_PKW|KUFU",
+    "prev_earned_premium_PKW|SBR",
+    "prev_earned_premium_PKW|TK",
+    "prev_earned_premium_PKW|UMD",
+    "prev_earned_premium_PKW|VK",
+    "prev_earned_premium_WG|FEUER",
+    "prev_earned_premium_WG|LEITUNGSWASSER",
+    "prev_earned_premium_WG|NEBENPRODUKTE",
+    "prev_earned_premium_WG|STURM",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|ASSV",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|FAU",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|KH",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|KU",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|KUFU",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|SBR",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|TK",
+    "prev_claim_amount_CAMPINGFAHRZEUGE|VK",
+    "prev_claim_amount_KRAFTRAEDER|ASSV",
+    "prev_claim_amount_KRAFTRAEDER|KH",
+    "prev_claim_amount_KRAFTRAEDER|KU",
+    "prev_claim_amount_KRAFTRAEDER|SBR",
+    "prev_claim_amount_KRAFTRAEDER|TK",
+    "prev_claim_amount_KRAFTRAEDER|VK",
+    "prev_claim_amount_PH|AMTS_VERMOEGENS_HAFTPFLICHT_UND_ZUSATZ",
+    "prev_claim_amount_PH|PLUS",
+    "prev_claim_amount_PH|PRIVATHAFTPFLICHT",
+    "prev_claim_amount_PKW|ASSV",
+    "prev_claim_amount_PKW|FAU",
+    "prev_claim_amount_PKW|KH",
+    "prev_claim_amount_PKW|KU",
+    "prev_claim_amount_PKW|KUFU",
+    "prev_claim_amount_PKW|SBR",
+    "prev_claim_amount_PKW|TK",
+    "prev_claim_amount_PKW|UMD",
+    "prev_claim_amount_PKW|VK",
+    "prev_claim_amount_WG|FEUER",
+    "prev_claim_amount_WG|LEITUNGSWASSER",
+    "prev_claim_amount_WG|NEBENPRODUKTE",
+    "prev_claim_amount_WG|STURM",
+    "prev_claim_count_CAMPINGFAHRZEUGE|ASSV",
+    "prev_claim_count_CAMPINGFAHRZEUGE|FAU",
+    "prev_claim_count_CAMPINGFAHRZEUGE|KH",
+    "prev_claim_count_CAMPINGFAHRZEUGE|KU",
+    "prev_claim_count_CAMPINGFAHRZEUGE|KUFU",
+    "prev_claim_count_CAMPINGFAHRZEUGE|SBR",
+    "prev_claim_count_CAMPINGFAHRZEUGE|TK",
+    "prev_claim_count_CAMPINGFAHRZEUGE|VK",
+    "prev_claim_count_KRAFTRAEDER|ASSV",
+    "prev_claim_count_KRAFTRAEDER|KH",
+    "prev_claim_count_KRAFTRAEDER|KU",
+    "prev_claim_count_KRAFTRAEDER|SBR",
+    "prev_claim_count_KRAFTRAEDER|TK",
+    "prev_claim_count_KRAFTRAEDER|VK",
+    "prev_claim_count_PH|AMTS_VERMOEGENS_HAFTPFLICHT_UND_ZUSATZ",
+    "prev_claim_count_PH|PLUS",
+    "prev_claim_count_PH|PRIVATHAFTPFLICHT",
+    "prev_claim_count_PKW|ASSV",
+    "prev_claim_count_PKW|FAU",
+    "prev_claim_count_PKW|KH",
+    "prev_claim_count_PKW|KU",
+    "prev_claim_count_PKW|KUFU",
+    "prev_claim_count_PKW|SBR",
+    "prev_claim_count_PKW|TK",
+    "prev_claim_count_PKW|UMD",
+    "prev_claim_count_PKW|VK",
+    "prev_claim_count_WG|FEUER",
+    "prev_claim_count_WG|LEITUNGSWASSER",
+    "prev_claim_count_WG|NEBENPRODUKTE",
+    "prev_claim_count_WG|STURM",
+    "prev_claim_count_total",
+    "prev_claim_amount_total",
+    "prev_earned_premium_total",
+    "prev_exposure_total",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|ASSV",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|FAU",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|KH",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|KU",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|KUFU",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|SBR",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|TK",
+    "yearly_premium_jan1_CAMPINGFAHRZEUGE|VK",
+    "yearly_premium_jan1_KRAFTRAEDER|ASSV",
+    "yearly_premium_jan1_KRAFTRAEDER|KH",
+    "yearly_premium_jan1_KRAFTRAEDER|KU",
+    "yearly_premium_jan1_KRAFTRAEDER|SBR",
+    "yearly_premium_jan1_KRAFTRAEDER|TK",
+    "yearly_premium_jan1_KRAFTRAEDER|VK",
+    "yearly_premium_jan1_PH|AMTS_VERMOEGENS_HAFTPFLICHT_UND_ZUSATZ",
+    "yearly_premium_jan1_PH|PLUS",
+    "yearly_premium_jan1_PH|PRIVATHAFTPFLICHT",
+    "yearly_premium_jan1_PKW|ASSV",
+    "yearly_premium_jan1_PKW|FAU",
+    "yearly_premium_jan1_PKW|KH",
+    "yearly_premium_jan1_PKW|KU",
+    "yearly_premium_jan1_PKW|KUFU",
+    "yearly_premium_jan1_PKW|SBR",
+    "yearly_premium_jan1_PKW|TK",
+    "yearly_premium_jan1_PKW|UMD",
+    "yearly_premium_jan1_PKW|VK",
+    "yearly_premium_jan1_WG|FEUER",
+    "yearly_premium_jan1_WG|LEITUNGSWASSER",
+    "yearly_premium_jan1_WG|NEBENPRODUKTE",
+    "yearly_premium_jan1_WG|STURM",
+    "yearly_premium_jan1_total"
+  ],
+  "fixed_parameters": {
+    "learning_rate": 0.03,
+    "n_estimators": 400,
+    "num_leaves": 15,
+    "min_child_samples": 200,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8
+  }
+}
 
-app = typer.Typer(help="CLV analysis data pipeline.", no_args_is_help=True)
 
 
-@app.callback()
-def main() -> None:
-    """CLV analysis data pipeline."""
 
 
-def _remainders(value: str | None) -> list[int]:
-    """Parse ``--remainders`` "0,10,20"; None = all of MOD(partner_id, modulo)."""
-    from clv_analysis.config import settings
+"""Kundenwert baseline: da_kundenwert's one-year evaluation of KFZ contracts."""
 
-    if value is None:
-        return list(range(settings.modulo))
-    remainders = [int(r) for r in value.split(",")]
-    if not all(0 <= r < settings.modulo for r in remainders):
-        raise typer.BadParameter(f"remainders must be in 0..{settings.modulo - 1}")
-    return remainders
+from pathlib import Path
+
+import mlflow
+import polars as pl
+import pyarrow.parquet as pq
+from da_kundenwert.config import load_hydra_config
+from da_kundenwert.evaluation import ContractEvaluator
+from da_kundenwert.models import _load_risk_models
+from da_kundenwert.prediction import PurePremiumPredictorKFZ
+from omegaconf import DictConfig
+from tqdm import tqdm
+
+from clv_analysis.config import settings
+from clv_analysis.dwh import scan_raw
+from clv_analysis.expressions import key, product, valid_on_jan1
+from clv_analysis.hf3_etl import dataset
+from clv_analysis.products import Product, Segment, Source
 
 
-@app.command()
-def build(
-    dwh: bool = typer.Option(True, help="Pull raw pieces from the DWH into .data/raw."),
-    hf3: bool = typer.Option(
-        True, help="Aggregate every HF3 partition once into .data/hf3_agg."
-    ),
-    flatfile: bool = typer.Option(
-        True, help="Build one flatfile per remainder into .data/flat."
-    ),
-    remainders: str = typer.Option(
-        None,
-        help="Partner pieces MOD(partner_id, 100) = r, e.g. '0,10,20'. Default: all 100.",
-    ),
-    overwrite: bool = typer.Option(
-        False,
-        help="Redo DWH pieces and flatfile buckets already on disk (default: skip them).",
-    ),
-) -> None:
-    """Run the pipeline: DWH pull, HF3 aggregate, flatfile.
+def model_features(kfz_types: DictConfig, segment: Segment) -> set[str]:
+    """Features of the risk models of ``segment``, over all vehicle types."""
+    features: set[str] = set()
+    for kfz_type, info in kfz_types.items():
+        risk_models = _load_risk_models(kfz_type)
+        run_id = risk_models[info.tariff_gen]["run_id"][segment.upper()][
+            "best_estimate"
+        ]
+        mlflow.set_tracking_uri(risk_models["tracking_uri"])
+        sheet = mlflow.artifacts.load_dict(f"runs:/{run_id}/model/model_sheet.json")
+        features |= set(sheet["features"])
+    return features
 
-    All steps work on ``remainders``. The HF3 step is always rebuilt; the DWH
-    and flatfile steps skip existing files unless ``--overwrite``.
+
+def read_rows(
+    file: Path, year: int, features: set[str], contracts: pl.LazyFrame
+) -> pl.DataFrame:
+    """Rows of one HF3 file valid on 1 Jan with a risk model, with partner_id."""
+    columns = features | {
+        "ve_id",
+        "ve_sparte",
+        "ve_gesellschaft",
+        "ve_wagniskennziffer",
+        "ve_bestandsjahresnettobeitrag",
+        "ve_risiko_beginn",
+        "ve_risiko_ablauf",
+        # model exposure
+        "ve_jahreseinheit_statistikjahr",
+    }
+    return (
+        pl.scan_parquet(file)
+        .select(sorted(columns))
+        .with_columns(
+            year=pl.lit(year, dtype=pl.Int16),
+            source=pl.lit(Source.KFZ, dtype=pl.Enum(Source)),
+            wkz=pl.col("ve_wagniskennziffer").cast(pl.String),
+            vertragsakte_id=pl.col("ve_id").cast(pl.Int64),
+        )
+        .with_columns(product=product())
+        .filter(
+            valid_on_jan1("ve_risiko_beginn", "ve_risiko_ablauf"),
+            pl.col("product").is_not_null(),
+        )
+        .join(contracts, on="vertragsakte_id")
+        .collect()
+    )
+
+
+def evaluate(
+    rows: pl.DataFrame,
+    predictor: PurePremiumPredictorKFZ,
+    evaluator: ContractEvaluator,
+) -> pl.DataFrame:
+    """Premium, expected claims, cost and profit per row, from da_kundenwert."""
+    df = rows.drop("source").to_pandas()
+    df["ve_wkz"] = df["wkz"]
+    df["ve_sparte"] = df["ve_sparte"].astype(str)
+    df["ve_gesellschaft"] = df["ve_gesellschaft"].astype(str)
+    predicted = predictor.predict(df)
+    # production scales to the 2026 tariff's claim level; the backtest keeps the
+    # model at the row's own year (gs_statistikjahr), so the factor comes out again
+    predicted["ve_expected_claim_amount"] /= predicted["claim_inflation_factor"]
+    out = evaluator.evaluate_kfz(predicted)
+    return pl.from_pandas(out).select(
+        pl.col("partner_id").cast(pl.Int64),
+        pl.col("year").cast(pl.Int16),
+        pl.col("product").cast(pl.String),
+        segment=pl.col("ve_sparte").str.to_lowercase(),
+        premium="ve_bestandsjahresnettobeitrag",
+        expected_claim_amount="ve_expected_claim_amount",
+        total_cost="ve_total_cost",
+        profit="ve_profit",
+    )
+
+
+def to_wide(
+    evaluated: pl.DataFrame, values: list[str], keys: list[str]
+) -> pl.DataFrame:
+    """Sum per partner x year x product|segment into kw_<value>_<KEY> columns.
+
+    Every value x key gets a column; keys no partner has in this year are null.
     """
-    if not (dwh or hf3 or flatfile):
-        raise typer.BadParameter("--no-dwh, --no-hf3 and --no-flatfile run nothing.")
-    pieces = _remainders(remainders)
-    if dwh:
-        from clv_analysis.dwh.partner import load_partner_features
-        from clv_analysis.dwh.timeslices import load_timeslices
-
-        load_timeslices(pieces, overwrite=overwrite)
-        load_partner_features(pieces, overwrite=overwrite)
-    if hf3:
-        from clv_analysis.hf3_etl import build_hf3_agg
-
-        build_hf3_agg(pieces)
-    if flatfile:
-        from clv_analysis.flatfile import build_flatfile
-
-        build_flatfile(pieces, overwrite=overwrite)
-
-
-@app.command()
-def train(
-    years_ahead: int = typer.Option(
-        3, help="CLV horizon in years, including the year itself."
-    ),
-    beta: float = typer.Option(0.95, help="Yearly discount factor of the CLV."),
-    remainders: str = typer.Option(
-        None, help="Flatfile buckets to train on, e.g. '0,10,20'. Default: all built."
-    ),
-) -> None:
-    """Write the PKW CLV training data and fit the model dict in modelling/clv_pkw.json."""
-    import json
-    from pathlib import Path
-
-    from quantcore.model.training import fit
-
-    from clv_analysis.modelling._train_data import write_train_data
-
-    package_dir = Path(__file__).parent
-    model_dict = json.loads((package_dir / "modelling" / "clv_pkw.json").read_text())
-    tracking_uri = json.loads((package_dir / "models" / "config.json").read_text())[
-        "tracking_uri"
-    ]
-
-    write_train_data(
-        Path(model_dict["data"]["path"]),
-        features=model_dict["features"],
-        remainders=None if remainders is None else _remainders(remainders),
-        years_ahead=years_ahead,
-        beta=beta,
+    wide = (
+        evaluated.group_by("partner_id", "year", key=key())
+        .agg(pl.sum(v) for v in values)
+        .pivot(on="key", index=["partner_id", "year"], values=values)
     )
-    fit(model_dict, tracking_uri=tracking_uri)
-
-
-@app.command("baseline-predict")
-def baseline_predict(
-    remainders: str = typer.Option(
-        None, help="Partner pieces MOD(partner_id, 100) = r, e.g. '0'. Default: all."
-    ),
-    years: str = typer.Option(None, help="Years, e.g. '2024'. Default: all in HF3."),
-) -> None:
-    """Kundenwert baseline per partner x year into .data/baseline (da-kundenwert env)."""
-    from clv_analysis.baseline_prediction._predict import build_baseline
-
-    build_baseline(
-        _remainders(remainders),
-        years=None if years is None else [int(y) for y in years.split(",")],
+    return wide.select(
+        "partner_id",
+        "year",
+        *[
+            (
+                pl.col(f"{v}_{k}")
+                if f"{v}_{k}" in wide.columns
+                else pl.lit(None, dtype=pl.Float64)
+            ).alias(f"kw_{v}_{k}")
+            for v in values
+            for k in keys
+        ],
     )
 
 
-if __name__ == "__main__":
-    app()
+def build_baseline(remainders: list[int], years: list[int] | None = None) -> None:
+    """Write the baseline per partner x year to ``<baseline_dir>/<modulo>/<year>/<r>.parquet``.
+
+    Parameters
+    ----------
+    remainders : list[int]
+        Write the partners with ``partner_id % modulo`` in this list, one file each.
+    years : list[int] | None
+        Years to run; None = every year in HF3.
+    """
+    kfz_types = load_hydra_config().kfz.types
+    predictor = PurePremiumPredictorKFZ(kfz_types=kfz_types, model_mapping_files={})
+    evaluator = ContractEvaluator(
+        beitrag_col="ve_bestandsjahresnettobeitrag",
+        pure_premium_col="ve_expected_claim_amount",
+        cost_col="ve_total_cost",
+        kfz_types=kfz_types,
+    )
+    segments = [Segment.KH, Segment.VK, Segment.TK]
+    products = [Product.PKW, Product.KRAFTRAEDER, Product.CAMPINGFAHRZEUGE]
+    values = ["premium", "expected_claim_amount", "total_cost", "profit"]
+    keys = [f"{p}|{s}".upper() for p in products for s in segments]
+    features = {s: model_features(kfz_types, s) for s in segments}
+    contracts = (
+        scan_raw("kfz_timeslices", remainders)
+        .select("vertragsakte_id", "partner_id")
+        .unique()
+        .collect()
+        .lazy()
+    )
+
+    spec = dataset(Source.KFZ)
+    schema = (
+        pl.DataFrame(
+            schema={"partner_id": pl.Int64, "year": pl.Int16}
+            | {f"kw_{v}_{k}": pl.Float64 for v in values for k in keys}
+        )
+        .to_arrow()
+        .schema
+    )
+    for year in years or spec.years(Segment.KH):
+        evaluated = []
+        for segment in segments:
+            files = sorted(spec.partition(segment, year).glob("*.parquet"))
+            for file in tqdm(files, desc=f"{segment} {year}"):
+                rows = read_rows(file, year, features[segment], contracts)
+                if not rows.is_empty():
+                    evaluated.append(evaluate(rows, predictor, evaluator))
+        wide = to_wide(pl.concat(evaluated), values, keys)
+        out_dir = settings.baseline_dir / str(settings.modulo) / str(year)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for r in remainders:
+            part = wide.filter(pl.col("partner_id") % settings.modulo == r)
+            pq.write_table(part.to_arrow().cast(schema), out_dir / f"{r}.parquet")
