@@ -1,167 +1,146 @@
-"""Predict expected claim amount (Schadenbedarf) for HF3 rows.
+"""Reusable polars expressions."""
 
-The risk models are pinned per ``(product, tariff generation, segment, variant)``
-in :data:`CONFIG_PATH`.
-
-Rows without a configured model keep a null prediction (never zero-filled, see
-the ``schaden`` skill), unless ``strict=True`` asks for an error instead.
-"""
-
-import json
-from dataclasses import dataclass
-from functools import cache
-from pathlib import Path
-from typing import Any
-
-import numpy as np
 import polars as pl
-from loguru import logger
-from pricing.model.qcm.tracking import load_model_from_mlflow
+import polars.selectors as cs
+from polars.selectors import Selector
 
-from clv_analysis.products import Product, Segment
-
-CONFIG_PATH = Path(__file__).parent / "config.json"
-
-#: Column the predicted pure premium is written to.
-PREDICTION_COLUMN = "expected_claim_amount"
-
-DEFAULT_TARIFF_GEN = "202608"
-DEFAULT_VARIANT = "best_estimate"
+from clv_analysis.products import Product, Segment, Source
 
 
-@dataclass(frozen=True)
-class ModelRef:
-    """An MLflow run pinned for one ``(product, segment)`` combination."""
+def product() -> pl.Expr:
+    """Product of an HF3 row, deduced form the Source and WKZ.
 
-    product: Product
-    segment: Segment
-    tariff_gen: str
-    variant: str
-    run_id: str
-    tracking_uri: str
-
-    @property
-    def key(self) -> tuple[Product, Segment]:
-        """The ``(product, segment)`` combination this run is pinned for."""
-        return self.product, self.segment
-
-
-def read_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    """Read the raw model configuration JSON."""
-    return json.loads(path.read_text())
-
-
-def model_refs(
-    *,
-    tariff_gen: str = DEFAULT_TARIFF_GEN,
-    variant: str = DEFAULT_VARIANT,
-    config: dict[str, Any] | None = None,
-) -> dict[tuple[Product, Segment], ModelRef]:
-    """Collect the configured runs for one tariff generation and variant.
-
-    Config keys that are not :class:`Product` values are ignored; missing
-    ``tariff_gen`` / ``variant`` entries are skipped.
+    Notes
+    -----
+    Unknown Wagniskennziffern give null.
     """
-    config = config if config is not None else read_config()
-    tracking_uri = config["tracking_uri"]
-
-    product_values = {p.value for p in Product}
-
-    refs: dict[tuple[Product, Segment], ModelRef] = {}
-    for product_value, per_gen in config.items():
-        if product_value not in product_values:
-            continue
-        for segment_value, per_variant in per_gen.get(tariff_gen, {}).items():
-            run_id = per_variant.get(variant)
-            if run_id is None:
-                continue
-            ref = ModelRef(
-                product=Product(product_value),
-                segment=Segment(segment_value),
-                tariff_gen=tariff_gen,
-                variant=variant,
-                run_id=run_id,
-                tracking_uri=tracking_uri,
-            )
-            refs[ref.key] = ref
-    return refs
-
-
-@cache
-def load_model(ref: ModelRef) -> Any:
-    """Load the model of a :class:`ModelRef`."""
-    _, _, model = load_model_from_mlflow(
-        run_id=ref.run_id,
-        tracking_uri=ref.tracking_uri,
+    enum = pl.Enum(Product)
+    wkz = pl.col("wkz")
+    return (
+        pl.when(pl.col("source") == Source.WG)
+        .then(pl.lit(Product.WG, dtype=enum))
+        .when(pl.col("source") == Source.PH)
+        .then(pl.lit(Product.PH, dtype=enum))
+        .when(wkz == "112")
+        .then(pl.lit(Product.PKW, dtype=enum))
+        .when(wkz.is_in(["001", "003", "014", "024", "030", "031"]))
+        .then(pl.lit(Product.KRAFTRAEDER, dtype=enum))
+        .when(wkz == "127")
+        .then(pl.lit(Product.CAMPINGFAHRZEUGE, dtype=enum))
     )
-    return model
 
 
-def predict(
-    df: pl.DataFrame,
-    *,
-    tariff_gen: str = DEFAULT_TARIFF_GEN,
-    variant: str = DEFAULT_VARIANT,
-    config: dict[str, Any] | None = None,
-    strict: bool = False,
-) -> pl.DataFrame:
-    """Add :data:`PREDICTION_COLUMN` with the per-row predicted pure premium.
+def key() -> pl.Expr:
+    """Flatfile column key from product and segment: PKW_KH, WG_FEUER."""
+    return pl.concat_str("product", "segment", separator="|").str.to_uppercase()
 
-    ``df`` must carry the ``product`` and ``segment`` columns added by
-    :func:`~clv_analysis.hf3_etl.load_parquet`. One model is applied
-    per ``(product, segment)`` group; groups without a configured model stay
-    null, or raise when ``strict`` is set.
+
+def jan1() -> pl.Expr:
+    """1 Jan of ``year``: the date a partner x year is described at."""
+    return pl.datetime(pl.col("year"), 1, 1, time_unit="us")
+
+
+def valid_on_jan1(start: str, end: str) -> pl.Expr:
+    """The row is valid on 1 Jan of ``year``: start <= 1 Jan < end."""
+    return (pl.col(start) <= jan1()) & (jan1() < pl.col(end))
+
+
+def started_by_jan1(start: str) -> pl.Expr:
+    """The row started on or before 1 Jan of ``year``."""
+    return pl.col(start) <= jan1()
+
+
+def identifiers() -> list[str]:
+    return ["partner_id", "vertragsakte_id", "vertrag_id", "deckung_id"]
+
+
+def available(
+    effective_from: str = "effective_from_date",
+    risk_count: str = "anz_risiken",
+) -> list[pl.Expr]:
+    """Aggregations for group_by(identifiers()).agg(...): active_from, active_to."""
+    return [
+        pl.col(effective_from).min().alias("active_from"),
+        pl.col(effective_from).filter(pl.col(risk_count) == 0).min().alias("active_to"),
+    ]
+
+
+def to_intervals(df: pl.DataFrame) -> pl.DataFrame:
+    """Collapse raw deckung rows into one [active_from, active_to) row per deckung."""
+    carry = [c for c in ("segment", "product") if c in df.columns]
+    return (
+        df.group_by([*identifiers(), *carry])
+        .agg(available())
+        .with_columns(
+            status=pl.when(pl.col("active_to").is_null())
+            .then(pl.lit("active"))
+            .otherwise(pl.lit("ended"))
+        )
+    )
+
+
+def clv(
+    flat: pl.LazyFrame,
+    years_ahead: int | None = None,
+    beta: float = 0.95,
+    segments: list[tuple[Product, Segment]] | None = None,
+) -> pl.LazyFrame:
+    """Add ``clv`` per partner x year: earned premium - claim amount."""
+    if segments is None:
+        premium = cs.starts_with("earned_premium_")
+        claims = cs.starts_with("claim_amount_")
+    else:
+        keys = (
+            pl.DataFrame(segments, schema=["product", "segment"], orient="row")
+            .select(key())
+            .to_series()
+        )
+        premium = cs.by_name([f"earned_premium_{k}" for k in keys])
+        claims = cs.by_name([f"claim_amount_{k}" for k in keys])
+
+    net = flat.select(
+        "partner_id",
+        future_year="year",
+        net=pl.sum_horizontal(premium) - pl.sum_horizontal(claims),
+    )
+    horizon = pl.col("future_year") >= pl.col("year")
+    if years_ahead is not None:
+        horizon = horizon & (pl.col("future_year") < pl.col("year") + years_ahead)
+
+    value = (
+        flat.select("partner_id", "year")
+        .join(net, on="partner_id")
+        .filter(horizon)
+        .group_by("partner_id", "year")
+        .agg(
+            clv=(
+                pl.col("net")
+                * pl.lit(beta)
+                ** (pl.col("future_year") - pl.col("year")).cast(pl.Int32)
+            ).sum()
+        )
+    )
+    return flat.join(value, on=["partner_id", "year"], how="left", validate="1:1")
+
+
+def baseline_clv(
+    flat: pl.LazyFrame,
+    segments: list[tuple[Product, Segment]] | None = None,
+) -> pl.LazyFrame:
+    """Add ``baseline_clv`` per partner x year from the Kundenwert baseline columns.
+
+    The baseline only predicts the year from 1 Jan of ``year``:
+    ``kw_premium_<KEY>`` minus ``kw_expected_claim_amount_<KEY>``.
     """
-    missing = {"product", "segment"} - set(df.columns)
-    if missing:
-        raise KeyError(f"df is missing the model key columns {sorted(missing)}")
+    if segments is None:
+        premium: Selector = cs.starts_with("kw_premium_")
+        claims: Selector = cs.starts_with("kw_expected_claim_amount_")
+    else:
+        keys = [f"{p}|{s}".upper() for p, s in segments]
+        premium = cs.by_name([f"kw_premium_{k}" for k in keys])
+        claims = cs.by_name([f"kw_expected_claim_amount_{k}" for k in keys])
 
-    refs = model_refs(tariff_gen=tariff_gen, variant=variant, config=config)
-
-    row_column = "__row_index"
-    # Single pass split instead of one full-frame filter per group.
-    groups = dict(
-        sorted(
-            df.with_row_index(row_column)
-            .partition_by("product", "segment", as_dict=True, include_key=False)
-            .items()
-        )
+    return flat.with_columns(
+        baseline_clv=pl.sum_horizontal(premium) - pl.sum_horizontal(claims)
     )
 
-    # Validate before predicting, so ``strict`` fails before any expensive work.
-    for (product_value, segment_value), group in groups.items():
-        if (Product(product_value), Segment(segment_value)) in refs:
-            continue
-        message = (
-            f"no model configured for {product_value}/{segment_value} "
-            f"({tariff_gen}, {variant}): {group.height:,} rows"
-        )
-        if strict:
-            raise KeyError(message)
-        logger.warning(message)
-
-    predictions = np.zeros(df.height)
-    has_prediction = np.zeros(df.height, dtype=bool)
-    for (product_value, segment_value), group in groups.items():
-        key = (Product(product_value), Segment(segment_value))
-        if key not in refs:
-            continue
-
-        rows = group[row_column].to_numpy()
-        logger.info(
-            "predicting {}/{} | {:,} rows | run_id {}",
-            product_value,
-            segment_value,
-            group.height,
-            refs[key].run_id,
-        )
-        features = group.drop(row_column).to_pandas()
-        predictions[rows] = np.asarray(load_model(refs[key]).predict(features))
-        has_prediction[rows] = True
-
-    # Rows without a model become null (not NaN); NaNs from a model are kept.
-    return df.with_columns(
-        pl.when(pl.Series(has_prediction))
-        .then(pl.Series(predictions))
-        .alias(PREDICTION_COLUMN)
-    )
