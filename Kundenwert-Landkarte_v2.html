@@ -1,0 +1,848 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Kundenwert-Landkarte</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: knapper Kopf, darunter eine zoombare Karte. Waagerecht der Hauptweg
+   Daten -> Bausteine -> Einsatzart -> Metriken, senkrecht drei Unterscheidungen,
+   die an jeder Station etwas aendern. Darunter Zusammenhaenge und offene Punkte. */
+:root{
+  /* HUK-Farben: Nachtblau 001631, Petrol 2F6C7A, Mittelblau 7CA5AE, Hellblau D2E1E5, Gelb FFED00, Rot BF0643.
+     Gruppenfarben: Petrol, Rot, Gelb aus der Palette, dazu ergaenzend Orange, Blau, Violett.
+     Nachtblau, Mittelblau, Hellblau tragen Schrift, Linien und Flaechen.
+     Je Gruppe: Flaeche (--dN), Toenung (-bg), Schrift auf der Flaeche (-on), Linie (-l), Schriftfarbe (-t). */
+  --bg:#f1f5f6; --map:#f8fafb; --surface:#ffffff; --band:#edf2f4;
+  --ink:#001631; --muted:#3f5868; --line:#bccdd3; --edge:#001631;
+  --d1:#bf0643; --d1-bg:#fae3ea; --d1-on:#ffffff; --d1-l:#bf0643; --d1-t:#bf0643;
+  --d2:#6b3fa0; --d2-bg:#ece4f5; --d2-on:#ffffff; --d2-l:#6b3fa0; --d2-t:#6b3fa0;
+  --d3:#1f5fbf; --d3-bg:#dfe9f8; --d3-on:#ffffff; --d3-l:#1f5fbf; --d3-t:#1f5fbf;
+  --d4:#f08a00; --d4-bg:#fdebd3; --d4-on:#001631; --d4-l:#e07f00; --d4-t:#a85600;
+  --d5:#2f6c7a; --d5-bg:#d9e8eb; --d5-on:#ffffff; --d5-l:#2f6c7a; --d5-t:#2f6c7a;
+  --d6:#ffed00; --d6-bg:#fffac2; --d6-on:#001631; --d6-l:#d6c700; --d6-t:#001631;
+  --font-display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#001631; --map:#061f3c; --surface:#0d2a49; --band:#00122a;
+    --ink:#eaf1f3; --muted:#9fb6be; --line:#2b4a64; --edge:#d2e1e5;
+    --d1:#bf0643; --d1-bg:#3a0f25; --d1-on:#ffffff; --d1-l:#e2457b; --d1-t:#f27ba2;
+    --d2:#9a6fd1; --d2-bg:#2b2148; --d2-on:#001631; --d2-l:#a985db; --d2-t:#c3a6ec;
+    --d3:#4d8df0; --d3-bg:#142f5c; --d3-on:#001631; --d3-l:#6ba1f5; --d3-t:#8db6ff;
+    --d4:#f08a00; --d4-bg:#3a2608; --d4-on:#001631; --d4-l:#f08a00; --d4-t:#ffb04d;
+    --d5:#2f6c7a; --d5-bg:#123748; --d5-on:#ffffff; --d5-l:#4f93a3; --d5-t:#8fc4cf;
+    --d6:#ffed00; --d6-bg:#2e2c0a; --d6-on:#001631; --d6-l:#ffed00; --d6-t:#ffed00;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#001631; --map:#061f3c; --surface:#0d2a49; --band:#00122a;
+  --ink:#eaf1f3; --muted:#9fb6be; --line:#2b4a64; --edge:#d2e1e5;
+  --d1:#bf0643; --d1-bg:#3a0f25; --d1-on:#ffffff; --d1-l:#e2457b; --d1-t:#f27ba2;
+  --d2:#9a6fd1; --d2-bg:#2b2148; --d2-on:#001631; --d2-l:#a985db; --d2-t:#c3a6ec;
+  --d3:#4d8df0; --d3-bg:#142f5c; --d3-on:#001631; --d3-l:#6ba1f5; --d3-t:#8db6ff;
+  --d4:#f08a00; --d4-bg:#3a2608; --d4-on:#001631; --d4-l:#f08a00; --d4-t:#ffb04d;
+  --d5:#2f6c7a; --d5-bg:#123748; --d5-on:#ffffff; --d5-l:#4f93a3; --d5-t:#8fc4cf;
+  --d6:#ffed00; --d6-bg:#2e2c0a; --d6-on:#001631; --d6-l:#ffed00; --d6-t:#ffed00;
+  color-scheme:dark;
+}
+.d1{--d:var(--d1);--dbg:var(--d1-bg);--on-d:var(--d1-on);--dl:var(--d1-l);--dt:var(--d1-t)}
+.d2{--d:var(--d2);--dbg:var(--d2-bg);--on-d:var(--d2-on);--dl:var(--d2-l);--dt:var(--d2-t)}
+.d3{--d:var(--d3);--dbg:var(--d3-bg);--on-d:var(--d3-on);--dl:var(--d3-l);--dt:var(--d3-t)}
+.d4{--d:var(--d4);--dbg:var(--d4-bg);--on-d:var(--d4-on);--dl:var(--d4-l);--dt:var(--d4-t)}
+.d5{--d:var(--d5);--dbg:var(--d5-bg);--on-d:var(--d5-on);--dl:var(--d5-l);--dt:var(--d5-t)}
+.d6{--d:var(--d6);--dbg:var(--d6-bg);--on-d:var(--d6-on);--dl:var(--d6-l);--dt:var(--d6-t)}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.5}
+.page{padding-inline:clamp(16px,3vw,40px);padding-block:28px 56px;display:flex;flex-direction:column;gap:22px}
+
+/* Kopf */
+.head{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.9fr);gap:28px 56px;align-items:start}
+.intro{display:flex;flex-direction:column;gap:10px;min-width:0}
+.intro .lede{max-width:62ch}
+.gloss{min-width:0}
+.gloss .eyebrow{margin-bottom:6px;cursor:pointer;width:max-content;max-width:100%}
+.gloss summary:focus-visible{outline:2px solid var(--d3);outline-offset:3px}
+.gloss dl{margin:0;columns:3;column-gap:32px}
+.g{break-inside:avoid;padding:7px 0 8px;border-top:1px solid var(--line);font-size:14px;line-height:1.4}
+.g dt{font-family:var(--font-display);font-weight:600}
+.g dd{margin:1px 0 0;color:var(--muted)}
+@media (max-width:1180px){.head{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:760px){.gloss dl{columns:2}}
+@media (max-width:480px){.gloss dl{columns:1}}
+.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0}
+h1{font-family:var(--font-display);font-weight:700;font-size:clamp(28px,4vw,40px);line-height:1.1;margin:0;text-wrap:balance}
+.lede{margin:0;font-size:17px;color:var(--ink)}
+.howto{display:flex;flex-wrap:wrap;gap:8px 22px;margin:0;padding:0;list-style:none;font-size:14.5px;color:var(--muted)}
+.howto b{color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}
+.legend li.lgd{background:transparent;border:1px dashed var(--edge);padding:3px 10px;color:var(--muted)}
+.legend li{display:flex;align-items:center;gap:8px;font-size:14px;background:var(--dbg);border:1px solid var(--dl);border-radius:4px;padding:3px 10px 3px 3px}
+.tag{font-family:var(--font-mono);font-weight:600;font-size:.72em;letter-spacing:.04em;background:var(--d);color:var(--on-d);box-shadow:inset 0 0 0 1px var(--dl);border-radius:3px;padding:2px 6px;white-space:nowrap}
+
+/* Werkzeugleiste */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-block:8px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg)}
+.toolbar button{font:500 14px var(--font-body);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:7px 12px;cursor:pointer;min-height:36px}
+.toolbar button:hover{border-color:var(--edge)}
+.toolbar button:focus-visible,.viewport:focus-visible{outline:2px solid var(--d3);outline-offset:2px}
+.toolbar .sq{width:36px;padding:0;font-size:18px;line-height:1}
+.zoomval{font-family:var(--font-mono);font-size:13px;min-width:52px;text-align:center;font-variant-numeric:tabular-nums;color:var(--muted)}
+.hint{font-size:13px;color:var(--muted);margin-left:auto}
+
+/* Kartenfenster */
+.viewport{position:relative;overflow-x:auto;overflow-y:hidden;cursor:grab}
+.viewport.drag{cursor:grabbing}
+.sizer{position:relative}
+.canvas{position:absolute;left:0;top:0;transform-origin:0 0;width:3700px;padding:40px 40px 48px;
+  display:grid;grid-template-columns:200px repeat(6,400px);grid-template-rows:repeat(21,auto);column-gap:170px;row-gap:14px;
+  font-size:18px;line-height:1.4;user-select:none;-webkit-user-select:none}
+.canvas > *{position:relative;z-index:1;min-width:0}
+.canvas > .field{position:absolute;z-index:0;left:0;right:0;background:var(--map);border:1.5px solid var(--line);border-radius:12px}
+.canvas > .f1{grid-row:1 / 4;top:-28px;bottom:-30px}
+.canvas > .f2{grid-row:5 / 13;top:-26px;bottom:-30px}
+.canvas > .f3{grid-row:14 / 22;top:-26px;bottom:-30px}
+.canvas > .band{position:absolute;z-index:0;grid-row:2 / 4;top:-10px;bottom:-14px;left:-24px;right:-24px;background:var(--band);border-radius:10px}
+.canvas > svg{position:absolute;z-index:2;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+
+/* Richtungen */
+.dirs{grid-column:2 / -1;display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+.dir{display:flex;align-items:center;gap:16px;font-family:var(--font-mono);font-size:17px;color:var(--muted)}
+.dir b{color:var(--ink);font-weight:600}
+.dir i{flex:1;height:2px;background:var(--edge);position:relative}
+.dir.fwd i::after,.dir.back i::before{content:"";position:absolute;top:-6px;border-top:7px solid transparent;border-bottom:7px solid transparent}
+.dir.fwd i::after{right:-2px;border-left:12px solid var(--edge)}
+.dir.back i::before{left:-2px;border-right:12px solid var(--edge)}
+
+/* Stationskopf */
+.st{display:flex;flex-direction:column;gap:2px;padding-top:8px}
+.st .q{font-family:var(--font-mono);font-size:16px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.st h2{font-family:var(--font-display);font-weight:700;font-size:34px;line-height:1.1;margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.st h2 .tag{font-size:15px}
+.st .sq{font-size:18px;color:var(--muted);margin-top:2px}
+
+/* Hauptweg */
+.col{display:flex;flex-direction:column;gap:16px;align-self:start;padding-top:12px}
+.col.data{gap:56px}
+.node{background:var(--surface);border:1.5px solid var(--line);border-radius:6px;padding:14px 16px;display:flex;flex-direction:column;gap:5px}
+.node.dim{background:var(--dbg);border-color:var(--dl)}
+.node h4{font-family:var(--font-display);font-weight:600;font-size:22px;line-height:1.2;margin:0;display:flex;align-items:flex-start;gap:10px}
+.node h4 .tag{font-size:14px;flex:none;margin-top:3px}
+.node p{margin:0;font-size:17px}
+.mono{font-family:var(--font-mono);font-size:.9em}
+.group{border:1.5px dashed var(--muted);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.gh{display:flex;flex-direction:column;gap:0}
+.gh > b{font-family:var(--font-display);font-weight:700;font-size:23px}
+.gh span{font-size:16px;color:var(--muted)}
+.gh strong{color:var(--ink);font-weight:600}
+.fork{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.chip{display:flex;align-items:baseline;gap:8px;background:var(--dbg);border:1.5px solid var(--dl);border-radius:5px;padding:7px 10px;font-size:16px}
+.chip .tag{font-size:12.5px}
+.chip.d4{background:var(--dbg);border-color:var(--dl)}
+.foot{font-size:16px;color:var(--muted);margin:0}
+.node.hollow{border:1.5px dashed var(--edge)}
+.chip.plain{background:transparent;border:1px dashed var(--edge);display:block}
+.contact{border-top:1px solid var(--dl);padding-top:6px;margin-top:4px!important}
+.contact .mono{color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-size:13.5px;margin-right:6px}
+.facts{display:flex;flex-direction:column;gap:2px;margin:4px 0 0}
+.facts dt{font-family:var(--font-mono);font-size:13.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+.facts dd{margin:0;font-size:17px}
+.facts dt.fh{font-family:var(--font-display);font-size:18px;font-weight:600;color:var(--ink);text-transform:none;letter-spacing:0;margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+
+/* Gegenprobe */
+.ll.main.pl{margin-top:48px;align-self:stretch;justify-content:center}
+.probe{grid-column:2 / -1;margin:48px -24px 0;background:var(--surface);border:1.5px solid var(--edge);border-radius:8px;padding:18px 20px;
+  display:grid;grid-template-columns:minmax(0,1.1fr) repeat(3,minmax(0,1fr));gap:18px;align-items:stretch}
+.pi{align-self:center}
+.pi b{display:block;font-family:var(--font-display);font-weight:700;font-size:25px;line-height:1.2}
+.pi p{margin:6px 0 0;font-size:17px;color:var(--muted)}
+
+.opts{display:flex;flex-wrap:wrap;gap:8px}
+.opt{background:var(--dbg);border:1.5px solid var(--dl);border-radius:6px;padding:8px 12px;font-family:var(--font-display);font-weight:600;font-size:19px;line-height:1.2}
+
+/* Lesehilfe */
+.key{align-self:start;margin-top:12px;border:1.5px solid var(--line);background:var(--surface);border-radius:6px;padding:14px 14px 16px;display:flex;flex-direction:column;gap:12px;font-size:15px;line-height:1.35}
+.key > b{font-family:var(--font-display);font-weight:700;font-size:19px}
+.k{display:grid;grid-template-columns:44px minmax(0,1fr);gap:10px;align-items:start;color:var(--muted);overflow-wrap:anywhere}
+.k svg{width:44px;height:12px;margin-top:4px;overflow:visible}
+.k svg line{stroke:var(--edge);stroke-width:2;fill:none}
+.k svg polygon{fill:var(--edge)}
+.sw{display:block;width:40px;height:20px;border-radius:4px;margin-top:1px}
+.sw.fill{background:var(--dbg);border:1.5px solid var(--dl)}
+.sw.dash{border:1.5px dashed var(--edge);background:var(--surface)}
+
+/* Querschnitt */
+.xt{grid-column:1 / -1;margin:0 -38px;padding:6px 38px 4px;background:var(--map);display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+.xt.first{margin:0 -40px 6px;border-top:0;padding-top:0}
+.xt h2{font-family:var(--font-display);font-weight:700;font-size:30px;margin:0}
+.xt p{margin:0;color:var(--muted);font-size:18px}
+.lt{grid-column:1 / -1;margin:0 -38px;padding:22px 38px 4px;background:var(--map);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.lt h3{font-family:var(--font-display);font-weight:700;font-size:25px;margin:0;color:var(--dt)}
+.lt .tag{font-size:15px}
+.lt p{margin:0;color:var(--muted);font-size:17px}
+.ll{background:var(--d);color:var(--on-d);box-shadow:inset 0 0 0 1.5px var(--dl);border-radius:6px;padding:14px 16px;font-family:var(--font-display);font-weight:600;font-size:21px;line-height:1.2;display:flex;align-items:center}
+.ll.main{grid-column:1;grid-row:2 / 4;align-self:stretch;margin:-10px 0 0;background:var(--edge);color:var(--map);box-shadow:none;border-radius:10px;padding:0;display:flex;align-items:center}
+.ll.main .cap{display:flex;flex-direction:column;gap:6px;padding:18px 16px;font-size:24px;line-height:1.2}
+.ll.main small{font-family:var(--font-body);font-weight:400;font-size:15.5px;line-height:1.35}
+.lc{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:13px 16px;font-size:17px;margin-inline:-24px}
+
+/* Use Cases: eigenes Feld in denselben Spalten */
+.canvas [hidden]{display:none!important}
+.fgap{grid-column:1 / -1;height:92px}
+.xt.ucx{align-items:center}
+.ucst{font-family:var(--font-mono);font-size:16px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;border-bottom:2px solid var(--line);padding:8px 0 8px;margin-inline:-24px}
+.lt h3 .uct{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;cursor:pointer;border-radius:6px;padding:4px 10px 4px 4px;margin:-4px 0 -4px -4px}
+.lt h3 .uct:hover{background:var(--dbg)}
+.lt h3 .uct:focus-visible{outline:2px solid var(--dt);outline-offset:2px}
+.chev{width:0;height:0;border-left:11px solid var(--dt);border-top:7px solid transparent;border-bottom:7px solid transparent;transition:transform .15s}
+.uct[aria-expanded="true"] .chev{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.chev{transition:none}}
+.ucall{font:500 17px var(--font-body);color:var(--ink);background:var(--surface);border:1.5px solid var(--line);border-radius:6px;padding:7px 14px;cursor:pointer;margin-left:auto}
+.ucall:hover{border-color:var(--edge)}
+.ucall:focus-visible{outline:2px solid var(--d3);outline-offset:2px}
+.lc.uc{display:flex;flex-direction:column;gap:9px}
+.lc.uc p{margin:0}
+.mini{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.mini li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:baseline}
+.mini li > span:only-child{grid-column:1 / -1}
+.mini .tag{font-size:12.5px}
+.mini b{font-weight:600}
+.lc.uc .opt{font-size:17px;padding:6px 10px;display:inline-flex;gap:8px;align-items:baseline}
+.lc.uc .opt i{font-style:normal;font-family:var(--font-mono);font-size:12.5px;color:var(--dt)}
+
+/* Kanten */
+.e{fill:none;stroke:var(--edge);stroke-width:2}
+.e.dash{stroke-dasharray:8 6}
+.eh{fill:var(--edge)}
+.el-bg{fill:var(--surface);stroke:var(--line);stroke-width:1}
+.el{font-family:var(--font-mono);font-size:14px;fill:var(--ink);text-anchor:middle;dominant-baseline:central}
+
+/* Zusammenhaenge und offene Entscheidungen */
+.notes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.panel{padding:22px clamp(16px,2.2vw,30px) 24px;min-width:0}
+.panel.open{background:var(--map);border-left:1px solid var(--line)}
+.panel-h{display:flex;align-items:baseline;gap:6px 16px;flex-wrap:wrap;margin-bottom:12px}
+.panel-h h2{font-family:var(--font-display);font-weight:700;font-size:22px;margin:0}
+.panel-h p{margin:0;font-size:14px;color:var(--muted)}
+.it{display:grid;grid-template-columns:148px minmax(0,1fr);gap:8px 18px;padding:12px 0;border-top:1px solid var(--line)}
+.panel.open .it{border-top-style:dashed;border-top-color:var(--muted)}
+.where{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:4px;line-height:1.45}
+.it p{margin:0;font-size:15.5px;max-width:68ch}
+.it p b{font-weight:600}
+.assume{font-size:13.5px;color:var(--muted);margin:14px 0 0;padding-top:12px;border-top:1px dashed var(--muted)}
+@media (max-width:980px){.notes{grid-template-columns:minmax(0,1fr)}.panel.open{border-left:0;border-top:1px solid var(--line)}}
+@media (max-width:560px){.it{grid-template-columns:minmax(0,1fr);gap:2px}}
+
+</style>
+
+<div class="page">
+  <header class="head">
+    <div class="intro">
+      <p class="eyebrow">Kundenwert · Orientierung für die Entwicklung</p>
+      <h1>Kundenwert-Landkarte</h1>
+      <p class="lede">Fünf Dimensionen entscheiden, wie ein Kundenwert gebaut und geprüft wird. Die Karte zeigt, wo jede Dimension eingreift und was sie an den anderen ändert.</p>
+      <ul class="howto">
+        <li><b>Hauptweg:</b> sechs Stationen von den Datentöpfen zur Gegenprobe. Drei davon sind Dimensionen (D1 bis D3).</li>
+        <li><b>Quer dazu:</b> zwei Dimensionen (D4 und D5) als Zeilen in denselben Spalten.</li>
+        <li><b>Use Cases:</b> drei Use Cases (U1 bis U3) zum Ausklappen, ebenfalls in denselben Spalten.</li>
+      </ul>
+      <ul class="legend">
+        <li class="d5"><span class="tag">D1</span>Datentöpfe</li>
+        <li class="d4"><span class="tag">D2</span>Produkte</li>
+        <li class="d3"><span class="tag">D3</span>Einsatzart</li>
+        <li class="d1"><span class="tag">D4</span>Phase</li>
+        <li class="d2"><span class="tag">D5</span>Kundendauer</li>
+        <li class="d6"><span class="tag">U1–U3</span>Use Cases</li>
+        <li class="lgd">gestrichelt: offen, voraussichtlich oder ohne Schadenerwartung</li>
+      </ul>
+    </div>
+    <details class="gloss" id="gloss" open>
+      <summary class="eyebrow">Begriffe</summary>
+      <dl>
+        <div class="g"><dt>Kundenwert</dt><dd>Beiträge minus Schäden minus Kosten im Folgezeitraum, mehrjährig. Tatsächlich heißt beobachtet, vorhergesagt heißt vom Modell.</dd></div>
+        <div class="g"><dt>Stichtag</dt><dd>Zeitpunkt, zu dem Merkmale, Offset und Kundengruppe feststehen. Es gibt Trainings- und Prüfstichtage, in der Produktion den Tag der Berechnung.</dd></div>
+        <div class="g"><dt>Folgezeitraum</dt><dd>Zeitraum nach dem Stichtag, in dem der tatsächliche Kundenwert beobachtet wird.</dd></div>
+        <div class="g"><dt>Horizont</dt><dd>Länge des Folgezeitraums. Es kann mehrere geben.</dd></div>
+        <div class="g"><dt>Kundengruppe</dt><dd>Langer Bestandskunde oder neuerer Kunde, bestimmt am Stichtag.</dd></div>
+        <div class="g"><dt>Bestandsprodukt</dt><dd>Produkt, in dem der Kunde am Stichtag mindestens einen Vertrag hat. Mehrere Verträge im selben Produkt sind möglich.</dd></div>
+        <div class="g"><dt>Künftiges Produkt</dt><dd>Produkt, in dem der Kunde am Stichtag noch keinen Vertrag hat.</dd></div>
+        <div class="g"><dt>Produktfall</dt><dd>Bestandsprodukt mit Schadenmodell, Bestandsprodukt ohne Schadenmodell oder künftiges Produkt.</dd></div>
+        <div class="g"><dt>Cross- und Upselling</dt><dd>Cross-Selling ist der Abschluss in einem künftigen Produkt, Upselling die Erweiterung eines Bestandsprodukts.</dd></div>
+        <div class="g"><dt>Bestandswert</dt><dd>Kundenwert aus den Verträgen, die der Kunde am Stichtag hat, solange er sie behält.</dd></div>
+        <div class="g"><dt>Potenzialwert</dt><dd>Kundenwert aus künftigen Produkten, ab ihrem Abschluss. Kann direkt gelernt oder in Abschluss mal Wert nach Abschluss zerlegt werden. Ob Upselling und weitere Verträge im selben Produkt dazuzählen, ist offen.</dd></div>
+        <div class="g"><dt>Wert nach Abschluss</dt><dd>Kundenwert eines künftigen Produkts unter der Annahme, dass der Kunde abschließt. Entsteht nur auf dem zerlegten Weg. Baustein für Werbe- und Nachbearbeitungsentscheidungen.</dd></div>
+        <div class="g"><dt>Kausalscore</dt><dd>Vorhersage, um wie viel eine Maßnahme die Abschlusswahrscheinlichkeit erhöht. Nicht Teil der Karte, wird aber mit dem Wert nach Abschluss multipliziert.</dd></div>
+        <div class="g"><dt>Gesamtpotenzial</dt><dd>Bestandswert plus Potenzialwert, also der gesamte Kundenwert.</dd></div>
+        <div class="g"><dt>Schadenerwartung</dt><dd>Ergebnis der Schadenmodelle des Aktuariats aus dem Datentopf HF3. Ihre Rolle im Modell ist offen: Baustein des Offsets, Merkmal oder beides.</dd></div>
+        <div class="g"><dt>Offset</dt><dd>Fest vorgegebenes Ausgangsniveau, von dem aus das Modell lernt, sofern einer verwendet wird. Anders als ein Merkmal geht er mit festem Gewicht ein.</dd></div>
+        <div class="g"><dt>Lieferlücke</dt><dd>Für ein Bestandsprodukt mit Schadenmodell liegt am Stichtag noch keine Schadenerwartung vor, weil Kunde oder Vertrag nach der letzten Lieferung dazukam.</dd></div>
+        <div class="g"><dt>Modellzuschnitt</dt><dd>Ebene, auf der modelliert wird: je Vertrag, je Produkt oder über alle Produkte gemeinsam. Nicht dasselbe wie die Ebene der Ausgabe (Frage B).</dd></div>
+        <div class="g"><dt>Regelfall und Rückfall</dt><dd>Im Regelfall wird am tatsächlichen Kundenwert gelernt. Im Rückfall wird er aus Beitrag, Ersatzgröße und Zusatzmodellen zusammengesetzt. Den Rückfall gibt es nur für Produktfälle ohne Schadenerwartung.</dd></div>
+        <div class="g"><dt>Ersatzgröße</dt><dd>Grober Erfahrungswert je Sparte oder Segment, z.&nbsp;B. Schadenquote oder Combined Ratio. Die Combined Ratio enthält die Kosten, die Schadenquote nicht.</dd></div>
+      </dl>
+    </details>
+  </header>
+
+  <section aria-label="Karte">
+    <div class="toolbar">
+      <button class="sq" id="zout" type="button" aria-label="Verkleinern">−</button>
+      <span class="zoomval" id="zval" aria-live="polite">100 %</span>
+      <button class="sq" id="zin" type="button" aria-label="Vergrößern">+</button>
+      <button id="zall" type="button">Ganze Karte</button>
+      <button id="zwidth" type="button">Volle Breite</button>
+      <button id="zread" type="button">Lesegröße</button>
+      <span class="hint">Ziehen verschiebt die Karte. Strg + Mausrad zoomt.</span>
+    </div>
+
+    <div class="viewport" id="vp" tabindex="0" role="region" aria-label="Kundenwert-Landkarte, verschiebbar und zoombar">
+      <div class="sizer" id="sizer">
+        <div class="canvas" id="cv">
+          <div class="field f1"></div>
+          <div class="field f2"></div>
+          <div class="field f3"></div>
+          <div class="band" style="grid-column:2 / 3"></div>
+          <div class="band" style="grid-column:3 / 4"></div>
+          <div class="band" style="grid-column:4 / 5"></div>
+          <div class="band" style="grid-column:5 / 6"></div>
+          <div class="band" style="grid-column:6 / 7"></div>
+          <div class="band" style="grid-column:7 / 8"></div>
+
+          <!-- Zeile 1: Richtungen -->
+          <div></div>
+          <div class="dirs">
+            <div class="dir fwd"><b>Datenfluss</b><span>von links nach rechts</span><i></i></div>
+            <div class="dir back"><i></i><b>Planung</b><span>rückwärts: zuerst Einsatzart, Metriken und Gegenprobe, dann Produkte und Rolle im Modell, zuletzt Datentöpfe</span></div>
+          </div>
+
+          <!-- Zeile 2: Stationen -->
+          <div class="ll main"><span class="cap">Hauptweg<small>sechs Stationen von den Datentöpfen zur Gegenprobe</small></span></div>
+          <div class="st d5"><span class="q">Station 1</span><h2>Datentöpfe <span class="tag">D1</span></h2><span class="sq">Womit?</span></div>
+          <div class="st"><span class="q">Station 2</span><h2>Rolle im Modell</h2><span class="sq">In welcher Rolle?</span></div>
+          <div class="st d4"><span class="q">Station 3</span><h2>Produkte <span class="tag">D2</span></h2><span class="sq">Für welches Produkt?</span></div>
+          <div class="st d3"><span class="q">Station 4</span><h2>Einsatzart <span class="tag">D3</span></h2><span class="sq">Wofür?</span></div>
+          <div class="st"><span class="q">Station 5</span><h2>Metriken</h2><span class="sq">Woran gemessen?</span></div>
+          <div class="st"><span class="q">Station 6</span><h2>Gegenprobe</h2><span class="sq">Auch je Teilgruppe?</span></div>
+
+          <!-- Zeile 3: Hauptweg -->
+          <div class="col data d5">
+            <div class="node dim" id="p-hf3">
+              <h4><span class="tag">1.1</span>Aktuariat (HF3)</h4>
+              <p>Hier liegen die Schadenmodelle. Geliefert wird die Schadenerwartung, voraussichtlich ein- bis zweimal jährlich und nur für Bestandsprodukte mit Schadenmodell.</p>
+            </div>
+            <div class="node dim" id="p-mkt">
+              <h4><span class="tag">1.2</span>Marketingdaten (MDM)</h4>
+              <p>Marketingbezogene Kundendaten und relevante Werte aus den Verträgen der jeweiligen Sparten. Sie helfen bei der Modellierung und beim Erkennen von Cross- und Upselling-Potenzialen.</p>
+            </div>
+            <div class="node dim" id="p-hist">
+              <h4><span class="tag">1.3</span>Versicherungshistorie</h4>
+              <p>Verträge, Beiträge, Schäden und Kündigungen des Kunden über die Zeit. Soll aus einer langfristig verfügbaren Datenbasis kommen.</p>
+              <p><b>Geht zweifach ein:</b> bis zum Stichtag als Merkmale, danach als Zielgröße.</p>
+            </div>
+            <div class="node hollow" id="p-kost">
+              <h4><span class="tag">1.4</span>Kostendaten <span class="mono">offen</span></h4>
+              <p>Nötig, um die Zielgröße zu bilden. Zu klären ist, von wem sie bezogen werden und wie häufig.</p>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="group" id="g-alle">
+              <div class="gh"><b>Gilt für jedes Produkt</b><span>Zielgröße und Merkmale immer, der Offset sofern verwendet.</span></div>
+              <div class="node" id="r-offset">
+                <h4>Offset</h4>
+                <p>Fest vorgegebenes Ausgangsniveau, von dem aus das Modell lernt. Ob einer verwendet wird und wie er gebildet wird, ist offen.</p>
+                <div class="fork">
+                  <div class="chip d4"><span class="tag">D2</span><span>Die Schadenerwartung kann ein Baustein sein. Ein Offset geht mit festem Gewicht ein und braucht in jeder Zeile einen Wert.</span></div>
+                  <div class="chip plain"><b>Ersatzgröße:</b> Bei Produktfällen ohne Schadenerwartung im Regelfall höchstens ein Baustein des Offsets oder ein Merkmal. Im Rückfall wird der Kundenwert mit ihr zusammengesetzt statt gelernt.</div>
+                </div>
+              </div>
+              <div class="node" id="r-merk">
+                <h4>Merkmale</h4>
+                <p>Was am Stichtag über den Kunden bekannt ist: die Daten aus dem MDM, also Marketingdaten und Vertragswerte der Sparten, und die Versicherungshistorie bis zum Stichtag, etwa wie schadenintensiv der Kunde bisher war.</p>
+                <div class="fork">
+                  <div class="chip d4"><span class="tag">D2</span><span>Die Schadenerwartung kann stattdessen oder zusätzlich ein Merkmal sein, auch für andere Produkte des Kunden. Wo sie fehlt, bleibt es leer, und das Modell lernt selbst, wie stark es ihr folgt.</span></div>
+                </div>
+              </div>
+              <div class="node" id="r-ziel">
+                <h4>Zielgröße: Kundenwert</h4>
+                <p class="mono">Beiträge − Schäden − Kosten</p>
+                <p>Tatsächlich angefallen im Folgezeitraum nach dem Stichtag. Aufteilbar nach Bestand und Potenzial sowie nach Sparte, Produkt und Vertrag, soweit sich die Kosten so fein zuordnen lassen.</p>
+                <div class="fork">
+                  <div class="chip plain"><b>Horizont:</b> Der Kundenwert ist mehrjährig. Der Folgezeitraum kann unterschiedlich lang sein, je Horizont entsteht ein eigener Kundenwert.</div>
+                  <div class="chip plain"><b>Schäden:</b> Offen ist, wie große Schäden behandelt werden.</div>
+                  <div class="chip plain"><b>Kosten:</b> Offen ist, welche eingehen und wie fein sie unterschieden werden.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col d4">
+            <div class="group" id="g-bestand">
+              <div class="gh"><b>Bestandsprodukte</b><span>Hat der Kunde am Stichtag schon. Ihr Kundenwert im Folgezeitraum ist der <strong>Bestandswert</strong>. Er endet je Vertrag mit der Kündigung, der Verbleib steckt also in der Zielgröße.</span></div>
+              <div class="node dim" id="t-mit">
+                <h4><span class="tag">D2</span>Mit Schadenmodell</h4>
+                <dl class="facts">
+                  <dt>Regelfall</dt><dd>Am tatsächlichen Kundenwert lernen. Nur hier gibt es eine Schadenerwartung für das Produkt selbst. Ob sie als Baustein des Offsets, als Merkmal oder als beides eingeht, ist offen.</dd>
+                  <dt>Rückfall</dt><dd>Keiner vorgesehen. Fehlt die Schadenerwartung, etwa weil der Vertrag nach der letzten Lieferung dazukam, ist das eine Lieferlücke. Ihre Behandlung ist offen.</dd>
+                  <dt>Belastbarkeit</dt><dd>Am besten gestützt: Der Schadenteil baut auf dem Schadenmodell auf.</dd>
+                </dl>
+              </div>
+              <div class="node hollow" id="t-ohne">
+                <h4><span class="tag">D2</span>Ohne Schadenmodell</h4>
+                <dl class="facts">
+                  <dt>Regelfall</dt><dd>Am tatsächlichen Kundenwert lernen, ohne Schadenerwartung für das Produkt selbst. Der Offset ist offen.</dd>
+                  <dt>Rückfall</dt><dd>Zusammensetzen statt lernen: Beitrag, Ersatzgröße (z.&nbsp;B. Schadenquote oder Combined Ratio je Sparte oder Segment), Modell für den Verbleib.</dd>
+                  <dt>Belastbarkeit</dt><dd>Regelfall: Schadenteil unsicherer, vor allem bei seltenen großen Schäden. Rückfall: Beträge nur grob, die Rangfolge in der Sparte folgt vor allem dem Beitrag.</dd>
+                </dl>
+              </div>
+            </div>
+            <div class="group" id="g-neu">
+              <div class="gh"><b>Künftige Produkte</b><span>Hat der Kunde am Stichtag noch nicht. Der Kundenwert aus Abschlüssen im Folgezeitraum ist der <strong>Potenzialwert</strong>. Auch der Abschluss steckt in der Zielgröße. Der Potenzialwert kann direkt gelernt oder in Abschluss und Wert nach Abschluss zerlegt werden.</span></div>
+              <div class="node hollow" id="t-neu">
+                <h4><span class="tag">D2</span>Jedes künftige Produkt</h4>
+                <p>Zwei Wege zum Potenzialwert. Der direkte reicht, wenn er als Ganzes gebraucht wird, etwa im Gesamtpotenzial. Die Zerlegung ist vor allem dann nötig, wenn der Wert nach Abschluss allein gebraucht wird, etwa für Maßnahmen. Für das Produkt selbst gibt es auf beiden Wegen nie eine Schadenerwartung, auch wenn es ein Schadenmodell hat.</p>
+                <dl class="facts">
+                  <dt class="fh">Weg 1: Direkt</dt><dd>Am Kundenwert lernen, Nichtabschluss zählt null. Abschluss und Wert nach Abschluss stecken gemeinsam im Ergebnis.</dd>
+                  <dt>Regelfall</dt><dd>Am tatsächlichen Kundenwert aus Abschlüssen lernen. Der Offset ist offen.</dd>
+                  <dt>Rückfall</dt><dd>Zusammensetzen statt lernen, das ist dann die Zerlegung von Weg 2: Modell für den Abschluss mal Annahme zum Beitrag, Ersatzgröße (z.&nbsp;B. Schadenquote oder Combined Ratio je Sparte oder Segment) und Modell für den Verbleib.</dd>
+                </dl>
+                <dl class="facts">
+                  <dt class="fh">Weg 2: Zerlegt</dt><dd>Potenzialwert = Abschluss × Wert nach Abschluss. Liefert den Wert nach Abschluss als eigenen Baustein. Für Maßnahmen ersetzt dort der Kausalscore den Faktor Abschluss.</dd>
+                  <dt>Abschluss</dt><dd>Regelfall: Abschlussmodell auf Versicherungshistorie und MDM. Rückfall: Abschlussquote je Sparte oder Segment.</dd>
+                  <dt>Wert nach Abschluss</dt><dd>Regelfall: am tatsächlichen Kundenwert lernen, nur auf Kunden, die das Produkt im Folgezeitraum abgeschlossen haben. Rückfall: Annahme zum Beitrag, Ersatzgröße, Modell für den Verbleib.</dd>
+                </dl>
+                <dl class="facts">
+                  <dt>Belastbarkeit</dt><dd>Unsicherster Teil des Kundenwerts, vor allem der Abschluss. Ein auf Abschließern gelernter Wert nach Abschluss kann für Kunden, die erst durch eine Maßnahme abschließen, abweichen. Sein Anteil wächst mit dem Horizont.</dd>
+                </dl>
+              </div>
+            </div>
+            <p class="foot">Ein Kunde hat meist mehrere Produkte und im selben Produkt mitunter mehrere Verträge. Ihre Kundenwerte können sich unterscheiden, und der Kundenwert des Kunden mischt besser und gröber gestützte Teile. Ob je Vertrag, je Produkt oder über alle Produkte gemeinsam modelliert wird, ist offen. Davon hängt auch ab, welche Rolle die Schadenerwartung bekommen kann.</p>
+          </div>
+
+          <div class="col d3">
+            <div class="group" id="g-fa">
+              <div class="gh"><b>Frage A: Welcher Umfang?</b></div>
+              <div class="node dim" id="u-bestand">
+                <h4>Bestandswert</h4>
+                <p>Nur Bestandsprodukte.</p>
+              </div>
+              <div class="node dim" id="u-gesamt">
+                <h4>Gesamtpotenzial</h4>
+                <p>Bestandswert plus Potenzialwert.</p>
+              </div>
+              <div class="node dim" id="u-pot">
+                <h4>Potenzialwert</h4>
+                <p>Künftige Produkte, direkt gelernt oder zerlegt in Abschluss mal Wert nach Abschluss. Ob Upselling und weitere Verträge im selben Produkt dazuzählen, ist offen.</p>
+              </div>
+            </div>
+            <div class="group" id="g-fb">
+              <div class="gh"><b>Frage B: Auf welcher Ebene?</b><span>Ein Kunde kann im selben Produkt mehrere Verträge haben, etwa mehrere Kfz-Verträge. Der Wert kann je Vertrag oder über alle Verträge hinweg ausgegeben werden.</span></div>
+              <div class="opts"><span class="opt">Kunde gesamt</span><span class="opt">Je Sparte</span><span class="opt">Je Produkt</span><span class="opt">Je Vertrag</span></div>
+              <p class="foot">Jeder Umfang lässt sich auf jeder Ebene bilden, mit einer Ausnahme: Je Vertrag setzt bestehende Verträge voraus und gilt deshalb nur für den Bestand.</p>
+            </div>
+            <div class="group" id="g-fc">
+              <div class="gh"><b>Frage C: Über welchen Horizont?</b><span>Je Horizont entsteht ein eigener Wert.</span></div>
+              <div class="opts"><span class="opt">Kürzerer Horizont</span><span class="opt">Längerer Horizont</span></div>
+            </div>
+            <div class="group">
+              <div class="gh"><b>Frage D: Sortierung oder absolute Bemessung?</b></div>
+              <div class="node dim" id="u-sort">
+                <h4>Sortierung</h4>
+                <p>Die Rangfolge der Kunden muss stimmen. Das Niveau ist zweitrangig.</p>
+              </div>
+              <div class="node dim" id="u-abs">
+                <h4>Absolute Bemessung</h4>
+                <p>Der Betrag in Euro muss stimmen, im Mittel größerer Kundenmengen und in der Summe.</p>
+              </div>
+            </div>
+            <p class="foot">Die vier Fragen werden getrennt beantwortet und lassen sich kombinieren. Nicht jede Kombination ist gleich gut gestützt. Drei Use Cases dazu stehen im untersten Feld.</p>
+          </div>
+
+          <div class="col" id="col-m">
+            <div class="group">
+              <div class="gh"><b>Grundlage für alle Metriken</b></div>
+              <div class="node" id="m-rueck">
+                <h4>Rückblick</h4>
+                <p>Vorhergesagter Kundenwert zum Prüfstichtag, verglichen mit dem tatsächlichen Kundenwert im Folgezeitraum danach.</p>
+              </div>
+            </div>
+            <div class="group">
+              <div class="gh"><b>Zu Frage A bis C: Was wird verglichen?</b></div>
+              <div class="node" id="m-a">
+                <h4>Gewählter Umfang</h4>
+                <p>Bestandswert, Potenzialwert oder Gesamtpotenzial. Wo sinnvoll, zusätzlich die Ereignisse dahinter: Kündigung beim Bestandswert, Abschluss beim Potenzialwert. Auf dem zerlegten Weg je Faktor: der Abschluss als Wahrscheinlichkeit, der Wert nach Abschluss auf Abschließern.</p>
+              </div>
+              <div class="node" id="m-b">
+                <h4>Gewählte Ebene</h4>
+                <p>Kunde gesamt, je Sparte, je Produkt oder je Vertrag. Je feiner die Ebene, desto stärker streuen die einzelnen Werte.</p>
+              </div>
+              <div class="node" id="m-c">
+                <h4>Gewählter Horizont</h4>
+                <p>Je Horizont eine eigene Auswertung. Längere Horizonte brauchen weiter zurückliegende Stichtage.</p>
+              </div>
+            </div>
+            <div class="group">
+              <div class="gh"><b>Zu Frage D: Womit wird gemessen?</b></div>
+              <div class="node" id="m-sort">
+                <h4>Rangmaße</h4>
+                <p>Rangkorrelation (<span class="mono">Spearman</span>), tatsächlicher Kundenwert je Dezil, <span class="mono">Lift</span> in den obersten Dezilen.</p>
+              </div>
+              <div class="node" id="m-abs">
+                <h4>Niveaumaße</h4>
+                <p>Kalibrierung je Dezil, <span class="mono">Bias</span>, Summenabgleich mit dem Portfolio.</p>
+              </div>
+            </div>
+            <p class="foot">Der Kundenwert kann negativ sein, und der tatsächliche Potenzialwert ist bei den meisten Kunden null. Maße, die positive Werte voraussetzen, passen dann nicht ohne Weiteres.</p>
+          </div>
+
+          <div class="col">
+            <div class="group" id="g-probe">
+              <div class="gh"><b>Jede Metrik zusätzlich je Teilgruppe</b><span>Teilgruppen sind die Kundengruppen (D5) und die Produktfälle (D2). Die Gesamtgüte kann überwiegend aus den Unterschieden zwischen ihnen stammen.</span></div>
+              <div class="node dim d2">
+                <h4><span class="tag">D5</span>Güte je Kundengruppe</h4>
+                <p>Rang- und Niveaumaße getrennt für lange Bestandskunden und neuere Kunden.</p>
+              </div>
+              <div class="node dim d2">
+                <h4><span class="tag">D5</span>Rangverteilung der Kundengruppen</h4>
+                <p>Anteil beider Kundengruppen je Dezil. Zeigt, ob die Rangfolge vor allem die Kundendauer abbildet.</p>
+              </div>
+              <div class="node dim d4">
+                <h4><span class="tag">D2</span>Güte je Produktfall</h4>
+                <p>Rang- und Niveaumaße getrennt für Bestandsprodukte mit Schadenmodell, ohne Schadenmodell und künftige Produkte. Zeigt, wo die Güte ohne Schadenerwartung abfällt. Setzt voraus, dass sich auch der vorhergesagte Wert nach Produktfall aufteilen lässt.</p>
+              </div>
+              <div class="node dim d4">
+                <h4><span class="tag">D2</span>Wert nach Abschluss je Herkunft</h4>
+                <p>Nur auf dem zerlegten Weg. Niveaumaße getrennt für Abschlüsse mit und ohne vorherige Maßnahme. Zeigt, ob der auf Abschließern gelernte Wert auch für Kunden gilt, die erst durch eine Maßnahme abschließen.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Querschnitt: eigenes Feld, gleiche Spalten -->
+          <div class="fgap"></div>
+          <div class="xt">
+            <h2>Zwei Dimensionen quer zum Hauptweg</h2>
+            <p>Jede Zelle sagt, was sich an der Station darüber ändert.</p>
+          </div>
+          <div></div>
+          <div class="ucst">Station 1 · Datentöpfe</div>
+          <div class="ucst">Station 2 · Rolle im Modell</div>
+          <div class="ucst">Station 3 · Produkte</div>
+          <div class="ucst">Station 4 · Einsatzart</div>
+          <div class="ucst">Station 5 · Metriken</div>
+          <div class="ucst">Station 6 · Gegenprobe</div>
+
+          <!-- D4 Phase -->
+          <div class="lt d1"><span class="tag">D4</span><h3>Phase: Entwicklung oder Produktion</h3><p>In der Entwicklung wird festgelegt und im Rückblick geprüft. In der Produktion wird angewendet und nur noch konsumiert.</p></div>
+          <div class="ll d1">Entwicklung</div>
+          <div class="lc">Die Datentöpfe werden selbst gezogen, rückwirkend und möglichst mit dem Stand des jeweiligen Stichtags. Die Schadenmodelle dürfen selbst angesprochen werden. Ins Modell kommt aber nur, was später auch geliefert wird.</div>
+          <div class="lc">Auch die Zielgröße liegt vor, weil der Folgezeitraum schon vergangen ist. Merkmale und, sofern verwendet, der Offset enthalten nur, was am Stichtag bekannt war. Hier wird festgelegt, welche Rolle die Schadenerwartung bekommt.</div>
+          <div class="lc">Für die Produktfälle ohne Schadenerwartung wird entschieden, ob der Regelfall trägt oder der Rückfall nötig ist, und für künftige Produkte, welcher Weg zum Potenzialwert gebraucht wird. Auch die Behandlung von Lieferlücken wird hier festgelegt.</div>
+          <div class="lc">Je Use Case wird festgelegt: Umfang, Ebene, Horizont und Sortierung oder absolute Bemessung.</div>
+          <div class="lc">Gemessen wird im Rückblick. Der Prüfstichtag liegt nach dem Trainingsstichtag, und die beiden Folgezeiträume überlappen sich möglichst nicht.</div>
+          <div class="lc">Die Teilgruppen und ihre Grenzen werden vor der Auswertung festgelegt. Die Gegenprobe läuft im Rückblick mit.</div>
+          <div class="ll d1">Produktion</div>
+          <div class="lc">Alle Daten werden geliefert und nur noch konsumiert, die Schadenmodelle nicht mehr selbst angesprochen. Schadenerwartung: voraussichtlich ein- bis zweimal jährlich. Versicherungshistorie: aus der langfristig verfügbaren Datenbasis. MDM: Lieferung gewährleistet. Kostendaten: offen, von wem sie bezogen werden und wie häufig.</div>
+          <div class="lc">Es gibt nur Merkmale und, sofern verwendet, den Offset, gebildet wie im Training. Die Schadenerwartung behält ihre Rolle aus der Entwicklung. Die Zielgröße entsteht erst mit Ablauf des Horizonts und dient dann der Kontrolle.</div>
+          <div class="lc">Die Entscheidungen aus der Entwicklung werden nur angewendet, auch die Behandlung von Lieferlücken. Verwendete Ersatzgrößen werden aktuell gehalten.</div>
+          <div class="lc">Jeder Use Case erhält den Wert mit seinem Umfang, seiner Ebene und seinem Horizont, gekennzeichnet als Sortierung oder absolute Bemessung, und dann, wenn er ihn braucht.</div>
+          <div class="lc">Sofort messbar sind nur die Verteilung der Eingangsdaten und die Stabilität der Rangfolge. Rang- und Niveaumaße folgen erst, wenn der Horizont abgelaufen ist.</div>
+          <div class="lc">Sofort sichtbar ist nur die Rangverteilung der Kundengruppen. Die Güte je Teilgruppe folgt erst, wenn der Horizont abgelaufen ist.</div>
+
+          <!-- D5 Kundendauer -->
+          <div class="lt d2"><span class="tag">D5</span><h3>Kundendauer: langer Bestandskunde oder neuerer Kunde</h3><p>Wie viel ist über den Kunden schon bekannt? Die Kundengruppe wird am Stichtag bestimmt.</p></div>
+          <div class="ll d2">Langer Bestandskunde</div>
+          <div class="lc">Die Versicherungshistorie reicht weit zurück und ist die wichtigste Quelle.</div>
+          <div class="lc">Die Merkmale stammen aus dem eigenen Verlauf des Kunden, etwa aus seiner bisherigen Schadenintensität.</div>
+          <div class="lc">Tendenziell mehrere Bestandsprodukte. Für die mit Schadenmodell liegt die Schadenerwartung vor.</div>
+          <div class="lc">Der Bestandswert macht einen großen Teil des Kundenwerts aus und ist am besten gestützt.</div>
+          <div class="lc">Die Metriken fallen in der Regel besser aus, weil über den Kunden mehr bekannt ist.</div>
+          <div class="lc">Stehen lange Bestandskunden fast geschlossen oben, bildet die Rangfolge vor allem die Kundendauer ab.</div>
+          <div class="ll d2">Neuerer Kunde</div>
+          <div class="lc">Die Versicherungshistorie ist kurz. Wichtiger werden die Daten aus dem MDM: die Vertragswerte der Sparten und die Marketingdaten.</div>
+          <div class="lc">Aus dem eigenen Verlauf gibt es kaum Merkmale. Das Modell stützt sich auf das, was es von vergleichbaren Kunden gelernt hat.</div>
+          <div class="lc">Tendenziell wenige Bestandsprodukte und viele künftige. Kam der Kunde nach der letzten Lieferung dazu, fehlt die Schadenerwartung noch. Ob dann mit ähnlichen Kunden gearbeitet wird, ist offen.</div>
+          <div class="lc">Der Potenzialwert hat mehr Gewicht. Beträge sind hier weniger belastbar als die Rangfolge.</div>
+          <div class="lc">Die Metriken fallen in der Regel schwächer aus. Das ist zu erwarten und wird getrennt ausgewiesen.</div>
+          <div class="lc">Hier zeigt sich, ob der Kundenwert auch ohne lange Historie trägt. Die Gesamtgüte verrät das nicht.</div>
+
+          <!-- Use Cases: eigenes Feld, gleiche Spalten -->
+          <div class="fgap"></div>
+          <div class="xt ucx">
+            <h2>Drei Use Cases entlang des Hauptwegs</h2>
+            <p>Zum Ausklappen. Jede Zelle sagt, was an der Station darüber für den Use Case zählt und was einfließen muss. Wie ein Kundenwert aufgebaut sein muss, der alle drei bedient, ist bewusst nicht vorgegeben.</p>
+            <button class="ucall" id="ucall" type="button" aria-pressed="false">Alle ausklappen</button>
+          </div>
+          <div></div>
+          <div class="ucst">Station 1 · Datentöpfe</div>
+          <div class="ucst">Station 2 · Rolle im Modell</div>
+          <div class="ucst">Station 3 · Produkte</div>
+          <div class="ucst">Station 4 · Einsatzart</div>
+          <div class="ucst">Station 5 · Metriken</div>
+          <div class="ucst">Station 6 · Gegenprobe</div>
+
+          <div class="lt d6"><h3><button class="uct" type="button" aria-expanded="false" data-uc="u1"><span class="chev" aria-hidden="true"></span><span class="tag">U1</span>Direktwerbeaktion</button></h3><p>Ein bestimmtes Produkt wird beworben. Anspruchsvoll: ein Eurobetrag auf dem unsichersten Teil des Kundenwerts.</p></div>
+          <div class="ll d6" data-row="u1" hidden>Wer bekommt einen Brief?</div>
+          <div class="lc uc" data-row="u1" hidden><ul class="mini d5"><li><span class="tag">1.1</span><span><b>HF3:</b> Für das beworbene Produkt gibt es keine Schadenerwartung, es ist für den Kunden ein künftiges Produkt.</span></li><li><span class="tag">1.2</span><span><b>MDM:</b> Merkmale für den Wert nach Abschluss, mit Marketingdaten und Vertragswerten der Sparten. Die Abschlussneigung ist Sache des Kausalscores.</span></li><li><span class="tag">1.3</span><span><b>Historie:</b> Produktbesitz und Verlauf bis zum Stichtag als Merkmale. Abschlüsse danach bestimmen die Lernmenge, ihr Kundenwert die Zielgröße.</span></li><li><span class="tag">1.4</span><span><b>Kosten:</b> Nötig, weil der Betrag zählt.</span></li></ul></div>
+          <div class="lc uc" data-row="u1" hidden><ul class="mini"><li><span><b>Zielgröße:</b> Wert nach Abschluss des beworbenen Produkts, längerer Horizont, gelernt auf Abschließern. Der Faktor Abschluss entfällt, ihn ersetzt der Kausalscore der Aktion.</span></li><li><span><b>Offset:</b> Offen.</span></li><li><span><b>Schadenerwartung:</b> Höchstens als Merkmal, aus Bestandsprodukten des Kunden mit Schadenmodell.</span></li></ul></div>
+          <div class="lc uc" data-row="u1" hidden><p>Nur der Fall „künftiges Produkt“, und nur für das beworbene Produkt. Wer es schon hat, fällt heraus oder ist ein Fall für Upselling.</p><p>Gebraucht wird der zerlegte Weg, und davon nur der Wert nach Abschluss. Greift der Rückfall, reichen Beitragsannahme, Ersatzgröße und Verbleibsmodell, ein Abschlussmodell ist nicht nötig.</p></div>
+          <div class="lc uc" data-row="u1" hidden><div class="opts d3"><span class="opt"><i>A</i>Potenzialwert, nur Wert nach Abschluss</span><span class="opt"><i>B</i>Je Produkt</span><span class="opt"><i>C</i>Längerer Horizont</span><span class="opt"><i>D</i>Absolute Bemessung</span></div><p>Der Cut-off entsteht aus Kausalscore mal Wert nach Abschluss gegen die Kosten je Brief. Die Abschlusswahrscheinlichkeit darf nicht zusätzlich eingehen, sie steckt im Kausalscore.</p></div>
+          <div class="lc uc" data-row="u1" hidden><p>Niveaumaße für den Wert nach Abschluss, ausgewertet auf Abschließern. Die Kalibrierung zählt vor allem im Bereich des Cut-offs. Die Trennung von Abschluss und Nichtabschluss ist Sache des Kausalscores, nicht des Kundenwerts.</p></div>
+          <div class="lc uc" data-row="u1" hidden><p>Kalibrierung je Kundengruppe. Prüfen, ob der Cut-off eine Kundengruppe fast ganz ausschließt.</p><p>Wert nach Abschluss je Herkunft: Stimmt er auch für Kunden, die erst durch die Aktion abschließen? Die Gegenprobe je Produktfall entfällt, es gibt nur einen.</p></div>
+
+          <div class="lt d6"><h3><button class="uct" type="button" aria-expanded="false" data-uc="u2"><span class="chev" aria-hidden="true"></span><span class="tag">U2</span>Lead</button></h3><p>Leads zu mehreren Produkten werden nachbearbeitet, oder der Vermittler bietet die Produkte an. Es geht um neues Cross- und Upselling. Die Ebene hängt davon ab, wer nachbearbeitet.</p></div>
+          <div class="ll d6" data-row="u2" hidden>Welcher Lead wird nachbearbeitet?</div>
+          <div class="lc uc" data-row="u2" hidden><ul class="mini d5"><li><span class="tag">1.1</span><span><b>HF3:</b> Für künftige Produkte gibt es keine Schadenerwartung. Beim Upselling liegt sie nur für den bisherigen Vertrag vor.</span></li><li><span class="tag">1.2</span><span><b>MDM:</b> Trägt die Signale für Cross- und Upselling.</span></li><li><span class="tag">1.3</span><span><b>Historie:</b> Zeigt, welche Produkte fehlen und welche erweiterbar sind. Abschlüsse und Erweiterungen danach bestimmen die Lernmenge, ihr Kundenwert die Zielgröße.</span></li><li><span class="tag">1.4</span><span><b>Kosten:</b> Nötig, weil der Betrag zählt.</span></li></ul></div>
+          <div class="lc uc" data-row="u2" hidden><ul class="mini"><li><span><b>Zielgröße:</b> Wert nach Abschluss je Produkt des Leads, summiert auf Kunde gesamt oder je Sparte, längerer Horizont. Der Faktor Abschluss ist hier der Abschluss gegeben Lead; entscheidet ein Kausalscore über die Nachbearbeitung, ersetzt er ihn.</span></li><li><span><b>Offset:</b> Offen.</span></li><li><span><b>Schadenerwartung:</b> Beim Upselling für den bisherigen Vertrag, Rolle offen. Sonst höchstens als Merkmal, aus Bestandsprodukten des Kunden mit Schadenmodell.</span></li></ul></div>
+          <div class="lc uc" data-row="u2" hidden><p>Mehrere künftige Produkte zugleich, dazu Upselling in Bestandsprodukten. Dafür müsste Upselling zum Potenzial zählen, die Abgrenzung ist noch offen.</p><p>Gebraucht wird je Produkt der Wert nach Abschluss, beim Upselling der Wert nach Erweiterung, also der zerlegte Weg. Die Summe mischt besser und gröber gestützte Produkte.</p></div>
+          <div class="lc uc" data-row="u2" hidden><div class="opts d3"><span class="opt"><i>A</i>Potenzialwert, vor allem Wert nach Abschluss</span><span class="opt"><i>B</i>Kunde gesamt oder je Sparte</span><span class="opt"><i>C</i>Längerer Horizont</span><span class="opt"><i>D</i>Absolute Bemessung</span></div><p>Gegengerechnet werden die Kosten der Nachbearbeitung, gegen Kausalscore mal Wert nach Abschluss oder, ohne Kausalscore, gegen Abschluss gegeben Lead mal Wert nach Abschluss.</p></div>
+          <div class="lc uc" data-row="u2" hidden><p>Niveaumaße für den Wert nach Abschluss auf der gewählten Ebene, ausgewertet auf Abschließern. Werden beide Ebenen genutzt, müssen die Sparten und ihre Summe zueinander passen.</p></div>
+          <div class="lc uc" data-row="u2" hidden><p>Kalibrierung je Kundengruppe und je Produktfall. Prüfen, ob der Wert im Wesentlichen aus einer einzigen Sparte stammt. Wert nach Abschluss je Herkunft, weil Leads anders abschließen als ungefragte Kunden.</p></div>
+
+          <div class="lt d6"><h3><button class="uct" type="button" aria-expanded="false" data-uc="u3"><span class="chev" aria-hidden="true"></span><span class="tag">U3</span>Priorisierung im Kundenbetreuungscenter</button></h3><p>Kunden mit hohem Gesamtpotenzial werden besser und schneller bedient. Verzeiht am meisten, weil nur die Rangfolge zählt.</p></div>
+          <div class="ll d6" data-row="u3" hidden>Wer wird zuerst bedient?</div>
+          <div class="lc uc" data-row="u3" hidden><ul class="mini d5"><li><span class="tag">1.1</span><span><b>HF3:</b> Schadenerwartung nur für Bestandsprodukte mit Schadenmodell.</span></li><li><span class="tag">1.2</span><span><b>MDM:</b> Vor allem für den Potenzialanteil.</span></li><li><span class="tag">1.3</span><span><b>Historie:</b> Trägt den Bestandswert.</span></li><li><span class="tag">1.4</span><span><b>Kosten:</b> Gehen ein, sind für die Rangfolge aber weniger kritisch als für Beträge.</span></li></ul></div>
+          <div class="lc uc" data-row="u3" hidden><ul class="mini"><li><span><b>Zielgröße:</b> Gesamtpotenzial, längerer Horizont.</span></li><li><span><b>Offset:</b> Offen.</span></li><li><span><b>Schadenerwartung:</b> Deckt nur einen Teil des Gesamtpotenzials ab, die Bestandsprodukte mit Schadenmodell. Ihre Rolle ist offen.</span></li></ul></div>
+          <div class="lc uc" data-row="u3" hidden><p>Alle drei Produktfälle zählen mit. Für künftige Produkte reicht der direkte Weg. Ihre Werte müssen im Niveau zueinander passen, sonst verzerrt die Summe die Rangfolge.</p></div>
+          <div class="lc uc" data-row="u3" hidden><div class="opts d3"><span class="opt"><i>A</i>Gesamtpotenzial</span><span class="opt"><i>B</i>Kunde gesamt</span><span class="opt"><i>C</i>Längerer Horizont</span><span class="opt"><i>D</i>Sortierung</span></div><p>Bedient werden alle Anrufer, es zählt die Rangfolge. Der Wert muss beim Anruf vorliegen.</p></div>
+          <div class="lc uc" data-row="u3" hidden><p>Rangmaße. Wichtig sind die oberen Ränge und die Stabilität der Rangfolge über die Zeit.</p></div>
+          <div class="lc uc" data-row="u3" hidden><p>Rangverteilung der Kundengruppen: Landen neuere Kunden systematisch hinten, und ist das gewollt? Dazu die Güte je Kundengruppe und je Produktfall.</p></div>
+
+          <svg id="edges" aria-hidden="true"></svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="notes" aria-label="Zusammenhänge und offene Entscheidungen">
+    <div class="panel">
+      <div class="panel-h"><h2>Zusammenhänge</h2><p>Geordnet entlang des Hauptwegs, von den Datentöpfen zur Gegenprobe.</p></div>
+      <div class="it"><span class="where">Datentöpfe · Phase</span><p><b>Schadenmodelle: in der Entwicklung selbst angesprochen, in der Produktion nur konsumiert.</b> So muss in der Produktion die Datenbasis des Aktuariats weder laufend verstanden noch abgestimmt werden. In das Modell geht nur ein, was auch geliefert wird.</p></div>
+      <div class="it"><span class="where">Rolle im Modell</span><p><b>Gelernt wird am tatsächlichen Kundenwert.</b> Er ergibt sich aus Beiträgen minus Schäden minus Kosten im Folgezeitraum. Die Versicherungshistorie geht zweifach ein: bis zum Stichtag als Merkmale, etwa die bisherige Schadenintensität, danach als Zielgröße. Das MDM liefert weitere Merkmale: Marketingdaten und Vertragswerte der Sparten.</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Produkte</span><p><b>Die Schadenerwartung kann als Baustein des Offsets, als Merkmal oder als beides eingehen.</b> Ein Offset übernimmt das Wissen des Schadenmodells direkt und mit festem Gewicht, braucht dafür aber in jeder Zeile einen Wert. Ein Merkmal darf fehlen, das Modell muss den Zusammenhang aber erst lernen.</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Produkte</span><p><b>Welche Rolle passt, hängt am Modellzuschnitt.</b> In einem Modell je Vertrag oder je Produkt liegt die Schadenerwartung für Bestandsprodukte mit Schadenmodell bis auf Lieferlücken in jeder Zeile vor. Über Produkte gemeinsam modelliert, deckt sie nur einen Teil des Kundenwerts ab, ein Offset daraus wäre lückenhaft.</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Produkte</span><p><b>Verbleib und Abschluss stecken in der Zielgröße.</b> Auf dem zerlegten Weg ist der Abschluss ein eigener Faktor. Ein gekündigter Vertrag trägt ab der Kündigung nichts mehr bei, ein neuer erst ab dem Abschluss. Je länger der Horizont, desto stärker wirkt beides.</p></div>
+      <div class="it"><span class="where">Produkte</span><p><b>Für Produktfälle ohne Schadenerwartung gibt es eine Rückfalllösung.</b> Das betrifft Bestandsprodukte ohne Schadenmodell und alle künftigen Produkte. Trägt das Lernen dort nicht, wird der Kundenwert aus Beitrag und Ersatzgröße zusammengesetzt. Die Ersatzgröße sagt nur, was je Beitragseuro nach Schäden übrig bleibt, bei der Combined Ratio auch nach Kosten. Wie lange ein Vertrag bleibt und ob einer dazukommt, müssen dann eigene Modelle vorhersagen. Die Beträge sind nur grob.</p></div>
+      <div class="it"><span class="where">Einsatzart · Metriken</span><p><b>Die Einsatzart bestimmt die Metrik.</b> Umfang, Ebene und Horizont legen fest, was verglichen wird. Die Wahl zwischen Sortierung und absoluter Bemessung legt fest, womit gemessen wird.</p></div>
+      <div class="it"><span class="where">Produkte · Use Cases</span><p><b>Zum Potenzialwert führen zwei Wege.</b> Direkt am Kundenwert gelernt, enthält er Abschluss und Wert nach Abschluss in einem; das reicht für das Gesamtpotenzial und die Priorisierung (U3). Zerlegt in Abschluss mal Wert nach Abschluss liefert er den Wert nach Abschluss als eigenen Baustein, den Maßnahmen (U1, U2) brauchen: Dort zählt er multipliziert mit dem Kausalscore, und die Abschlusswahrscheinlichkeit darf nicht ein zweites Mal eingehen, weder als Faktor noch als Summand.</p></div>
+      <div class="it"><span class="where">Use Cases</span><p><b>Die drei Use Cases liegen an verschiedenen Enden.</b> U3 braucht nur die Rangfolge des Gesamtpotenzials. U1 und U2 brauchen Eurobeträge für künftige Produkte, den unsichersten Teil, und dort den Wert nach Abschluss. An ihnen entscheidet sich, ob der Regelfall bei künftigen Produkten trägt.</p></div>
+      <div class="it"><span class="where">Gegenprobe</span><p><b>Die Gesamtgüte allein ist nicht belastbar.</b> Sie kann überwiegend daraus stammen, dass lange Bestandskunden von neueren Kunden getrennt werden. Ob Rangfolge und Beträge auch innerhalb einer Kundengruppe tragen, zeigt erst die Gegenprobe.</p></div>
+    </div>
+    <div class="panel open">
+      <div class="panel-h"><h2>Offene Entscheidungen</h2><p>In derselben Reihenfolge, mit der betroffenen Station oder Dimension.</p></div>
+      <div class="it"><span class="where">Datentöpfe</span><p><b>Frühere Stichtage.</b> Liegen Schadenerwartung, Versicherungshistorie und die Daten aus dem MDM mit dem Stand früherer Stichtage vor, und wie weit zurück? Stimmt die selbst gewonnene Schadenerwartung mit den später gelieferten Werten überein? Ein später angepasstes Schadenmodell kennt den Folgezeitraum schon.</p></div>
+      <div class="it"><span class="where">Datentöpfe</span><p><b>Lieferform der Schadenerwartung.</b> Kommt sie je Vertrag oder je Produkt, und für welchen Zeitraum gilt sie?</p></div>
+      <div class="it"><span class="where">Datentöpfe · Produkte · Kundendauer</span><p><b>Lieferlücke.</b> Die Schadenerwartung wird für den Bestand voraussichtlich ein- bis zweimal jährlich geliefert. Für Kunden und Verträge, die danach dazukommen, fehlt sie bis zur nächsten Lieferung. Als Merkmal darf sie fehlen, als Baustein des Offsets müsste sie ersetzt werden. Ob dann mit ähnlichen Kunden gearbeitet wird, ist offen.</p></div>
+      <div class="it"><span class="where">Datentöpfe · Rolle im Modell</span><p><b>Kosten.</b> Welche Kosten gehen ein, und wie fein werden sie unterschieden (etwa fix und variabel, je Produkt)? Von wem werden die Kostendaten bezogen, und wie häufig?</p></div>
+      <div class="it"><span class="where">Rolle im Modell</span><p><b>Schäden in der Zielgröße.</b> Wie werden große Schäden behandelt?</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Produkte</span><p><b>Rolle der Schadenerwartung.</b> Geht sie als Baustein des Offsets, als Merkmal oder als beides ein? Das hängt am Modellzuschnitt. Welche Variante trägt, zeigt die Gegenprobe je Produktfall.</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Produkte</span><p><b>Offset und Rückfall.</b> Wird überhaupt ein Offset verwendet, und woraus wird er gebildet, etwa aus Schadenerwartung oder Ersatzgröße? Ab wann greift der Rückfall, welche Zusatzmodelle für Verbleib und Abschluss braucht er, und woher kommen die Ersatzgrößen?</p></div>
+      <div class="it"><span class="where">Rolle im Modell · Einsatzart</span><p><b>Horizonte und Stichtage.</b> Welche Horizonte werden gebildet, und wird je Horizont getrennt modelliert? Wie viele Trainings- und Prüfstichtage gibt es?</p></div>
+      <div class="it"><span class="where">Produkte</span><p><b>Abgrenzung von Bestand und Potenzial.</b> Wohin zählen Upselling (die Erweiterung eines Bestandsprodukts), ein weiterer Vertrag im selben Produkt und ein Ersatzvertrag im selben Produkt? Für Leads (U2) müsste Upselling zum Potenzial zählen.</p></div>
+      <div class="it"><span class="where">Produkte</span><p><b>Weg zum Potenzialwert.</b> Direkt gelernt, zerlegt oder beides? Müssen direkter und zerlegter Wert zueinander passen? Gilt der auf Abschließern gelernte Wert nach Abschluss auch für Kunden, die erst durch eine Maßnahme abschließen?</p></div>
+      <div class="it"><span class="where">Produkte</span><p><b>Modellzuschnitt.</b> Wird je Vertrag, je Produkt oder über alle Produkte gemeinsam modelliert? Im letzten Fall treffen Produkte mit und ohne Schadenerwartung zusammen, sie deckt dann nur einen Teil des Kundenwerts ab.</p></div>
+      <div class="it"><span class="where">Einsatzart</span><p><b>Stimmigkeit über Ebenen.</b> Müssen die Werte je Vertrag, je Produkt, je Sparte und gesamt zueinander passen? Für Leads (U2) mit zwei Ebenen ja.</p></div>
+      <div class="it"><span class="where">Phase</span><p><b>Aktualisierung.</b> Wie oft wird der Kundenwert in der Produktion neu berechnet, und wie alt darf die Schadenerwartung dabei sein?</p></div>
+      <div class="it"><span class="where">Kundendauer</span><p><b>Kundengruppen.</b> Wer gilt als Kunde, und ab wann als langer Bestandskunde?</p></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  var vp = document.getElementById('vp'), sizer = document.getElementById('sizer'),
+      cv = document.getElementById('cv'), svg = document.getElementById('edges'),
+      zval = document.getElementById('zval');
+  var NS = 'http://www.w3.org/2000/svg';
+  var gl = document.getElementById('gloss');
+  if (gl && window.innerWidth < 700) gl.removeAttribute('open');
+  var scale = 1, mode = 'width', W = 0, H = 0;
+  var MIN = 0.12, MAX = 1.6;
+
+  // [von, nach, Beschriftung, gestrichelt]
+  var EDGES = [
+    ['p-hf3','r-offset','als Baustein',1],
+    ['p-hf3','r-merk','als Merkmal',1],
+    ['p-mkt','r-merk','bis Stichtag',0],
+    ['p-hist','r-merk','bis Stichtag',0],
+    ['p-hist','r-ziel','nach Stichtag',0],
+    ['p-kost','r-ziel','Bezug offen',1],
+    ['g-alle','t-mit','nur hier mit HF3',0],
+    ['g-alle','t-ohne','für jedes Produkt',0],
+    ['g-alle','t-neu','',0],
+    ['g-bestand','u-bestand','ergibt',0],
+    ['g-bestand','u-gesamt','zählt mit',0],
+    ['g-neu','u-gesamt','zählt mit',0],
+    ['g-neu','u-pot','ergibt',0],
+    ['g-fa','m-a','bestimmt',0],
+    ['g-fb','m-b','bestimmt',0],
+    ['g-fc','m-c','bestimmt',0],
+    ['u-sort','m-sort','bestimmt',0],
+    ['u-abs','m-abs','bestimmt',0],
+    ['col-m','g-probe','für jede Metrik',0]
+  ];
+
+  function box(id){
+    var r = document.getElementById(id).getBoundingClientRect(), c = cv.getBoundingClientRect();
+    return {l:(r.left-c.left)/scale, r:(r.right-c.left)/scale, t:(r.top-c.top)/scale, b:(r.bottom-c.top)/scale,
+            cx:((r.left+r.right)/2-c.left)/scale, cy:((r.top+r.bottom)/2-c.top)/scale, h:r.height/scale};
+  }
+  function el(name, attrs){
+    var n = document.createElementNS(NS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    svg.appendChild(n); return n;
+  }
+  function spread(i, n, h, step){
+    var s = Math.min(step, (h-16)/Math.max(n,1));
+    return (i-(n-1)/2)*s;
+  }
+  function drawEdges(){
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);
+    var B = {}, out = {}, inc = {};
+    EDGES.forEach(function(e){
+      [e[0],e[1]].forEach(function(id){ if(!B[id]) B[id] = box(id); });
+      if (e[4] === 'v') return;
+      (out[e[0]] = out[e[0]] || []).push(e);
+      (inc[e[1]] = inc[e[1]] || []).push(e);
+    });
+    Object.keys(out).forEach(function(k){ out[k].sort(function(a,b){return B[a[1]].cy-B[b[1]].cy;}); });
+    Object.keys(inc).forEach(function(k){ inc[k].sort(function(a,b){return B[a[0]].cy-B[b[0]].cy;}); });
+    var labels = [];
+    EDGES.forEach(function(e){
+      var a = B[e[0]], b = B[e[1]], cls = 'e'+(e[3]?' dash':'');
+      if (e[4] === 'v') {
+        var x = a.cx, ya = a.b+8, yb = b.t-8;
+        el('path',{'class':cls, d:'M'+x+' '+ya+' L'+x+' '+(yb-11)});
+        el('polygon',{'class':'eh', points:x+','+yb+' '+(x-6)+','+(yb-12)+' '+(x+6)+','+(yb-12)});
+        if (e[2]) labels.push([e[2], x, (ya+yb)/2-4]);
+        return;
+      }
+      var y1 = a.cy + spread(out[e[0]].indexOf(e), out[e[0]].length, a.h, 18);
+      var y2 = b.cy + spread(inc[e[1]].indexOf(e), inc[e[1]].length, b.h, 16);
+      var x1 = a.r, x2 = b.l, xe = x2-11, dx = (xe-x1)*0.5;
+      el('path',{'class':cls, d:'M'+x1+' '+y1+' C'+(x1+dx)+' '+y1+' '+(xe-dx)+' '+y2+' '+xe+' '+y2});
+      el('polygon',{'class':'eh', points:(x2)+','+y2+' '+(x2-12)+','+(y2-6)+' '+(x2-12)+','+(y2+6)});
+      if (e[2]) labels.push([e[2], (x1+xe)/2, (y1+y2)/2]);
+    });
+    labels.forEach(function(l){
+      var bg = el('rect',{'class':'el-bg', rx:4});
+      var t = el('text',{'class':'el', x:l[1], y:l[2]});
+      t.textContent = l[0];
+      var w = 0;
+      try { w = t.getComputedTextLength(); } catch(err) {}
+      if (!w) w = l[0].length*8.6;
+      bg.setAttribute('x', l[1]-w/2-7); bg.setAttribute('y', l[2]-13);
+      bg.setAttribute('width', w+14); bg.setAttribute('height', 26);
+    });
+  }
+
+  function apply(s, ax, ay){
+    s = Math.max(MIN, Math.min(MAX, s));
+    var r = vp.getBoundingClientRect();
+    var px = ax == null ? vp.clientWidth/2 : ax;
+    var py = ay == null ? Math.max(0, Math.min(r.height, window.innerHeight/2 - r.top)) : ay;
+    var cx = (vp.scrollLeft+px)/scale, cy = py/scale;
+    scale = s;
+    sizer.style.width = Math.ceil(W*s)+'px';
+    sizer.style.height = Math.ceil(H*s)+'px';
+    cv.style.transform = 'scale('+s+')';
+    vp.scrollLeft = cx*s-px;
+    if (ready) window.scrollBy(0, cy*s-py);
+    zval.textContent = Math.round(s*100)+' %';
+  }
+  var ready = false;
+  function fitWidth(){ return vp.clientWidth / W; }
+  function fitAll(){
+    var bar = document.querySelector('.toolbar');
+    var maxH = Math.max(320, window.innerHeight - (bar ? bar.offsetHeight : 0) - 24);
+    return Math.min(vp.clientWidth / W, maxH / H);
+  }
+  function setMode(m, jump){
+    mode = m;
+    var was = ready; ready = false;
+    if (m === 'width') apply(Math.max(fitWidth(), 0.3));
+    else if (m === 'all') apply(fitAll());
+    vp.scrollLeft = 0;
+    ready = was;
+    if (jump) { var bar = document.querySelector('.toolbar'); if (bar && bar.scrollIntoView) bar.scrollIntoView({block:'start'}); }
+  }
+  function measure(){
+    cv.style.transform = 'none';
+    W = cv.offsetWidth; H = cv.offsetHeight;
+    var keep = scale; scale = 1;
+    drawEdges();
+    scale = keep;
+    var was = ready; ready = false;
+    if (mode === 'manual') apply(scale); else setMode(mode);
+    ready = was;
+  }
+
+  document.getElementById('zin').addEventListener('click', function(){ mode='manual'; apply(scale*1.25); });
+  document.getElementById('zout').addEventListener('click', function(){ mode='manual'; apply(scale/1.25); });
+  document.getElementById('zall').addEventListener('click', function(){ setMode('all', true); });
+  document.getElementById('zwidth').addEventListener('click', function(){ setMode('width', true); });
+  document.getElementById('zread').addEventListener('click', function(){ mode='manual'; apply(1); });
+
+  vp.addEventListener('wheel', function(ev){
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault();
+    var r = vp.getBoundingClientRect();
+    mode = 'manual';
+    apply(scale * Math.exp(-ev.deltaY*0.0022), ev.clientX-r.left, ev.clientY-r.top);
+  }, {passive:false});
+
+  var drag = null;
+  vp.addEventListener('pointerdown', function(ev){
+    if (ev.pointerType !== 'mouse' || ev.button !== 0) return;
+    if (ev.target.closest && ev.target.closest('button')) return;
+    drag = {x:ev.clientX, y:ev.clientY, l:vp.scrollLeft};
+    vp.classList.add('drag');
+    try { vp.setPointerCapture(ev.pointerId); } catch(err) {}
+  });
+  vp.addEventListener('pointermove', function(ev){
+    if (!drag) return;
+    vp.scrollLeft = drag.l-(ev.clientX-drag.x);
+    window.scrollBy(0, drag.y-ev.clientY);
+    drag.y = ev.clientY;
+  });
+  function endDrag(){ drag = null; vp.classList.remove('drag'); }
+  vp.addEventListener('pointerup', endDrag);
+  vp.addEventListener('pointercancel', endDrag);
+
+  function setUc(uc, open){
+    var btn = cv.querySelector('.uct[data-uc="'+uc+'"]');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    cv.querySelectorAll('[data-row="'+uc+'"]').forEach(function(n){ n.hidden = !open; });
+  }
+  function syncAll(){
+    var all = document.getElementById('ucall'), btns = cv.querySelectorAll('.uct');
+    var open = 0; btns.forEach(function(b){ if (b.getAttribute('aria-expanded') === 'true') open++; });
+    var every = open === btns.length;
+    all.textContent = every ? 'Alle einklappen' : 'Alle ausklappen';
+    all.setAttribute('aria-pressed', every ? 'true' : 'false');
+  }
+  cv.querySelectorAll('.uct').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      setUc(btn.getAttribute('data-uc'), btn.getAttribute('aria-expanded') !== 'true');
+      syncAll(); measure();
+    });
+  });
+  document.getElementById('ucall').addEventListener('click', function(){
+    var open = this.getAttribute('aria-pressed') !== 'true';
+    cv.querySelectorAll('.uct').forEach(function(b){ setUc(b.getAttribute('data-uc'), open); });
+    syncAll(); measure();
+  });
+
+  var rt = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(rt);
+    rt = setTimeout(function(){ if (mode !== 'manual') setMode(mode); }, 120);
+  });
+
+  measure();
+  ready = true;
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
+})();
+</script>
+
+</body></html>
