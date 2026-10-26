@@ -1,55 +1,48 @@
-23.10.2026 17:24 : Collecting pyreadstat>=1.2 (from rubin==1.0.0)
-23.10.2026 17:24 :   Downloading pyreadstat-1.3.7.tar.gz (549 kB)
-23.10.2026 17:24 :      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 549.7/549.7 kB 65.0 MB/s  0:00:00
-23.10.2026 17:24 :   Preparing metadata (pyproject.toml): started
-23.10.2026 17:24 :   Preparing metadata (pyproject.toml): finished with status 'error'
-23.10.2026 17:24 :   error: subprocess-exited-with-error
-23.10.2026 17:24 :   
-23.10.2026 17:24 :   × Preparing metadata (pyproject.toml) did not run successfully.
-23.10.2026 17:24 :   │ exit code: 1
-23.10.2026 17:24 :   ╰─> [13 lines of output]
-23.10.2026 17:24 :       Traceback (most recent call last):
-23.10.2026 17:24 :         File "/opt/conda/envs/hf1/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 389, in <module>
-23.10.2026 17:24 :           main()
-23.10.2026 17:24 :         File "/opt/conda/envs/hf1/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 373, in main
-23.10.2026 17:24 :           json_out["return_val"] = hook(**hook_input["kwargs"])
-23.10.2026 17:24 :         File "/opt/conda/envs/hf1/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 175, in prepare_metadata_for_build_wheel
-23.10.2026 17:24 :           return hook(metadata_directory, config_settings)
-23.10.2026 17:24 :         File "/opt/conda/envs/hf1/lib/python3.10/site-packages/setuptools/build_meta.py", line 380, in prepare_metadata_for_build_wheel
-23.10.2026 17:24 :           self.run_setup()
-23.10.2026 17:24 :         File "/opt/conda/envs/hf1/lib/python3.10/site-packages/setuptools/build_meta.py", line 317, in run_setup
-23.10.2026 17:24 :           exec(code, locals())  # noqa: S102 # exec is intentional here
-23.10.2026 17:24 :         File "<string>", line 21, in <module>
-23.10.2026 17:24 :       ModuleNotFoundError: No module named 'Cython'
-23.10.2026 17:24 :       [end of output]
-23.10.2026 17:24 :   
-23.10.2026 17:24 :   note: This error originates from a subprocess, and is likely not a problem with pip.
-23.10.2026 17:24 : error: metadata-generation-failed
-23.10.2026 17:24 : × Encountered error while generating package metadata.
-23.10.2026 17:24 : ╰─> pyreadstat
-23.10.2026 17:24 : note: This is an issue with the package mentioned above, not pip.
-23.10.2026 17:24 : hint: See above for details.
-23.10.2026 17:24 : + exitcode=1
-23.10.2026 17:24 : + '[' 1 -eq 0 ']'
-23.10.2026 17:24 : + sleep 2
-23.10.2026 17:24 : + exit 1
-23.10.2026 17:24 : + exit_logging
-23.10.2026 17:24 : + local -r code_at_exit=1
-23.10.2026 17:24 : + '[' -n '$CURL -sS -H "X-Api-Token: $DOMINO_EXECUTOR_TERMINATION_TOKEN" -X POST http://127.0.0.1:9000/executor/exit?exitCode=$code_at_exit || true' ']'
-23.10.2026 17:24 : + local max_retries=10
-23.10.2026 17:24 : + local retry_delay=3
-23.10.2026 17:24 : + echo 'Evaluating cleanup command on EXIT with exit code 1: $CURL -sS -H "X-Api-Token: $DOMINO_EXECUTOR_TERMINATION_TOKEN" -X POST http://127.0.0.1:9000/executor/exit?exitCode=$code_at_exit || true'
-23.10.2026 17:24 : Evaluating cleanup command on EXIT with exit code 1: $CURL -sS -H "X-Api-Token: $DOMINO_EXECUTOR_TERMINATION_TOKEN" -X POST http://127.0.0.1:9000/executor/exit?exitCode=$code_at_exit || true
-23.10.2026 17:24 : + local n=1
-23.10.2026 17:24 : + true
-23.10.2026 17:24 : + eval '$CURL' -sS -H '"X-Api-Token:' '$DOMINO_EXECUTOR_TERMINATION_TOKEN"' -X POST 'http://127.0.0.1:9000/executor/exit?exitCode=$code_at_exit' '||' true
-23.10.2026 17:24 : ++ /opt/domino/bin/curl -sS -H 'X-Api-Token: 2d8e43a6554cd7108523dc05942cbeeadef3e576b8e2f8a6d5e26b0f04d21b11' -X POST 'http://127.0.0.1:9000/executor/exit?exitCode=1'
-23.10.2026 17:24 : + break
-23.10.2026 17:24 : + [[ 1 =~ ^(0|137|143)$ ]]
-23.10.2026 17:24 : ++ tee -a /mnt/results/stdout.txt
-23.10.2026 17:24 : + sleep 0.5
-23.10.2026 17:24 : + echo 'Failed with exit code: 1'
-23.10.2026 17:24 : Failed with exit code: 1
-23.10.2026 17:24 : + exit 1
-23.10.2026 17:24 : Caught termination signal!
-23.10.2026 17:24 : -- killed by pod termination --
+(generic) ubuntu@192.168.130.54 /home/ubuntu/da-hf1-rubin (master) $ pixi run analyze-quick
+ WARN Using local manifest /home/ubuntu/da-hf1-rubin/pixi.toml rather than /opt/_global/code-server/pixi.toml from environment variable `PIXI_PROJECT_MANIFEST`
+✨ Pixi task (analyze-quick in default): python run_analysis.py --config configs/config_quickstart.yml: (Analyse mit Quickstart-Config (Smoke-Test; Daten via 'pixi run demo-data' oder eigene Parquets unter data/processed/))
+11:46:13 INFO [rubin.analysis] Arbeitsverzeichnis: /home/ubuntu/da-hf1-rubin/runs
+11:46:13 WARNING [root] Malformed experiment '312895441071439399'. Detailed error Yaml file '/domino/edv/pvc-hf1kundehuk/mlflow/312895441071439399/meta.yaml' does not exist.
+Traceback (most recent call last):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 386, in search_experiments
+    exp = self._get_experiment(exp_id, view_type)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 487, in _get_experiment
+    meta = FileStore._read_yaml(experiment_dir, FileStore.META_DATA_FILE_NAME)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 1676, in _read_yaml
+    return _read_helper(root, file_name, attempts_remaining=retries)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 1669, in _read_helper
+    result = read_yaml(root, file_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/utils/yaml_utils.py", line 104, in read_yaml
+    raise MissingConfigException(f"Yaml file '{file_path}' does not exist.")
+mlflow.exceptions.MissingConfigException: Yaml file '/domino/edv/pvc-hf1kundehuk/mlflow/312895441071439399/meta.yaml' does not exist.
+11:46:13 WARNING [root] Malformed experiment '312895441071439399'. Detailed error Yaml file '/domino/edv/pvc-hf1kundehuk/mlflow/312895441071439399/meta.yaml' does not exist.
+Traceback (most recent call last):
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 386, in search_experiments
+    exp = self._get_experiment(exp_id, view_type)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 487, in _get_experiment
+    meta = FileStore._read_yaml(experiment_dir, FileStore.META_DATA_FILE_NAME)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 1676, in _read_yaml
+    return _read_helper(root, file_name, attempts_remaining=retries)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/store/tracking/file_store.py", line 1669, in _read_helper
+    result = read_yaml(root, file_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/utils/yaml_utils.py", line 104, in read_yaml
+    raise MissingConfigException(f"Yaml file '{file_path}' does not exist.")
+mlflow.exceptions.MissingConfigException: Yaml file '/domino/edv/pvc-hf1kundehuk/mlflow/312895441071439399/meta.yaml' does not exist.
+Traceback (most recent call last):
+  File "/home/ubuntu/da-hf1-rubin/run_analysis.py", line 132, in <module>
+    main()
+  File "/home/ubuntu/da-hf1-rubin/run_analysis.py", line 128, in main
+    pipe.run(export_bundle=args.export_bundle, bundle_dir=args.bundle_dir, bundle_id=args.bundle_id)
+  File "/home/ubuntu/da-hf1-rubin/rubin/pipelines/analysis_pipeline.py", line 3561, in run
+    mlflow.set_experiment(cfg.mlflow.experiment_name)
+  File "/home/ubuntu/da-hf1-rubin/.pixi/envs/default/lib/python3.12/site-packages/mlflow/tracking/fluent.py", line 236, in set_experiment
+    raise MlflowException(
+mlflow.exceptions.MlflowException: Cannot set a deleted experiment 'rubin_quickstart' as the active experiment. You can restore the experiment, or permanently delete the experiment to create a new one.
