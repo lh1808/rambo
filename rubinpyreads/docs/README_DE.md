@@ -84,7 +84,8 @@ cd rubin_repo
 export PIXI_TLS_ROOT_CERTS="all"  # Firmennetz: Conda-Channels
 export UV_NATIVE_TLS=true           # Firmennetz: PyPI-Pakete (uv)
 pixi install                # Environment aufbauen (einmalig, inkl. PyPI-Pakete)
-pixi run analyze-quick      # Smoke-Test
+pixi run demo-data          # Synthetische Demo-Daten nach data/processed/
+pixi run analyze-quick      # Smoke-Test (erwartet X/T/Y.parquet unter data/processed/)
 pixi run app                # Web-UI starten
 pixi run test               # Tests ausführen
 ```

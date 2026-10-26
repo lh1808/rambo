@@ -44,7 +44,8 @@ cd rubin_repo
 export PIXI_TLS_ROOT_CERTS="all"  # Firmennetz: Conda-Channels
 export UV_NATIVE_TLS=true           # Firmennetz: PyPI-Pakete (uv)
 pixi install                # Environment aufbauen (einmalig, inkl. PyPI-Pakete)
-pixi run analyze-quick      # Smoke-Test
+pixi run demo-data          # Synthetische Demo-Daten nach data/processed/ (für den Smoke-Test)
+pixi run analyze-quick      # Smoke-Test (erwartet X/T/Y.parquet unter data/processed/ — Demo-Daten oder eigene)
 pixi run app                # Web-UI starten
 pixi run test               # Tests ausführen
 ```
@@ -132,6 +133,8 @@ python scripts/build_app_html.py   # Braucht Internetzugang
 
 Danach ist `app/frontend/index.html` selbständig (~3 MB) und funktioniert offline.
 
+Für UI-Entwicklung: Der Quellcode liegt als nummerierte JSX-Fragmente in `app/src/01…14_*.jsx`; `python app/build_ui.py` baut daraus `app/rubin_ui_src.jsx` und `app/frontend/index.html` (immer als Paar committen). Gates: `python scripts/check_ui_sync.py` (Transpile + Byte-Sync) — Details in `docs/app_build.md`.
+
 ### Domino App-Deployment
 
 Für das Deployment auf Domino Data Lab:
@@ -160,7 +163,7 @@ Abgedeckt sind unter anderem:
 - Base-Learner-Tuning (BLT) mit Optuna (Bayesian TPE), Skill Scores und Overfit-Penalty
 - CausalForest-Tuning (CFT) mit Optuna TPE über Forest-Parameter
 - Uplift-Metriken (Qini, AUUC, Uplift@k, Policy Value)
-- Final-Model-Tuning: OOF-CV mit est.score() — R-Loss (NonParamDML) / DR-MSE (DRLearner)
+- Final-Model-Tuning (NonParamDML, DRLearner): Optuna über die Final-Stage mit OOF-CV; Scorer konfigurierbar (`final_model_tuning.scorer`): `auto` → Qini bei RCT, R-Score bei Beobachtungsdaten, `qini_argmax` für Multi-Treatment
 - Explainability (SHAP) integriert in die Analyse-Pipeline
 - NaN-Toleranz: Alle Modelle außer CausalForestDML und CausalForest können mit fehlenden Werten umgehen (via LightGBM/CatBoost). CausalForestDML, CausalForest und die Feature-Selektionsmethode `causal_forest` (GRF) werden bei NaN automatisch übersprungen.
 - Feature-Selektion: Drei Methoden per Union — `catboost_importance` (Default, CatBoost Gain), `lgbm_importance` (LightGBM Gain), `causal_forest` (kausale Relevanz). Top-N% pro Methode + Korrelationsfilter.
@@ -168,6 +171,8 @@ Abgedeckt sind unter anderem:
 - Parallelisierung: Konfigurierbar über `constants.parallel_level` (1–4). Level 3 (Default) parallelisiert Base Learner und CV-Folds via joblib. Kerne werden proportional aufgeteilt (keine Übersubskription)
 - Kategorische Features: Automatisches Patching für EconML-Kompatibilität — LightGBM/CatBoost nutzen native kategoriale Splits (fit, predict, predict_proba, score), auch wenn EconML X intern zu numpy float64 konvertiert. dtypes.json wird automatisch erkannt.
 - Internes Cross-Fitting: Alle DML-Modelle und DRLearner verwenden `cv=5` (Default) für Nuisance-Residuals. Konfigurierbar über `data_processing.dml_crossfit_folds`.
+- Nachvollziehbarkeit je Quelldatei: Bei mehreren Eingangsdateien schreibt DataPrep `file_source.parquet` (Datei-Zuordnung je Zeile — Grundlage der Report-Sektion „Qini je Quelldatei" inkl. Vergleich gegen den historischen Score) und `row_provenance.parquet` (welche Original-Zeilen Deduplizierung/Treatment-Balance überlebt haben: Datei, Original-Zeilennummer, ID)
+- TMES-Reproduzierbarkeit: `eval_mask.npy` und `file_source.parquet` werden von DataPrep UND vom Analyse-Lauf als MLflow-Artefakte geloggt — das Eval-Subset ist aus den Logs rekonstruierbar (`predictions[mask]`)
 
 ## Explainability
 

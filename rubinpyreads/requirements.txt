@@ -18,7 +18,7 @@ econml>=0.15
 pyarrow>=12
 openpyxl>=3.0
 pyyaml>=6.0
-pyreadstat>=1.2
+pyreadstat>=1.2,<1.3.7  # Obergrenze: 1.3.7 ohne cp310-Wheel (sdist braucht Cython) — siehe pyproject.toml
 
 # Explainability (optional)
 shap>=0.43

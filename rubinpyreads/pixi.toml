@@ -16,7 +16,8 @@ env = { PIXI_TLS_ROOT_CERTS = "all", UV_NATIVE_TLS = "true" }
 
 [tasks]
 analyze = { cmd = "python run_analysis.py", description = "Analyse-Pipeline starten. Beispiel: pixi run analyze -- --config configs/config_quickstart.yml" }
-analyze-quick = { cmd = "python run_analysis.py --config configs/config_quickstart.yml", description = "Analyse mit Quickstart-Config (Smoke-Test)" }
+analyze-quick = { cmd = "python run_analysis.py --config configs/config_quickstart.yml", description = "Analyse mit Quickstart-Config (Smoke-Test; Daten via 'pixi run demo-data' oder eigene Parquets unter data/processed/)" }
+demo-data = { cmd = "python scripts/make_demo_data.py", description = "Synthetische Demo-Daten (X/T/Y.parquet) nach data/processed/ erzeugen — Voraussetzung für analyze-quick auf frischem Checkout" }
 dataprep = { cmd = "python run_dataprep.py", description = "Datenaufbereitung. Beispiel: pixi run dataprep -- --config configs/config_full.yml" }
 score = { cmd = "python run_production.py", description = "Production-Scoring. Beispiel: pixi run score -- --bundle runs/bundles/... --x data.csv --out scores.csv" }
 scoring = { cmd = "python production/run_scoring.py", description = "Produktivsetzung: Config-getriebenes Scoring mit SAS-XPT + Monitoring. Beispiel: pixi run scoring -- --config production/scoring_ph.yml" }
@@ -57,7 +58,7 @@ catboost = ">=1.2.7"  # numpy-2-ABI: aeltere 1.2.x segfaulten beim ersten fit()
 # Aufnahme von pyreadstat (mit dem prod-Feature) über die gemeinsame solve-group
 # den kompletten geteilten Stack neu ausgehandelt (u. a. llvm-openmp/numpy-Builds)
 # und damit die native Basis unter catboost/lightgbm verschoben.
-pyreadstat = ">=1.2"  # SAS-Export (XPT); auch im prod-Feature
+pyreadstat = ">=1.2,<1.3.7"  # SAS-Export (XPT); auch im prod-Feature. Obergrenze: 1.3.7 ohne cp310-Wheel (sdist braucht Cython)
 
 # ── Feature: shap (optional) ──
 [feature.shap.dependencies]
@@ -107,7 +108,7 @@ catboost = ">=1.2.7"  # numpy-2-ABI: aeltere 1.2.x segfaulten beim ersten fit()
 # ([pypi-dependencies]): kein Einfluss auf den gemeinsamen Conda-Solve.
 # SAS-Export (XPT V8 via pyreadstat.write_xport; natives sas7bdat-Schreiben
 # existiert in der Python-Welt nicht).
-pyreadstat = ">=1.2"
+pyreadstat = ">=1.2,<1.3.7"  # Obergrenze wie im Haupt-Block: 1.3.7 ohne cp310-Wheel (sdist braucht Cython)
 # SAS-Library-Einstieg (run_scoring_saspy.py): sd2df/df2sd via sascfg_personal.py.
 saspy = ">=5.0"
 
