@@ -636,7 +636,8 @@ class DataPrepPipeline:
                 mlflow.set_tracking_uri(f"file://{os.path.abspath(mlflow_dir)}")
 
             exp_name = dp.mlflow_experiment_name or self.cfg.mlflow.experiment_name
-            mlflow.set_experiment(exp_name)
+            from rubin.utils.mlflow_compat import set_experiment_robust
+            set_experiment_robust(mlflow, exp_name, logger=self._logger)
 
             # Run-Name: User-Eingabe oder auto-generiert
             from rubin.utils.run_names import generate_run_name

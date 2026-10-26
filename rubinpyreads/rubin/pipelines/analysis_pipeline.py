@@ -3558,7 +3558,8 @@ class AnalysisPipeline:
             mlflow_dir = os.path.join(work_dir, "mlruns")
             mlflow.set_tracking_uri(f"file://{os.path.abspath(mlflow_dir)}")
 
-        mlflow.set_experiment(cfg.mlflow.experiment_name)
+        from rubin.utils.mlflow_compat import set_experiment_robust
+        set_experiment_robust(mlflow, cfg.mlflow.experiment_name, logger=self._logger)
 
         # Prüfe ob DataPrep ein Experiment gespeichert hat (im Verzeichnis von x_file).
         # Falls ja und die Config noch den Default "rubin" verwendet, übernimm den
@@ -3574,7 +3575,7 @@ class AnalysisPipeline:
                     self._logger.info("MLflow-Experiment '%s' (identisch mit DataPrep).", dp_exp)
                 elif dp_exp and cfg.mlflow.experiment_name == "rubin":
                     # Config hat den Default → DataPrep-Experiment übernehmen
-                    mlflow.set_experiment(dp_exp)
+                    set_experiment_robust(mlflow, dp_exp, logger=self._logger)
                     self._logger.info(
                         "MLflow-Experiment '%s' aus DataPrep übernommen (Config hatte Default 'rubin').",
                         dp_exp,
