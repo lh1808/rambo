@@ -5,6 +5,10 @@
 # Ideal zum Testen, ob die Pipeline auf den eigenen Daten läuft.
 #
 #   python run_analysis.py --config configs/config_quickstart.yml
+#
+# Voraussetzung: X/T/Y.parquet unter data/processed/ — auf frischem
+# Checkout einmalig erzeugen mit:  pixi run demo-data
+# (oder eigene Parquets dorthin legen / die Pfade unten anpassen)
 # ============================================================
 
 mlflow:

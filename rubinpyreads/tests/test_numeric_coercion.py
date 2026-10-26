@@ -61,7 +61,10 @@ class TestNumericCoercion:
 
     def test_disabled_reproduces_prod_crash(self, tmp_path):
         p, _ = _cfg(tmp_path, coerce=False)
-        # Prod-Log: ValueError (CausalForest); Testbundle: CatBoostError
-        # (SurrogateTree scort zuerst) — gleiche Fehlerklasse, daher breit:
-        with pytest.raises(Exception, match=r"[Cc]onvert.*float|float.*'V'|'V'"):
+        # Prod-Log: ValueError (CausalForest). Die genaue Signatur hängt vom
+        # Bundle ab (selbstgebaute Fixture via conftest: die object-Spalte wird
+        # ohne Coercion als kategorisch behandelt → Categorical-Fehler beim
+        # numerischen NA-Fill) — gleiche Fehlerklasse "Sonderwert crasht
+        # Scoring", daher breit:
+        with pytest.raises(Exception, match=r"[Cc]onvert.*float|float.*'V'|'V'|Categorical"):
             run_scoring(load_scoring_config(str(p)))
