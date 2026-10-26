@@ -171,3 +171,119 @@ class TestAllNanColumnFillFallback:
         assert int(X.isnull().sum().sum()) == 0
         mv = json.load(open(outd / "missing_values.json"))
         assert mv.get("LEER") == 0.0 and mv.get("ALTER") == df["ALTER"].max()
+
+
+class TestCustomOutputPaths:
+    """Eigene Ausgabepfade: DataPrep schreibt nur nach output_path (feste Namen),
+    die Analyse liest data_files.* und sucht Nebenartefakte neben x_file.
+    Divergenz wird jetzt laut gewarnt; die file_source-Suche hat einen Fallback
+    über das Verzeichnis der konfigurierten eval_mask_file."""
+
+    def test_divergence_warning_fires_only_on_mismatch(self, tmp_path, caplog):
+        import logging
+        import numpy as np
+        import yaml
+        for differs, sub in [(True, "div"), (False, "ok")]:
+            tmp = tmp_path / sub
+            tmp.mkdir()
+            pd.DataFrame({"A": [1.0, 2.0] * 30, "T": [0, 1] * 30, "Y": [0, 1] * 30}).to_csv(tmp / "f.csv", index=False)
+            outd = tmp / "out"
+            outd.mkdir()
+            other = tmp / "woanders"
+            other.mkdir()
+            base = other if differs else outd
+            cfg = {"mlflow": {"experiment_name": "t"},
+                   "constants": {"SEED": 1, "work_dir": str(tmp / "runs")},
+                   "data_files": {"x_file": str(base / "X.parquet"),
+                                  "y_file": str(outd / "Y.parquet"),
+                                  "t_file": str(outd / "T.parquet")},
+                   "data_prep": {"data_path": [str(tmp / "f.csv")], "output_path": str(outd),
+                                 "target": "Y", "treatment": "T", "features": ["A"],
+                                 "score_name": None, "log_to_mlflow": False}}
+            p = tmp / "c.yml"
+            p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+            with caplog.at_level(logging.WARNING):
+                caplog.clear()
+                DataPrepPipeline.from_config_path(str(p)).run()
+            fired = any("zeigen NICHT auf output_path" in r.message for r in caplog.records)
+            assert fired == differs
+
+    def test_file_source_fallback_via_eval_mask_dir(self, tmp_path):
+        import numpy as np
+        import logging
+        from types import SimpleNamespace
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        art = tmp_path / "artefakte"
+        art.mkdir()
+        leer = tmp_path / "leer"
+        leer.mkdir()
+        n = 200
+        fs = np.array(["a.parquet"] * 120 + ["b.parquet"] * 80)
+        pd.DataFrame({"file_source": fs}).to_parquet(art / "file_source.parquet")
+        rng = np.random.default_rng(0)
+        y = (rng.random(n) < 0.1).astype(float)
+        t = (rng.random(n) > 0.5).astype(int)
+        fake = SimpleNamespace(_logger=logging.getLogger("t"),
+                               _eval_scores_ctx={"C": (y, t, rng.normal(size=n))},
+                               _eval_scores_ctx_full={}, _eval_scores_mask=None)
+        cfg = SimpleNamespace(
+            data_files=SimpleNamespace(x_file=str(leer / "X.parquet"),
+                                       eval_mask_file=str(art / "eval_mask.npy")),
+            historical_score=SimpleNamespace(name=None),
+            data_processing=SimpleNamespace(validate_on="cross"))
+        res = AnalysisPipeline._compute_per_file_qini(fake, cfg, "C")
+        assert [r["file"] for r in res["rows"]] == ["a.parquet", "b.parquet", "GESAMT"]
+
+
+
+class TestRowProvenance:
+    """row_provenance.parquet: Nach Dedup (zufälliger Vertreter je ID) und
+    Treatment-Balance ist im Nachhinein exakt rekonstruierbar, welche Zeilen
+    der Originaldateien behalten wurden — Spalten: orig_row (0-basiert, je
+    Datei), file (Basename), ID-Spalte (bei aktivem Dedup). Zeile i von
+    X.parquet == Original-Zeile orig_row[i] der Datei file[i]."""
+
+    def test_provenance_reconstructs_exact_original_rows(self, tmp_path):
+        import numpy as np
+        import yaml
+        rng = np.random.default_rng(5)
+        orig = {}
+        for j, name in enumerate(["welle_a.csv", "welle_b.csv"]):
+            n = 300
+            ids = np.concatenate([np.arange(180), np.arange(1000 + j * 500, 1000 + j * 500 + 120)])
+            rng.shuffle(ids)
+            d = pd.DataFrame({"KUNDE_ID": ids,
+                              "ALTER": rng.integers(18, 80, n).astype(float),
+                              "MARKER": rng.normal(size=n).round(6),
+                              "T": (rng.random(n) < (0.3 if j == 0 else 0.7)).astype(int),
+                              "Y": rng.integers(0, 2, n)})
+            d.to_csv(tmp_path / name, index=False)
+            orig[name] = d
+        outd = tmp_path / "out"
+        outd.mkdir()
+        cfg = {"mlflow": {"experiment_name": "t"},
+               "constants": {"SEED": 7, "work_dir": str(tmp_path / "runs")},
+               "data_files": {"x_file": str(outd / "X.parquet"),
+                              "y_file": str(outd / "Y.parquet"),
+                              "t_file": str(outd / "T.parquet")},
+               "data_prep": {"data_path": [str(tmp_path / "welle_a.csv"), str(tmp_path / "welle_b.csv")],
+                             "output_path": str(outd), "target": "Y", "treatment": "T",
+                             "features": ["ALTER", "MARKER"],
+                             "deduplicate": True, "deduplicate_id_column": "KUNDE_ID",
+                             "balance_treatments": True,
+                             "score_name": None, "log_to_mlflow": False}}
+        p = tmp_path / "c.yml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        DataPrepPipeline.from_config_path(str(p)).run()
+        X = pd.read_parquet(outd / "X.parquet")
+        T = pd.read_parquet(outd / "T.parquet")["T"]
+        prov = pd.read_parquet(outd / "row_provenance.parquet")
+        assert list(prov.columns) == ["orig_row", "file", "KUNDE_ID"]
+        assert len(prov) == len(X) < 600
+        for i in range(len(prov)):
+            o = orig[prov["file"].iloc[i]].iloc[int(prov["orig_row"].iloc[i])]
+            assert o["KUNDE_ID"] == prov["KUNDE_ID"].iloc[i]
+            # X ist durch die Memory-Reduktion float32 → Toleranz entsprechend
+            assert abs(o["MARKER"] - float(X["MARKER"].iloc[i])) < 1e-5
+            assert int(o["T"]) == int(T.iloc[i])
+        assert prov.groupby("KUNDE_ID").size().max() == 1

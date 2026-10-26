@@ -161,6 +161,8 @@ Standarddateien `X.parquet`, `T.parquet`, `Y.parquet` (und optional `S.parquet`)
 Wichtig: Die Analyse-Pipeline benötigt weiterhin `data_files`. Typischer Workflow ist daher:
 
 1. DataPrep ausführen (schreibt `X.parquet`, `T.parquet`, `Y.parquet`, `preprocessor.pkl`, … in `data_prep.output_path`)
+
+**Pfad-Kontrakt:** DataPrep schreibt ALLE Artefakte mit festen Namen nach `output_path` (X/Y/T/S.parquet, `eval_mask.npy`, `file_source.parquet`, `dataprep_config.yml`, Preprocessor). Die Analyse liest über `data_files.*` und sucht Nebenartefakte im Verzeichnis von `x_file` (Fallback: Verzeichnis der `eval_mask_file`). `data_files`-Pfade sollten deshalb auf `output_path/<Name>.parquet` zeigen — bei Abweichung warnt DataPrep beim Lauf.
 2. `data_files.*` auf diese Ausgabedateien zeigen lassen (entweder im selben `config.yml` oder in einem
    zweiten, identischen Analyse-Config-File)
 3. Analyse-Pipeline starten
@@ -212,6 +214,8 @@ data_prep:
   deduplicate: true                   # Kunden auf 1 Eintrag pro ID reduzieren
 
 **Verhalten bei mehreren Dateien:** Bei ID-Überschneidungen zwischen Dateien wird je ID ein **zufälliger Vertreter** behalten (seed-reproduzierbar über `constants.SEED`, die ursprüngliche Zeilenordnung bleibt erhalten) — nicht „erste Datei gewinnt“. Das verhindert Selektionsbias gegen spätere Dateien (z. B. das TMES-Eval-File); das Log zeigt die Zeilen je Datei vor und nach der Deduplizierung.
+
+**Nachvollziehbarkeit (row_provenance.parquet):** DataPrep legt neben X/Y/T eine Zuordnung ab, welche Original-Zeilen Deduplizierung und Treatment-Balance überlebt haben — Spalten: `orig_row` (0-basierte Zeilennummer innerhalb der jeweiligen Quelldatei), `file` (Basename; bei mehreren Dateien) und die ID-Spalte (bei aktivem `deduplicate`). Zeile *i* von `X.parquet` entspricht exakt Original-Zeile `orig_row[i]` der Datei `file[i]` — damit ist auch rekonstruierbar, *welches* Duplikat einer ID behalten wurde.
   deduplicate_id_column: "PARTNER_ID" # Spalte mit der Kunden-ID
 
   # Optional: Separater Eval-Datensatz. Der Preprocessor wird nur auf den

@@ -583,6 +583,30 @@ class DataPrepPipeline:
     def run(self) -> DataPrepOutputs:
         dp = self.dp
         out_dir = Path(dp.output_path)
+        # Kontrakt-Check: Die Analyse liest X/Y/T über data_files.* und sucht
+        # Nebenartefakte (file_source.parquet, dataprep_config.yml) NEBEN x_file.
+        # DataPrep schreibt aber ausschließlich nach output_path (feste Namen).
+        # Eigene, abweichende data_files-Pfade führen sonst zu stillen Lücken.
+        try:
+            _df_cfg = getattr(self.cfg, "data_files", None)
+            if _df_cfg is not None:
+                _mism = {
+                    lbl: str(p) for lbl, p in
+                    (("x_file", getattr(_df_cfg, "x_file", "")),
+                     ("y_file", getattr(_df_cfg, "y_file", "")),
+                     ("t_file", getattr(_df_cfg, "t_file", "")))
+                    if p and Path(str(p)).parent.resolve() != out_dir.resolve()
+                }
+                if _mism:
+                    self._logger.warning(
+                        "data_files-Pfade zeigen NICHT auf output_path (%s): %s. "
+                        "DataPrep schreibt alle Artefakte nach output_path — die Analyse würde "
+                        "unter diesen Pfaden nichts bzw. Fremdes finden (X/Y/T, file_source.parquet, "
+                        "dataprep_config.yml). Empfehlung: data_files auf '%s/<Name>.parquet' setzen.",
+                        out_dir, _mism, out_dir,
+                    )
+        except Exception:
+            pass
         out_dir.mkdir(parents=True, exist_ok=True)
 
         mlflow_run = None
@@ -659,6 +683,17 @@ class DataPrepPipeline:
         df = self._read_files()
 
         _progress("Deduplizierung")
+        # Provenienz: Original-Zeilennummer INNERHALB der jeweiligen Quelldatei
+        # als Begleitspalte, BEVOR Dedup/Balance Zeilen entfernen und die Indizes
+        # neu setzen. Wandert als normale Spalte durch beide Schritte und wird
+        # beim Save als row_provenance.parquet neben X/Y/T abgelegt — damit ist
+        # im Nachhinein exakt rekonstruierbar, welche Zeilen der Originaldateien
+        # behalten wurden (inkl. WELCHES Duplikat einer ID gewonnen hat).
+        if "__orig_row__" not in df.columns:
+            if "__file_source__" in df.columns:
+                df["__orig_row__"] = df.groupby("__file_source__").cumcount()
+            else:
+                df["__orig_row__"] = range(len(df))
         # Deduplizierung: auf einen Eintrag pro Kunde reduzieren.
         # Geschieht VOR der Treatment-Balance-Prüfung und Feature-Reduktion,
         # damit die Balance-Raten auf deduplizierten Daten berechnet werden
@@ -762,6 +797,26 @@ class DataPrepPipeline:
             _fs = df["__file_source__"].map(_label)
             if _fs.nunique() > 1:
                 self._file_source_vals = _fs.tolist()
+        # Provenienz-Puffer: welche Original-Zeilen überlebt haben. ID nur, wenn
+        # Dedup aktiv war (dann ist sie eindeutig je Zeile und noch im Frame).
+        self._row_provenance = None
+        if "__orig_row__" in df.columns:
+            _prov = {"orig_row": df["__orig_row__"].astype("int64").tolist()}
+            if "__file_source__" in df.columns:
+                import os as _os2
+                _paths2 = [str(p) for p in (dp.data_path or [])]
+                def _label2(v):
+                    sv = str(v)
+                    if sv.isdigit() and int(sv) < len(_paths2):
+                        return _os2.path.basename(_paths2[int(sv)])
+                    return _os2.path.basename(sv) or sv
+                _prov["file"] = df["__file_source__"].map(_label2).tolist()
+            _id_col_prov = str(dp.deduplicate_id_column).upper() if (dp.deduplicate and dp.deduplicate_id_column) else None
+            if _id_col_prov and _id_col_prov in df.columns:
+                _prov[_id_col_prov] = df[_id_col_prov].tolist()
+            self._row_provenance = _prov
+            df = df.drop(columns=["__orig_row__"])
+        if "__file_source__" in df.columns:
             df = df.drop(columns=["__file_source__"])
 
         _progress("Feature-Extraktion")
@@ -999,6 +1054,17 @@ class DataPrepPipeline:
                     self._logger.info("file_source.parquet gespeichert (%d Zeilen, %d Dateien) — ermöglicht Qini je Quelldatei im Report.", len(_fsv), len(set(_fsv)))
                 else:
                     self._logger.info("file_source-Zuordnung übersprungen (Längen-Mismatch %d != %d).", len(_fsv), len(Xp))
+            _prov = getattr(self, "_row_provenance", None)
+            if _prov is not None:
+                _plen = len(_prov["orig_row"])
+                if _plen == len(Xp):
+                    pd.DataFrame(_prov, index=Xp.index).to_parquet(out_dir / "row_provenance.parquet")
+                    self._logger.info(
+                        "row_provenance.parquet gespeichert (%d Zeilen, Spalten: %s) — Zeile i von X.parquet stammt aus Original-Zeile orig_row[i] (0-basiert, je Datei) der Spalte 'file'.",
+                        _plen, list(_prov.keys()),
+                    )
+                else:
+                    self._logger.info("row_provenance übersprungen (Längen-Mismatch %d != %d).", _plen, len(Xp))
         except ImportError as e:
             raise ImportError(
                 "X.parquet konnte nicht geschrieben werden, weil kein Parquet-Engine verfügbar ist. "

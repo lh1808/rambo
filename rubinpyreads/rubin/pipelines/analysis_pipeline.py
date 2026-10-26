@@ -2117,9 +2117,14 @@ class AnalysisPipeline:
         except Exception:
             pass
         y, t, score = ctx[champion_name]
-        fs_path = os.path.join(os.path.dirname(str(cfg.data_files.x_file)), "file_source.parquet")
-        if not os.path.exists(fs_path):
-            self._logger.info("Je-Datei-Qini übersprungen: %s nicht vorhanden (DataPrep vor dem Feature-Update oder nur eine Eingangsdatei).", fs_path)
+        _x_dir = os.path.dirname(str(cfg.data_files.x_file)) or "."
+        _cands = [os.path.join(_x_dir, "file_source.parquet")]
+        _mask_p = str(getattr(cfg.data_files, "eval_mask_file", "") or "")
+        if _mask_p:
+            _cands.append(os.path.join(os.path.dirname(_mask_p) or ".", "file_source.parquet"))
+        fs_path = next((p for p in _cands if os.path.exists(p)), None)
+        if fs_path is None:
+            self._logger.info("Je-Datei-Qini übersprungen: file_source.parquet nicht gefunden (gesucht: %s) — DataPrep vor dem Feature-Update, nur eine Eingangsdatei, oder eigene Ausgabepfade ohne Nebenartefakte.", _cands)
             return {}
         fs = pd.read_parquet(fs_path)["file_source"].astype(str).to_numpy()
         fs_full, tmes_mask = fs, None
@@ -3639,11 +3644,23 @@ class AnalysisPipeline:
                 # geloggten Predictions enthalten ALLE Zeilen — erst diese beiden
                 # Artefakte machen den Lauf selbsterklärend (Eval-Subset = preds[mask],
                 # Wellen-Schnitte via file_source).
-                for _extra in ("eval_mask.npy", "file_source.parquet"):
-                    _p = x_dir / _extra
+                # Maske: vom KONFIGURIERTEN Pfad loggen — das ist die Datei, mit der
+                # die Analyse wirklich rechnet (bei eigenem x_file-Pfad könnte in
+                # dirname(x_file) eine fremde/alte Maske liegen).
+                _mask_cfg_path = str(getattr(cfg.data_files, "eval_mask_file", "") or "")
+                if _mask_cfg_path and Path(_mask_cfg_path).is_file():
+                    mlflow.log_artifact(_mask_cfg_path)
+                    self._logger.info("eval_mask.npy nach MLflow geloggt (Analyse-Lauf): %s", _mask_cfg_path)
+                # file_source: neben x_file; Fallback neben der konfigurierten Maske
+                # (deckt verschobene Artefakte, solange die Maske korrekt zeigt).
+                _fs_candidates = [x_dir / "file_source.parquet"]
+                if _mask_cfg_path:
+                    _fs_candidates.append(Path(_mask_cfg_path).parent / "file_source.parquet")
+                for _p in _fs_candidates:
                     if _p.is_file():
                         mlflow.log_artifact(str(_p))
-                        self._logger.info("%s nach MLflow geloggt (Analyse-Lauf): %s", _extra, _p)
+                        self._logger.info("file_source.parquet nach MLflow geloggt (Analyse-Lauf): %s", _p)
+                        break
             except Exception:
                 pass  # Kein DataPrep-Output → kein Log, kein Fehler
 
