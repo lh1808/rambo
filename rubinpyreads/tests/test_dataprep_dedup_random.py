@@ -135,6 +135,7 @@ class TestEvalMaskMlflowLogging:
         run = client.search_runs(exp.experiment_id, order_by=["attributes.start_time DESC"])[0]
         arts = {a.path for a in client.list_artifacts(run.info.run_id)}
         assert "eval_mask.npy" in arts and "file_source.parquet" in arts
+        assert "row_provenance.parquet" in arts
 
 
 class TestAllNanColumnFillFallback:

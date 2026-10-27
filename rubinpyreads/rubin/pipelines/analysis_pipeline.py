@@ -158,6 +158,25 @@ class AnalysisPipeline:
 
     def _load_inputs(self) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
         """Lädt X, T, Y, optional S und optional eval_mask."""
+        # Fail-fast mit erklärender Meldung statt nackter FileNotFoundError tief
+        # im Parquet-Reader (realer Vorfall: frischer Checkout + analyze-quick
+        # ohne Daten — die Meldung sagte nur "No such file", nicht was zu tun ist).
+        import os as _os
+        _fehlend = {
+            lbl: str(p) for lbl, p in
+            (("x_file", self.cfg.data_files.x_file),
+             ("t_file", self.cfg.data_files.t_file),
+             ("y_file", self.cfg.data_files.y_file))
+            if p and not _os.path.exists(str(p))
+        }
+        if _fehlend:
+            raise FileNotFoundError(
+                f"Eingabedateien aus data_files nicht gefunden: {_fehlend}. "
+                "Zuerst DataPrep ausführen (schreibt X/Y/T nach data_prep.output_path) "
+                "oder die data_files-Pfade in der Config anpassen. "
+                "Für den Quickstart-Smoke-Test: einmalig 'pixi run demo-data' "
+                "(erzeugt synthetische Daten unter data/processed/)."
+            )
         X = self._read_table(self.cfg.data_files.x_file)
         # NaN in kategorischen (category-/object-)Spalten → explizite Kategorie
         # "fehlend": CatBoost akzeptiert keine None/NaN in cat_features (Crash
@@ -3661,6 +3680,16 @@ class AnalysisPipeline:
                     if _p.is_file():
                         mlflow.log_artifact(str(_p))
                         self._logger.info("file_source.parquet nach MLflow geloggt (Analyse-Lauf): %s", _p)
+                        break
+                # Zeilen-Provenienz (welche Original-Zeilen überlebten Dedup/Balance)
+                # ebenfalls an den Analyse-Lauf hängen — gleiche Fallback-Reihenfolge.
+                _rp_candidates = [x_dir / "row_provenance.parquet"]
+                if _mask_cfg_path:
+                    _rp_candidates.append(Path(_mask_cfg_path).parent / "row_provenance.parquet")
+                for _p in _rp_candidates:
+                    if _p.is_file():
+                        mlflow.log_artifact(str(_p))
+                        self._logger.info("row_provenance.parquet nach MLflow geloggt (Analyse-Lauf): %s", _p)
                         break
             except Exception:
                 pass  # Kein DataPrep-Output → kein Log, kein Fehler

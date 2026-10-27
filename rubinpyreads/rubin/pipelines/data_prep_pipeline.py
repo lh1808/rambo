@@ -1211,7 +1211,7 @@ class DataPrepPipeline:
             # TMES-Maske und Datei-Zuordnung mitloggen (falls erzeugt) — sonst ist
             # im Nachhinein nicht aus den Logs rekonstruierbar, welche Zeilen der
             # Evaluation dienten bzw. aus welcher Quelldatei sie stammen.
-            for _extra in ("eval_mask.npy", "file_source.parquet"):
+            for _extra in ("eval_mask.npy", "file_source.parquet", "row_provenance.parquet"):
                 if (out_dir / _extra).exists():
                     artifact_files.append(_extra)
             if has_eval:
