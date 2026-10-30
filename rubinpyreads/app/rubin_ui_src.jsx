@@ -3209,11 +3209,17 @@ const buildYaml = (cfg, sp, spFmt) => {
   a(`  type: ${cfg.treatmentType||"binary"}`);
   a(`  reference_group: ${cfg.refGroup||0}`);
   a("");
-  a("historical_score:");
-  a(`  name: ${cfg.histScoreName||"historical_score"}`);
-  a(`  column: ${cfg.histScoreCol||"S"}`);
-  a(`  higher_is_better: ${cfg.histScoreHigher!==false}`);
-  a("");
+  // historical_score nur emittieren, wenn auch eine S-Datei gesetzt ist —
+  // sonst steht in jeder Config (und damit in Preview + Lauf-Kopie) ein
+  // Score-Block ("column: S"), obwohl kein historischer Score definiert ist.
+  // Ohne Block gelten identische Backend-Defaults (settings.py).
+  if (cfg.s_file) {
+    a("historical_score:");
+    a(`  name: ${cfg.histScoreName||"historical_score"}`);
+    a(`  column: ${cfg.histScoreCol||"S"}`);
+    a(`  higher_is_better: ${cfg.histScoreHigher!==false}`);
+    a("");
+  }
   a("data_processing:");
   a(`  validate_on: ${cfg.validateOn||"cross"}`);
   if(cfg.validateOn==="cross"||cfg.validateOn===undefined) a(`  cross_validation_splits: ${cfg.cvSplits||5}`);

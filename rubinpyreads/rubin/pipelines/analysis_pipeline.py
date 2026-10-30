@@ -412,6 +412,82 @@ class AnalysisPipeline:
         )
         return None
 
+    def _log_propensity_drivers(self, X: "pd.DataFrame", T: "np.ndarray", x_file: str = "", mlflow_module=None) -> dict:
+        """Diagnose bei angeschlagener RCT-Prüfung: WELCHE Features sagen das
+        Treatment vorher (Top-10 Gain-Importances eines schnellen LGBM-Klassifikators
+        auf einem Holdout) und wie verteilen sich die Treatment-Raten je Quelldatei
+        (falls file_source.parquet existiert). Trennt die zwei typischen Ursachen:
+        gepoolte Experimente mit unterschiedlichen Raten (→ balance_treatments,
+        RCT je Welle bleibt gültig) vs. echte Selektion / Post-Treatment-Features
+        (→ Features prüfen oder study_type=observational)."""
+        import os
+        result: dict = {"top_features": [], "auc": None, "rates_per_file": {}}
+        try:
+            from lightgbm import LGBMClassifier
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import roc_auc_score
+            _n = len(X)
+            _idx = np.random.default_rng(0).choice(_n, size=min(_n, 150_000), replace=False)
+            Xs, Ts = X.iloc[_idx], np.asarray(T).astype(int)[_idx]
+            X_tr, X_va, t_tr, t_va = train_test_split(Xs, Ts, test_size=0.25, random_state=0, stratify=Ts)
+            clf = LGBMClassifier(n_estimators=200, learning_rate=0.1, num_leaves=31,
+                                 n_jobs=4, random_state=0, verbosity=-1)
+            clf.fit(X_tr, t_tr)
+            proba = clf.predict_proba(X_va)
+            if proba.shape[1] == 2:
+                result["auc"] = float(roc_auc_score(t_va, proba[:, 1]))
+            else:
+                result["auc"] = float(roc_auc_score(t_va, proba, multi_class="ovr"))
+            imp = clf.booster_.feature_importance(importance_type="gain")
+            total = float(imp.sum()) or 1.0
+            order = np.argsort(imp)[::-1][:10]
+            result["top_features"] = [(str(X.columns[i]), float(imp[i] / total)) for i in order if imp[i] > 0]
+            self._logger.warning(
+                "RCT-Diagnose: Treiber der Treatment-Vorhersage (Holdout-AUC %.3f) — Top-Features (Gain-Anteil): %s. "
+                "Post-Treatment- oder Selektions-Features hier prüfen.",
+                result["auc"], ", ".join(f"{n}={v:.0%}" for n, v in result["top_features"]),
+            )
+        except Exception:
+            self._logger.info("RCT-Diagnose: Treiber-Analyse nicht möglich.", exc_info=True)
+        try:
+            _fs_path = os.path.join(os.path.dirname(str(x_file)) or ".", "file_source.parquet")
+            if os.path.exists(_fs_path):
+                fs = pd.read_parquet(_fs_path)["file_source"].astype(str).to_numpy()
+                if len(fs) == len(T):
+                    _t = np.asarray(T).astype(int)
+                    rates = {f: float(_t[fs == f].mean()) for f in sorted(set(fs))}
+                    result["rates_per_file"] = rates
+                    _spread = (max(rates.values()) - min(rates.values())) if rates else 0.0
+                    self._logger.warning(
+                        "RCT-Diagnose: Treatment-Raten je Quelldatei: %s (Spannweite %.1f pp). "
+                        "Stark unterschiedliche Raten deuten auf GEPOOLTE Experimente als Ursache "
+                        "(T wird aus perioden-korrelierten Features vorhersagbar) — dann hilft "
+                        "data_prep.balance_treatments, und das RCT je Welle bleibt gültig. "
+                        "Ähnliche Raten bei trotzdem hohem Skill deuten auf Selektion INNERHALB "
+                        "der Kampagne oder Post-Treatment-Features → study_type=observational erwägen.",
+                        {k: round(v, 3) for k, v in rates.items()}, _spread * 100,
+                    )
+        except Exception:
+            self._logger.info("RCT-Diagnose: Raten je Datei nicht ermittelbar.", exc_info=True)
+        # Nach MLflow: AUC als Metrik, Kurzfassung als Param, Details als JSON-Artefakt —
+        # damit die Diagnose AM RUN hängt und nicht nur im Job-Log vergraben ist.
+        if mlflow_module is not None:
+            try:
+                if result["auc"] is not None:
+                    mlflow_module.log_metric("rct_propensity_auc", float(result["auc"]))
+                if result["top_features"]:
+                    _short = ", ".join(f"{n}={v:.0%}" for n, v in result["top_features"][:5])
+                    mlflow_module.log_param("rct_propensity_top_treiber", _short[:490])
+                mlflow_module.log_dict(
+                    {"auc": result["auc"],
+                     "top_features": [{"feature": n, "gain_anteil": round(v, 4)} for n, v in result["top_features"]],
+                     "treatment_raten_je_datei": {k: round(v, 4) for k, v in result["rates_per_file"].items()}},
+                    "rct_propensity_diagnose.json",
+                )
+            except Exception:
+                self._logger.info("RCT-Diagnose: MLflow-Logging der Treiber fehlgeschlagen.", exc_info=True)
+        return result
+
     def _validate_treatment_arms(self, T: np.ndarray, context: str = "Trainingsdaten") -> None:
         """Fail-fast-Validierung der Treatment-Arme gegen ``treatment.type``.
 
@@ -626,6 +702,7 @@ class AnalysisPipeline:
                         "Propensity (DummyClassifier), wie für RCT konfiguriert.",
                         _max_prop_skill,
                     )
+                    self._log_propensity_drivers(X, T, x_file=str(getattr(cfg.data_files, "x_file", "")), mlflow_module=mlflow)
                 else:
                     # Konstante Propensity = Klassen-Prior-Vektor (DummyClassifier
                     # strategy="prior"). Binär entspricht das mean(T); bei
