@@ -1,1 +1,1 @@
-mv /domino/edv/pvc-hf1kundehuk/mlflow/312895441071439399 /domino/edv/pvc-hf1kundehuk/mlflow/_kaputt_312895441071439399_backup
+Danke für die gemeinsame Zeit, den fachlichen Austausch und die vielen Projekte, aus denen ich viel mitnehme. Da ich im Haus bleibe, ist das kein Abschied, sondern eher ein Umzug ein paar Türen weiter – ich freue mich, wenn wir in Kontakt bleiben und uns bei dem einen oder anderen Thema wieder über den Weg laufen.
