@@ -370,7 +370,8 @@ class BaseLearnerTuner:
         Produktions-Datenregime zu simulieren. Bei scope="all" (DML/DR-Nuisance)
         sehen Modelle in Produktion nur (K-1)/K der äußeren Fold-Daten durch
         internes Cross-Fitting. BLT simuliert das hier."""
-        splits = _iter_stratified_or_kfold(labels, n_splits=self.cfg.tuning.cv_splits, seed=self.tuning_cv_seed)
+        splits = _iter_stratified_or_kfold(labels, n_splits=self.cfg.tuning.cv_splits, seed=self.tuning_cv_seed,
+                                           groups=getattr(self, "_task_groups", None))
         for fold_i, (tr, va) in enumerate(splits):
             if train_subsample_ratio < 1.0 and len(tr) > 10:
                 rng = np.random.RandomState(self.seed + fold_i)
@@ -560,7 +561,8 @@ class BaseLearnerTuner:
         filled = np.zeros(len(Y), dtype=bool)
         strat_labels = np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int)
 
-        for tr, va in _iter_stratified_or_kfold(strat_labels, n_splits=self.cfg.tuning.cv_splits, seed=self.tuning_cv_seed):
+        for tr, va in _iter_stratified_or_kfold(strat_labels, n_splits=self.cfg.tuning.cv_splits, seed=self.tuning_cv_seed,
+                                                 groups=getattr(self, "_task_groups", None)):
             control_train = tr[T[tr] == 0]
             treated_train = tr[T[tr] == 1]
             if len(control_train) < 2 or len(treated_train) < 2:
@@ -654,6 +656,10 @@ class BaseLearnerTuner:
         else:
             target = np.asarray(Y)[row_indices]
 
+        # Gruppen an die Task-Zeilen ausrichten (Task kann z. B. nur einen T-Arm umfassen)
+        _groups_all = getattr(self, "_groups_all", None)
+        groups_task = _groups_all[row_indices] if _groups_all is not None else None
+
         max_rows = self.cfg.tuning.max_tuning_rows
         if max_rows is not None and len(X_task) > int(max_rows):
             rng = np.random.RandomState(self.seed)
@@ -662,6 +668,8 @@ class BaseLearnerTuner:
             target = target[keep]
             row_indices = row_indices[keep]
             T_task = T_task[keep]
+            if groups_task is not None:
+                groups_task = groups_task[keep]
         X_mat = X_task  # DataFrame behalten — CatBoost/LGBM nutzen native Dtypes
         fixed_defaults = dict(self.cfg.base_learner.fixed_params or {})
 
@@ -685,6 +693,8 @@ class BaseLearnerTuner:
         study = self._create_study(task.key, effective_n_trials=_n_trials)
 
         _train_ratio = task.train_subsample_ratio
+        # Gruppen für alle _cv_splits-Aufrufe dieser Task (Objectives reichen nur Strata durch)
+        self._task_groups = groups_task
         # T×Y-Strata für StratifiedKFold (wie in Cross-Prediction)
         _t_arr = np.asarray(T)[row_indices].astype(int)
         _y_arr = target.astype(int) if target.dtype in (int, np.int32, np.int64, bool) else np.zeros(len(target), dtype=int)
@@ -852,7 +862,19 @@ class BaseLearnerTuner:
             learner_type=str(getattr(self.cfg.base_learner, "type", "lgbm") or "lgbm"),
         )
 
-    def tune_all(self, model_names: List[str], X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def tune_all(self, model_names: List[str], X: pd.DataFrame, Y: np.ndarray, T: np.ndarray, groups: np.ndarray | None = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        # Gruppen-CV: alle Zeilen einer Gruppe im selben Tuning-Fold (Zwillings-Leakage).
+        self._groups_all = None
+        if groups is not None and len(groups) == len(X):
+            self._groups_all = np.asarray(groups)
+            logging.getLogger("rubin.tuning").info(
+                "BLT: Gruppen-CV aktiv (%d Zeilen, %d Gruppen).",
+                len(self._groups_all), len(pd.unique(pd.Series(self._groups_all).astype(str))),
+            )
+        elif groups is not None:
+            logging.getLogger("rubin.tuning").warning(
+                "BLT: groups-Länge (%d) ≠ X-Länge (%d) — Gruppen-CV ignoriert.", len(groups), len(X),
+            )
         if not self.cfg.tuning.enabled:
             return {}
 
@@ -930,8 +952,8 @@ class BaseLearnerTuner:
                 roles.setdefault("default", next(iter(roles.values())))
         return tuned_by_model
 
-    def tune(self, model_name: str, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray) -> TunedSet:
-        tuned = self.tune_all([model_name], X=X, Y=Y, T=T)
+    def tune(self, model_name: str, X: pd.DataFrame, Y: np.ndarray, T: np.ndarray, groups: np.ndarray | None = None) -> TunedSet:
+        tuned = self.tune_all([model_name], X=X, Y=Y, T=T, groups=groups)
         return TunedSet(role_params=dict(tuned.get(model_name, {}) or {}))
 
     # ── Combined-Loss-Diagnostic (Bach et al., 2024) ──────────────────────

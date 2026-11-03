@@ -820,6 +820,41 @@ class DataPrepPipeline:
         if "__file_source__" in df.columns:
             df = df.drop(columns=["__file_source__"])
 
+        # ── Gruppen-Puffer (data_prep.group_column → groups.parquet) ──
+        # Eine Gruppen-ID je überlebender Zeile (z. B. Partner-ID): Die Analyse
+        # hält damit alle Zeilen einer Gruppe im selben CV-Fold (Zwillings-
+        # Leakage-Prävention bei Mehrfach-Samples derselben Einheit).
+        self._group_vals = None
+        if dp.group_column:
+            _gcol = str(dp.group_column).upper()
+            if _gcol not in df.columns:
+                raise ValueError(
+                    f"data_prep.group_column '{dp.group_column}' nicht in den eingelesenen "
+                    f"Spalten gefunden (nach Uppercase-Normalisierung gesucht als '{_gcol}'). "
+                    "Bitte Spaltennamen prüfen — die Spalte muss in den Rohdaten vorhanden sein."
+                )
+            _g_series = df[_gcol]
+            _n_missing = int(_g_series.isna().sum())
+            _g_str = _g_series.astype(str)
+            if _n_missing > 0:
+                # NaN-Gruppen NICHT zu einer Riesengruppe "nan" verschmelzen:
+                # jede Zeile ohne Gruppen-ID wird ihre eigene Einheit.
+                _nan_pos = _g_series.isna().to_numpy().nonzero()[0]
+                _g_str = _g_str.copy()
+                _g_str.iloc[_nan_pos] = [f"__einzeln_{i}" for i in _nan_pos]
+                self._logger.warning(
+                    "group_column '%s': %d Zeilen ohne Gruppen-ID — jede davon wird als eigene Gruppe behandelt.",
+                    _gcol, _n_missing,
+                )
+            self._group_vals = _g_str.tolist()
+            _n_groups = _g_str.nunique()
+            _dups = len(_g_str) - _n_groups
+            self._logger.info(
+                "Gruppen-Spalte '%s': %d Zeilen, %d Gruppen (%d Zeilen in Mehrfach-Gruppen-Anteil) "
+                "→ groups.parquet. Die Analyse nutzt Gruppen-Folds in CV, Tuning und EconML-Cross-Fitting.",
+                _gcol, len(_g_str), _n_groups, _dups,
+            )
+
         _progress("Feature-Extraktion")
 
         score_col = str(dp.score_name).upper() if dp.score_name else None
@@ -881,12 +916,32 @@ class DataPrepPipeline:
             if dp.deduplicate_id_column:
                 exclude_cols.add(str(dp.deduplicate_id_column).upper())
                 exclude_cols.add(str(dp.deduplicate_id_column))
+            # Gruppen-Spalte ist ebenfalls eine ID → kein Feature (Leakage-Kanal).
+            if dp.group_column:
+                exclude_cols.add(str(dp.group_column).upper())
+                exclude_cols.add(str(dp.group_column))
             available_features = [c for c in df.columns if c not in exclude_cols]
             X = df[available_features].copy()
             categorical_columns = []
             self._logger.info("Kein Feature-Dictionary: %d Features (alle außer Target/Treatment%s).",
                               len(available_features),
                               "/ID" if dp.deduplicate_id_column else "")
+
+        # Gruppen-Spalte darf in KEINEM Branch (explizite Liste, Dictionary) als
+        # Feature landen: Gruppen-IDs korrelieren mit Datei-/Zeitstruktur und
+        # tragen kein kausales Signal.
+        if dp.group_column:
+            _gcol_x = str(dp.group_column).upper()
+            if _gcol_x in X.columns:
+                X = X.drop(columns=[_gcol_x])
+                self._logger.warning(
+                    "Gruppen-Spalte '%s' aus den Features entfernt (group_column ist eine ID, kein Feature).",
+                    _gcol_x,
+                )
+            # Auch aus available_features entfernen: Die Liste wird für die
+            # External-Eval-Transformation wiederverwendet — sonst bekäme
+            # X_eval die Spalte, die X nicht mehr hat (Feature-Mismatch).
+            available_features = [c for c in available_features if str(c).upper() != _gcol_x]
 
         if dp.score_as_feature and score_col and score_col in df.columns:
             X[score_col] = df[score_col]
@@ -1037,7 +1092,7 @@ class DataPrepPipeline:
         # Optionale Dateien (S, eval_mask, eval_*) werden nur geschrieben wenn
         # sie in diesem Run erzeugt wurden. Ohne Cleanup würden veraltete Dateien
         # aus früheren Runs persistieren und Length-Mismatches verursachen.
-        for _stale in ["S.parquet", "eval_mask.npy",
+        for _stale in ["S.parquet", "eval_mask.npy", "groups.parquet",
                        "X_eval.parquet", "T_eval.parquet", "Y_eval.parquet", "S_eval.parquet"]:
             _stale_path = out_dir / _stale
             if _stale_path.exists():
@@ -1066,6 +1121,17 @@ class DataPrepPipeline:
                     )
                 else:
                     self._logger.info("row_provenance übersprungen (Längen-Mismatch %d != %d).", _plen, len(Xp))
+            _gvals = getattr(self, "_group_vals", None)
+            if _gvals is not None:
+                if len(_gvals) == len(Xp):
+                    pd.DataFrame({"group": _gvals}, index=Xp.index).to_parquet(out_dir / "groups.parquet")
+                    self._logger.info(
+                        "groups.parquet gespeichert (%d Zeilen, %d Gruppen) — die Analyse erkennt die Datei "
+                        "automatisch und aktiviert Gruppen-CV.",
+                        len(_gvals), len(set(_gvals)),
+                    )
+                else:
+                    self._logger.warning("groups übersprungen (Längen-Mismatch %d != %d).", len(_gvals), len(Xp))
         except ImportError as e:
             raise ImportError(
                 "X.parquet konnte nicht geschrieben werden, weil kein Parquet-Engine verfügbar ist. "
@@ -1113,6 +1179,25 @@ class DataPrepPipeline:
             _progress("Eval-Daten transformieren")
             try:
                 df_eval = self._read_files(file_paths=dp.eval_data_path, merge_only=True)
+                # Gruppen-Überschneidung Train↔Eval prüfen: Gruppen-Folds schützen
+                # nur die interne CV — liegt dieselbe Gruppe (z. B. Partner) in
+                # Train- UND Eval-Daten, bleibt das ein Leakage-Kanal, den kein
+                # Fold schließen kann. Laut warnen statt still evaluieren.
+                if dp.group_column:
+                    _gcol_e = str(dp.group_column).upper()
+                    _gvals_tr = getattr(self, "_group_vals", None)
+                    if _gcol_e in df_eval.columns and _gvals_tr:
+                        _eval_g = df_eval[_gcol_e].dropna().astype(str)
+                        _n_overlap = int(_eval_g.isin(set(map(str, _gvals_tr))).sum())
+                        if _n_overlap > 0:
+                            self._logger.warning(
+                                "External Eval: %d von %d Eval-Zeilen gehören zu Gruppen ('%s'), "
+                                "die AUCH in den Trainingsdaten vorkommen. Gruppen-Folds schützen nur "
+                                "die interne CV — diese Überschneidung bleibt ein Leakage-Kanal und macht "
+                                "die externe Evaluation optimistisch. Empfehlung: überschneidende Gruppen "
+                                "aus den Eval-Dateien entfernen (oder Dedup über beide Datenquellen).",
+                                _n_overlap, len(df_eval), _gcol_e,
+                            )
                 if dp.deduplicate and dp.deduplicate_id_column:
                     id_col = str(dp.deduplicate_id_column).upper()
                     if id_col in df_eval.columns:
@@ -1211,7 +1296,7 @@ class DataPrepPipeline:
             # TMES-Maske und Datei-Zuordnung mitloggen (falls erzeugt) — sonst ist
             # im Nachhinein nicht aus den Logs rekonstruierbar, welche Zeilen der
             # Evaluation dienten bzw. aus welcher Quelldatei sie stammen.
-            for _extra in ("eval_mask.npy", "file_source.parquet", "row_provenance.parquet"):
+            for _extra in ("eval_mask.npy", "file_source.parquet", "row_provenance.parquet", "groups.parquet"):
                 if (out_dir / _extra).exists():
                     artifact_files.append(_extra)
             if has_eval:

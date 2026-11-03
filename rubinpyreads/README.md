@@ -172,6 +172,7 @@ Abgedeckt sind unter anderem:
 - Kategorische Features: Automatisches Patching für EconML-Kompatibilität — LightGBM/CatBoost nutzen native kategoriale Splits (fit, predict, predict_proba, score), auch wenn EconML X intern zu numpy float64 konvertiert. dtypes.json wird automatisch erkannt.
 - Internes Cross-Fitting: Alle DML-Modelle und DRLearner verwenden `cv=5` (Default) für Nuisance-Residuals. Konfigurierbar über `data_processing.dml_crossfit_folds`.
 - Nachvollziehbarkeit je Quelldatei: Bei mehreren Eingangsdateien schreibt DataPrep `file_source.parquet` (Datei-Zuordnung je Zeile — Grundlage der Report-Sektion „Qini je Quelldatei" inkl. Vergleich gegen den historischen Score) und `row_provenance.parquet` (welche Original-Zeilen Deduplizierung/Treatment-Balance überlebt haben: Datei, Original-Zeilennummer, ID)
+- Gruppen-Folds (`data_prep.group_column`): Mehrere echte Samples je Einheit (z. B. 2–3 Leads pro Partner) ohne Deduplizierung — DataPrep schreibt `groups.parquet`, die Analyse erkennt sie automatisch und hält alle Zeilen einer Gruppe im selben Fold: Cross-Prediction, BLT/FMT/CFT und EconML-internes Cross-Fitting (`fit(groups=…)`). Ohne Gruppen-Datei seed-identisches Verhalten wie bisher.
 - TMES-Reproduzierbarkeit: `eval_mask.npy` und `file_source.parquet` werden von DataPrep UND vom Analyse-Lauf als MLflow-Artefakte geloggt — das Eval-Subset ist aus den Logs rekonstruierbar (`predictions[mask]`)
 
 ## Explainability

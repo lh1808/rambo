@@ -123,6 +123,10 @@ const buildYaml = (cfg, sp, spFmt) => {
     if(cfg.eval_y_file) a(`  eval_y_file: ${cfg.eval_y_file}`);
     if(cfg.eval_s_file) a(`  eval_s_file: ${cfg.eval_s_file}`);
   }
+  // Gruppen-Datei (Gruppen-CV): kein eigenes UI-Feld — Passthrough, damit ein
+  // importierter expliziter Pfad den Export-Roundtrip überlebt. Der Normalfall
+  // (groups.parquet neben x_file) braucht keinen Eintrag (Auto-Erkennung).
+  if(cfg.groups_file) a(`  groups_file: ${cfg.groups_file}`);
   if(cfg.eval_mask_file && cfg.validateOn !== "external") {
     if(Array.isArray(cfg.eval_mask_file)) {
       a(`  eval_mask_file:`);

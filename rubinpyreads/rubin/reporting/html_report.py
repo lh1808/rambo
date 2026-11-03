@@ -101,6 +101,9 @@ class ReportCollector:
     step_durations: Dict[str, float] = field(default_factory=dict)
     total_elapsed: float = 0.0
     dataprep_info: Dict[str, Any] = field(default_factory=dict)
+    # Gruppen-CV (Zwillings-Leakage-Prävention): von der Analyse gefüllt, wenn
+    # eine Gruppen-Datei (groups.parquet / data_files.groups_file) aktiv war.
+    group_cv_info: Dict[str, Any] = field(default_factory=dict)
     run_name: str = ""
 
     # Tuning plan (task-sharing details)
@@ -188,6 +191,7 @@ class ReportCollector:
                     "binary_target": dp.get("binary_target", False),
                     "deduplicate": dp.get("deduplicate", False),
                     "deduplicate_id_column": dp.get("deduplicate_id_column", None),
+                    "group_column": dp.get("group_column", None),
                     "balance_treatments": dp.get("balance_treatments", False),
                     "score_as_feature": dp.get("score_as_feature", False),
                     "feature_path": dp.get("feature_path", ""),
@@ -826,9 +830,16 @@ def _render_data(collector, ds, eds, is_external, _is_tmes=False) -> str:
 def _render_dataprep(collector, cs) -> str:
     """Baut den Inhalt der Datenaufbereitungs-Sektion (leer, wenn keine DataPrep-Info)."""
     dpi = collector.dataprep_info
-    if not dpi:
+    _gci_early = getattr(collector, "group_cv_info", None) or {}
+    # Sektion auch OHNE dataprep_config.yml rendern, wenn Gruppen-CV aktiv war
+    # (eigene Pfade: die Analyse hat groups.parquet auto-erkannt — das gehört
+    # sichtbar in den Report).
+    if not dpi and not _gci_early:
         return ""
-    h = '<p class="expl">Einstellungen der Datenaufbereitung, die vor der Analyse durchgeführt wurde.</p>'
+    if dpi:
+        h = '<p class="expl">Einstellungen der Datenaufbereitung, die vor der Analyse durchgeführt wurde.</p>'
+    else:
+        h = '<p class="expl">Keine DataPrep-Konfiguration im Datenverzeichnis gefunden — die Angaben unten stammen aus der Analyse selbst.</p>'
     h += '<div class="cg">'
     # Quelldateien
     data_files = dpi.get("data_files", [])
@@ -932,6 +943,37 @@ def _render_dataprep(collector, cs) -> str:
         else:
             _leg.append("<strong>Training + Evaluation</strong>: Cross-Validation \u2014 jede Datei dient dem Training UND wird \u00fcber leakage-freie Out-of-Fold-Predictions evaluiert.")
         h += "<p class='muted' style='font-size:11.5px;margin-top:8px'>" + " ".join(_leg) + "</p>"
+    # ── Gruppen-CV-Kachel (aus der Analyse selbst — greift auch ohne DataPrep-Config) ──
+    gci = getattr(collector, "group_cv_info", None) or {}
+    if gci:
+        _src_lbl = escape(str(gci.get("source", "groups.parquet")))
+        _src_note = " (auto-erkannt neben X)" if gci.get("auto") else " (explizit konfiguriert)"
+        _gmode = str(gci.get("mode", "cross"))
+        if _gmode == "external":
+            # External: kein Cross-Prediction-OOF (Single-Fit) und kein DRTester-
+            # Gruppen-CV (die Eval-Daten tragen keine Train-Gruppen) — nicht behaupten.
+            _scope_txt = ('Gilt für: Tuning (BLT/FMT/CFT) und EconML-internes Cross-Fitting beim '
+                          'Single-Fit auf den Trainingsdaten. Die Evaluation läuft auf separaten '
+                          'Eval-Daten ohne Gruppen-Folds — DataPrep warnt, wenn Trainings-Gruppen '
+                          'auch dort vorkommen (dieser Kanal ist per Fold nicht schließbar).')
+        else:
+            _scope_txt = ('Gilt durchgängig: Cross-Prediction (OOF-Metriken), Tuning (BLT/FMT/CFT), '
+                          'EconML-internes Cross-Fitting und DRTester-Nuisances.')
+            if _gmode == "tmes":
+                _scope_txt += (' TMES: Eval-Zeilen und ihre Gruppen-Zwillinge aus den Train-Dateien '
+                               'liegen im selben Fold — die OOF-Bewertung bleibt gruppenrein.')
+        h += (
+            '<div style="margin:12px 0;padding:11px 14px;background:#eef6ef;border:1px solid #b9d8bc;'
+            'border-radius:8px;font-size:12.5px;color:#1e4620;line-height:1.55">'
+            '<strong>Gruppen-CV aktiv</strong> — alle Zeilen einer Gruppe liegen im selben Fold '
+            '(Zwillings-Leakage-Prävention bei Mehrfach-Samples je Einheit): '
+            f'{gci.get("n_rows", 0):,} Zeilen in {gci.get("n_groups", 0):,} Gruppen '
+            f'(Ø {gci.get("mean_size", 0):.2f} Zeilen/Gruppe, max. {gci.get("max_size", 0)}). '
+            f'Quelle: <code>{_src_lbl}</code>{_src_note}. '
+            + _scope_txt +
+            '</div>'
+        )
+
     # Verarbeitungsschritte
     processing_steps = []
     fill_na = dpi.get("fill_na_method")
@@ -944,6 +986,8 @@ def _render_dataprep(collector, cs) -> str:
     if dpi.get("deduplicate"):
         col = dpi.get("deduplicate_id_column")
         processing_steps.append('Deduplizierung' + (f' ({escape(str(col))})' if col else ''))
+    if dpi.get("group_column"):
+        processing_steps.append(f'Gruppen-Folds statt Deduplizierung ({escape(str(dpi.get("group_column")))})')
     if dpi.get("balance_treatments"):
         processing_steps.append("Treatment-Balance (Downsampling)")
     if dpi.get("score_as_feature"):

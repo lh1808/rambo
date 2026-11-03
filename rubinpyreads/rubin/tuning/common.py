@@ -66,7 +66,7 @@ def _compute_skill_score(best_neg_score: float, target: np.ndarray, is_classific
 from rubin.settings import SearchSpaceConfig, SearchSpaceParameterConfig
 
 
-def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int):
+def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int, groups: np.ndarray | None = None):
     labels_arr = np.asarray(labels)
     if labels_arr.ndim != 1:
         labels_arr = labels_arr.reshape(-1)
@@ -86,6 +86,31 @@ def _iter_stratified_or_kfold(labels: np.ndarray, n_splits: int, seed: int):
             f"(erhalten: {len(labels_arr)}, unique={np.unique(labels_arr).tolist()}, "
             f"dtype={labels_arr.dtype})."
         )
+
+    # ── Gruppen-CV: alle Zeilen einer Gruppe im selben Tuning-Fold ──
+    # Verhindert, dass nahezu identische Mehrfach-Samples derselben Einheit
+    # (z. B. 2-3 Leads eines Partners) in Train UND Val landen und das Tuning
+    # Memorisierung statt Generalisierung belohnt.
+    if groups is not None:
+        g_arr = np.asarray(groups)
+        if g_arr.ndim != 1:
+            g_arr = g_arr.reshape(-1)
+        if len(g_arr) != len(labels_arr):
+            logging.getLogger("rubin.tuning").warning(
+                "Tuning-Split: groups-Länge (%d) ≠ target-Länge (%d) — Gruppen-CV ignoriert.",
+                len(g_arr), len(labels_arr),
+            )
+        else:
+            _n_groups = len(pd.unique(pd.Series(g_arr).astype(str)))
+            _eff_g = min(max(2, int(n_splits)), _n_groups)
+            if _eff_g >= 2:
+                from sklearn.model_selection import StratifiedGroupKFold
+                cv = StratifiedGroupKFold(n_splits=_eff_g, shuffle=True, random_state=seed)
+                return cv.split(np.zeros(len(labels_arr)), labels_arr, groups=g_arr)
+            logging.getLogger("rubin.tuning").warning(
+                "Tuning-Split: nur %d eindeutige Gruppe(n) — Gruppen-CV unmöglich, "
+                "Fallback auf zeilenweise Folds.", _n_groups,
+            )
 
     counts = pd.Series(labels_arr).value_counts(dropna=False)
     effective_splits = min(int(n_splits), len(labels_arr))
@@ -228,6 +253,7 @@ def _create_fold_scorer(
     seed: int,
     is_rct: bool = False,
     build_base_learner_fn=None,
+    groups=None,
 ):
     """Erstellt einen EconML RScorer mit unabhängiger Nuisance auf den gegebenen Daten.
 
@@ -279,16 +305,29 @@ def _create_fold_scorer(
     # lehnt NaN ab. Lösung: Zeilen mit NaN in X vor dem Scorer-Fit entfernen.
     _X_np = np.asarray(X) if not isinstance(X, np.ndarray) else X
     _nan_mask = np.isnan(_X_np).any(axis=1) if _X_np.ndim == 2 else np.isnan(_X_np)
+    _g_np = np.asarray(groups) if groups is not None else None
+    if _g_np is not None and len(_g_np) != len(_Y_np):
+        _g_np = None
     if _nan_mask.any():
         _clean = ~_nan_mask
         _Y_np = _Y_np[_clean]
         _T_np = _T_np[_clean]
         _X_np = _X_np[_clean]
+        if _g_np is not None:
+            _g_np = _g_np[_clean]
 
     # 2-Fold T×Y-stratifiziertes Cross-Fitting (EconML-aligned, cv=2).
     _strata = _T_np.astype(int) * 10 + np.clip(_Y_np, 0, 1).astype(int)
-    _skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=seed)
-    _splits = list(_skf.split(np.zeros(len(_T_np)), _strata))
+    _splits = None
+    if _g_np is not None and len(pd.unique(pd.Series(_g_np).astype(str))) >= 2:
+        # Gruppen-CV auch im Scorer-Cross-Fitting: Zwillinge derselben Gruppe
+        # dürfen die Nuisance-Qualität des Scorers nicht optimistisch verzerren.
+        from sklearn.model_selection import StratifiedGroupKFold
+        _sgkf = StratifiedGroupKFold(n_splits=2, shuffle=True, random_state=seed)
+        _splits = list(_sgkf.split(np.zeros(len(_T_np)), _strata, groups=_g_np))
+    if _splits is None:
+        _skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=seed)
+        _splits = list(_skf.split(np.zeros(len(_T_np)), _strata))
 
     scorer = RScorer(
         model_y=model_y,

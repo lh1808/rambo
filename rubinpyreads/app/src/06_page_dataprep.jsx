@@ -716,14 +716,16 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Bereinigung</div>
           <Row>
             <Col>
-              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction."/>
+              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction. Drei Optionen für Mehrfach-Samples: nichts tun (Standard), hier deduplizieren (echte Duplikate), oder unten per Gruppen-Spalte alle Samples behalten und in den Folds zusammenhalten (echte Mehrfach-Beobachtungen, z. B. verschiedene Lead-Arten je Partner)."/>
               {dp.dedup&&<Inp label="ID-Spalte" value={dp.dedupCol||""} onChange={v=>setDp(prev=>({...prev,dedupCol:v}))} placeholder="PARTNER_ID"/>}
+              {!dp.dedup&&<Inp label="Gruppen-Spalte (optional)" value={dp.groupCol||""} onChange={v=>setDp(prev=>({...prev,groupCol:v}))} placeholder="PARTNER_ID" help="Alternative zur Deduplizierung bei ECHTEN Mehrfach-Samples je Einheit (z. B. 2-3 Leads pro Partner mit unterschiedlichen Features): Alle Samples bleiben erhalten, landen aber in CV, Tuning und Cross-Fitting im SELBEN Fold — verhindert Zwillings-Leakage ohne Datenverlust. Schreibt groups.parquet, die Analyse erkennt sie automatisch."/>}
             </Col>
             {hasMulti && <Col>
               <Toggle label="Treatment-Balance" checked={dp.balanceTreat||false} onChange={v=>setDp(prev=>({...prev,balanceTreat:v}))} help="Per Random-Downsampling die Treatment-Raten über alle Dateien angleichen (Auswahl der Ziel-Rate nach maximaler effektiver Stichprobe)"/>
             </Col>}
           </Row>
           {dp.dedup&&<Info type="warn"><strong>Deduplizierung aktiv:</strong> Reduktion auf 1 Sample pro Kunde verhindert Leakage, wenn mehrere Einträge desselben Kunden in verschiedene Folds fallen.</Info>}
+          {!dp.dedup&&!!(dp.groupCol&&dp.groupCol.trim())&&<Info type="info"><strong>Gruppen-Folds aktiv:</strong> Alle Zeilen mit derselben <code>{dp.groupCol.trim()}</code> bleiben im selben CV-Fold (Cross-Prediction, BLT/FMT/CFT, EconML-Cross-Fitting). Alle Samples werden behalten — richtig, wenn die Mehrfach-Samples echte unterschiedliche Beobachtungen sind (z. B. verschiedene Lead-Arten je Partner).</Info>}
           {dp.balanceTreat&&<Info type="warn"><strong>Treatment-Balance aktiv:</strong> Bei mehr als 5 Prozentpunkten Abweichung zwischen Dateien werden Zeilen per Random-Downsampling entfernt. Die gemeinsame Ziel-Rate wird nach maximaler effektiver Stichprobe (N·p·(1−p)) gewählt — so bleibt die Balance erhalten, statt nur die Zeilenzahl zu maximieren.</Info>}
 
           <Divider/>

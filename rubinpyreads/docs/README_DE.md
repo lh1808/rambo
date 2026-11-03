@@ -45,7 +45,7 @@ pixi run analyze -- --config configs/config_standard.yml --export-bundle
 
 Diese Codebasis trennt **Analyse** und **Production** sauber voneinander:
 
-- **Datenaufbereitung**: Mehrdatei-Merge, Treatment-Balance-Prüfung, kategorische Features, NaN-Behandlung, „Train Many, Evaluate Some" (Eval-Maske)
+- **Datenaufbereitung**: Mehrdatei-Merge, Treatment-Balance-Prüfung, kategorische Features, NaN-Behandlung, „Train Many, Evaluate Some" (Eval-Maske), Gruppen-Folds via group_column (Mehrfach-Samples je Einheit ohne Deduplizierung — groups.parquet hält alle Zeilen einer Gruppe im selben Fold, durchgängig bis ins EconML-Cross-Fitting)
 - **Analyse-Pipeline**: Trainieren, Feature-Selektion (Korrelation + Importance-Union mit Umverteilung, exaktes Feature-Budget), 3-stufiges Tuning (BLT via Optuna + FMT mit OOF-CV + CFT für CausalForest, mit gedeckelter Overfit-Penalty (Meta-Learner-BLT + CATE-Finalstufe; DML/DR nie) und Skill Scores), Evaluieren (DRTester + native Uplift-Plots: Qini, Uplift-by-Percentile, Treatment-Balance + ATE-Barplot), Surrogate-Einzelbaum (Champion), Explainability (SHAP), HTML-Report mit klickbaren Plots (Lightbox).
 - **Production-Pipeline**: Stabiles Scoring auf neuen Daten (inkl. Champion- und Surrogate-Option).
 

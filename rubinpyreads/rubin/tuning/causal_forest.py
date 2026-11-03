@@ -19,6 +19,8 @@ import gc
 
 from sklearn.model_selection import StratifiedKFold
 
+from rubin.utils.group_cv import GroupAwareStratifiedKFold
+
 from rubin.tuning.common import (
     _iter_stratified_or_kfold, _safe_import_optuna, _create_fold_scorer,
     _log_trial_diagnostics, build_base_learner,
@@ -122,6 +124,7 @@ class CausalForestTuner:
         nuisance_params_y: dict = None,
         nuisance_params_t: dict = None,
         single_fold: bool = False,
+        groups: np.ndarray | None = None,
     ) -> Dict[str, Any]:
         """Tuned CausalForestDML oder CausalForest.
 
@@ -142,6 +145,17 @@ class CausalForestTuner:
         X_np = X.values if hasattr(X, "values") else np.asarray(X)
         Y_np = np.asarray(Y).ravel()
         T_np = np.asarray(T).ravel()
+        # Gruppen-CV (Zwillings-Leakage): äußere CFT-Folds, CFDML-internes
+        # Cross-Fitting und Scorer-Nuisances halten Gruppen zusammen.
+        groups_np = None
+        if groups is not None:
+            if len(groups) == len(Y_np):
+                groups_np = np.asarray(groups)
+                _tlog.info("CFT: Gruppen-CV aktiv (%d Gruppen).",
+                           len(pd.unique(pd.Series(groups_np).astype(str))))
+            else:
+                _tlog.warning("CFT: groups-Länge (%d) ≠ X-Länge (%d) — Gruppen-CV ignoriert.",
+                              len(groups), len(Y_np))
 
         base_type = (self.cfg.base_learner.type or "catboost").lower()
         # "both" NICHT vorab auf "catboost" kollabieren: Die BLT-getunten
@@ -202,7 +216,7 @@ class CausalForestTuner:
         # ── Fold-Daten vorbereiten ──
         _cf_strata_pre = T_np.astype(int) * 10 + np.clip(Y_np, 0, 1).astype(int)
         _splits_pre = list(_iter_stratified_or_kfold(
-            labels=_cf_strata_pre, n_splits=inner_cv, seed=tuning_cv_seed,
+            labels=_cf_strata_pre, n_splits=inner_cv, seed=tuning_cv_seed, groups=groups_np,
         ))
         _n_pre = 1 if single_fold else inner_cv
 
@@ -236,7 +250,7 @@ class CausalForestTuner:
                     model_y=build_base_learner(base_type, nuisance_params_y or {}, seed=seed, task="classifier", parallel_jobs=-1),
                     model_t=_cft_model_t,
                     discrete_treatment=True, discrete_outcome=True,
-                    cv=StratifiedKFold(n_splits=inner_cv, shuffle=True, random_state=seed),
+                    cv=GroupAwareStratifiedKFold(n_splits=inner_cv, shuffle=True, random_state=seed),
                     random_state=seed, n_jobs=-1, inference=False,
                     # mc_iters/mc_agg wie im finalen Training (model_registry) und in FMT,
                     # damit die Forest-Parameter auf denselben mc-aggregierten Nuisance-
@@ -245,7 +259,8 @@ class CausalForestTuner:
                     mc_agg=self.cfg.data_processing.mc_agg,
                     **_default_forest,
                 )
-                est.fit(Y_np[_tr], T_np[_tr], X=X_np[_tr], cache_values=True)
+                est.fit(Y_np[_tr], T_np[_tr], X=X_np[_tr], cache_values=True,
+                        groups=(groups_np[_tr] if groups_np is not None else None))
                 _cfdml_cached_folds.append((est, _tr, _va))
             gc.collect()
             _rct_suffix = " model_t = DummyClassifier (RCT: konstante Propensity)." if _cft_is_rct else ""
@@ -371,9 +386,15 @@ class CausalForestTuner:
             # Fold-Setup identisch sind (in der Praxis der Fall, da der Caller
             # für beide dieselben BLT-Nuisances + Splits liefert). Verhindert
             # blinde Wiederverwendung bei abweichender Konfiguration.
+            if groups_np is None:
+                _cft_g_fp = ("nogroups",)
+            else:
+                _cft_g_series = pd.Series(np.asarray(groups_np).astype(str))
+                _cft_g_fp = (len(_cft_g_series), int(_cft_g_series.nunique()),
+                             int(pd.util.hash_pandas_object(_cft_g_series, index=False).sum()))
             _cft_cache_key = (
                 base_type, bool(_cft_is_rct), inner_cv, int(tuning_cv_seed),
-                bool(single_fold), len(Y_np),
+                bool(single_fold), len(Y_np), _cft_g_fp,
                 self._scorer_fingerprint(nuisance_params_y, nuisance_params_t),
             )
             if self._scorer_cache and self._scorer_cache_key == _cft_cache_key:
@@ -392,6 +413,7 @@ class CausalForestTuner:
                         Y_np[_va_b], T_np[_va_b], X_np[_va_b],
                         seed=seed, is_rct=_cft_is_rct,
                         build_base_learner_fn=build_base_learner,
+                        groups=(groups_np[_va_b] if groups_np is not None else None),
                     )
                     _cft_fold_scorers.append(_scorer)
                 self._scorer_cache = _cft_fold_scorers

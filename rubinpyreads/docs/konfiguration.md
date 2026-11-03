@@ -218,6 +218,9 @@ data_prep:
 **Nachvollziehbarkeit (row_provenance.parquet):** DataPrep legt neben X/Y/T eine Zuordnung ab, welche Original-Zeilen Deduplizierung und Treatment-Balance überlebt haben — Spalten: `orig_row` (0-basierte Zeilennummer innerhalb der jeweiligen Quelldatei), `file` (Basename; bei mehreren Dateien) und die ID-Spalte (bei aktivem `deduplicate`). Zeile *i* von `X.parquet` entspricht exakt Original-Zeile `orig_row[i]` der Datei `file[i]` — damit ist auch rekonstruierbar, *welches* Duplikat einer ID behalten wurde.
   deduplicate_id_column: "PARTNER_ID" # Spalte mit der Kunden-ID
 
+  # Alternative zur Deduplizierung bei ECHTEN Mehrfach-Samples je Einheit:
+  group_column: null                  # z. B. "PARTNER_ID" → Gruppen-Folds statt Löschen
+
   # Optional: Separater Eval-Datensatz. Der Preprocessor wird nur auf den
   # Train-Daten (data_path) gefittet und auf die Eval-Daten nur transformierend angewendet.
   eval_data_path: null                # z. B. ["/pfad/zur/eval_data.csv"]
@@ -235,6 +238,10 @@ data_prep:
 - In der Praxis ist es wichtig, dass diese Parameter *nicht* als Code-"Globals" gepflegt werden,
 
 **Deduplizierung:** Wenn `deduplicate: true`, wird der Datensatz direkt nach dem Einlesen auf einen Eintrag pro `deduplicate_id_column` reduziert (je ID wird ein zufälliger Vertreter behalten — seed-reproduzierbar, siehe unten). Dies geschieht *vor* der Feature-Reduktion über das Feature-Dictionary, da die ID-Spalte typischerweise kein Feature ist. Anzahl entfernter Duplikate wird geloggt.
+
+**Drei Optionen für Mehrfach-Samples je Einheit:** (1) *nichts tun* — Standard, richtig wenn Zeilen unabhängige Einheiten sind; (2) *`deduplicate` + `deduplicate_id_column`* — echte Duplikate auf einen zufälligen Vertreter reduzieren; (3) *`group_column`* — alle Samples behalten, aber in den Folds zusammenhalten. Die Web-UI zeigt (2) und (3) als Alternativen in der Bereinigungs-Sektion.
+
+**Gruppen-Folds statt Deduplizierung (`group_column`):** Trägt eine Einheit mehrere ECHTE Beobachtungen (z. B. 2–3 Leads pro Partner mit unterschiedlichen Lead-Arten/Features, Treatment je Partner konstant), würde Deduplizierung Information wegwerfen. `group_column` behält alle Zeilen und schließt stattdessen den Leakage-Kanal: DataPrep schreibt `groups.parquet` (eine Gruppen-ID je überlebender Zeile) neben X/Y/T, und die Analyse erkennt die Datei automatisch (alternativ explizit via `data_files.groups_file`). Ab dann gilt durchgängig **StratifiedGroupKFold**: alle Zeilen einer Gruppe liegen im selben Fold — in der Cross-Prediction (OOF-Metriken), im Base-Learner-/Final-Model-/CausalForest-Tuning (inkl. der unabhängigen Scorer-Nuisances) und in EconMLs internem Cross-Fitting (`fit(groups=…)`, DML/DR-Familie) und im DRTester-Nuisance-Cross-Fitting. Der Analyse-Report zeigt den aktiven Modus in der Sektion „Datenaufbereitung“ (Gruppen-CV-Kachel mit Gruppenstatistik bzw. Deduplizierungs-Tag). Ohne Gruppen-Datei ändert sich nichts (seed-identische Folds wie bisher). Die Gruppen-Spalte wird nie als Feature übernommen; Zeilen ohne Gruppen-ID werden als eigene Einzel-Gruppen behandelt. Hinweise: Der reine `CausalForest` (GRF) hat kein Cross-Fitting — dort wirken die Gruppen auf die äußeren Folds; Honest Splitting bleibt zeilenbasiert. Bei `eval_data_path` (External Eval) prüft DataPrep zusätzlich, ob Gruppen aus den Trainingsdaten auch in den Eval-Daten vorkommen, und warnt laut — diese Überschneidung kann kein Fold schließen. Zum Estimand: Beim produktiven Scoring **je Zeile/Lead** ist die ungewichtete Schätzung konsistent; eine 1/n-Gewichtung je Gruppe wäre nur für Aussagen **je Partner** nötig (nicht implementiert).
 
 **MLflow-Logging:** Bei `log_to_mlflow: true` wird ein eigener MLflow-Run mit zufällig generiertem Namen erzeugt (z. B. „Datenaufbereitung – roter-falke"). Experiment-Name und Run-Name werden als `.mlflow_experiment` und `.mlflow_run_name` im Output-Verzeichnis persistiert. Die Web-UI übernimmt den Experiment-Namen automatisch auf die Konfigurationsseite.
 

@@ -49,7 +49,7 @@ from rubin.preprocessing import (
     restrict_fitted_preprocessor,
 )
 from rubin.settings import AnalysisConfig
-from rubin.training import _predict_effect, train_and_crosspredict_bt_bo, is_multi_treatment, SurrogateTreeWrapper, SURROGATE_MODEL_NAME, get_fold_aligned_data, store_fold_aligned_data
+from rubin.training import _predict_effect, train_and_crosspredict_bt_bo, is_multi_treatment, SurrogateTreeWrapper, SURROGATE_MODEL_NAME, get_fold_aligned_data, store_fold_aligned_data, fit_estimator
 from rubin.utils.data_utils import reduce_mem_usage, available_cpu_count
 from rubin.utils.io_utils import read_table
 from rubin.utils.categorical_patch import patch_categorical_features
@@ -239,6 +239,67 @@ class AnalysisPipeline:
                 except Exception:
                     self._logger.warning("eval_mask konnte nicht geladen werden.", exc_info=True)
 
+        # ── Gruppen laden (Gruppen-CV gegen Zwillings-Leakage) ──
+        # Explizit via data_files.groups_file, sonst Auto-Erkennung:
+        # groups.parquet neben x_file (DataPrep schreibt sie dort, wenn
+        # data_prep.group_column gesetzt ist).
+        self._groups = None
+        _groups_path = self.cfg.data_files.groups_file
+        _groups_auto = False
+        if not _groups_path:
+            from pathlib import Path as _GP
+            _gcand = _GP(str(self.cfg.data_files.x_file)).parent / "groups.parquet"
+            if _gcand.exists():
+                _groups_path = str(_gcand)
+                _groups_auto = True
+        if _groups_path:
+            try:
+                _gdf = pd.read_parquet(_groups_path)
+                _gc = "group" if "group" in _gdf.columns else str(_gdf.columns[0])
+                _gser = _gdf[_gc].astype(str)
+                if len(_gser) != len(X):
+                    self._logger.warning(
+                        "groups '%s': Länge (%d) passt nicht zu X (%d) — Gruppen-CV wird ignoriert.",
+                        _groups_path, len(_gser), len(X),
+                    )
+                else:
+                    self._groups = _gser.to_numpy()
+                    self._groups_source = (str(_groups_path), bool(_groups_auto))
+                    _ng = int(_gser.nunique())
+                    _gsizes = _gser.value_counts()
+                    _n_multi = int(_gsizes[_gsizes > 1].sum())
+                    self._logger.info(
+                        "Gruppen-CV aktiv (%s%s): %d Zeilen, %d Gruppen — %d Zeilen in Mehrfach-Gruppen "
+                        "(max. Gruppengröße %d). Alle Zeilen einer Gruppe bleiben im selben Fold "
+                        "(alle CV-, Tuning- und Cross-Fitting-Splits dieses Laufs; Details im Report).",
+                        _groups_path, " · auto-erkannt" if _groups_auto else "",
+                        len(_gser), _ng, _n_multi, int(_gsizes.max()),
+                    )
+                    if _ng == len(_gser):
+                        self._logger.info(
+                            "Hinweis: Jede Zeile hat ihre eigene Gruppe — Gruppen-CV verhält sich "
+                            "dann wie zeilenweise CV (kein Schaden, aber auch kein Effekt)."
+                        )
+                    # Dominanz-Check: Eine Riesengruppe (z. B. NaN-IDs, die beim
+                    # Stringifizieren zu EINER Gruppe "nan"/"None" verschmelzen)
+                    # ist zwar kein Leakage, macht die Folds aber unbalanciert
+                    # und deutet auf einen Datenfehler in der Gruppen-Datei hin.
+                    _dom = _gsizes.idxmax()
+                    _dom_n = int(_gsizes.max())
+                    if _dom_n > max(50, int(0.05 * len(_gser))):
+                        self._logger.warning(
+                            "Gruppen-CV: Die größte Gruppe '%s' umfasst %d von %d Zeilen (%.1f%%). "
+                            "Das ist für echte Einheiten-Gruppen ungewöhnlich — typische Ursache sind "
+                            "fehlende Gruppen-IDs, die zu EINER Pseudo-Gruppe verschmolzen wurden "
+                            "(z. B. 'nan'/'None'). DataPrep (group_column) behandelt NaN-IDs korrekt "
+                            "als Einzel-Gruppen; bei eigener groups-Datei bitte NaN-Zeilen eindeutig "
+                            "benennen. Eine Riesengruppe erzeugt kein Leakage, aber stark "
+                            "unbalancierte Folds.",
+                            str(_dom)[:40], _dom_n, len(_gser), _dom_n / len(_gser) * 100,
+                        )
+            except Exception:
+                self._logger.warning("groups '%s' konnten nicht geladen werden.", _groups_path, exc_info=True)
+
         if self.cfg.data_processing.df_frac:
             X = X.sample(frac=float(self.cfg.data_processing.df_frac), random_state=self.cfg.constants.random_seed)
             idx = X.index
@@ -276,6 +337,13 @@ class AnalysisPipeline:
                     eval_mask = eval_mask[positions]
                 except Exception:
                     eval_mask = eval_mask[idx.to_numpy()]
+
+            if getattr(self, "_groups", None) is not None:
+                try:
+                    _gpos = T_df.index.get_indexer(idx)
+                    self._groups = self._groups[_gpos]
+                except Exception:
+                    self._groups = self._groups[idx.to_numpy()]
 
         if self.cfg.data_files.dtypes_file:
             try:
@@ -429,7 +497,16 @@ class AnalysisPipeline:
             _n = len(X)
             _idx = np.random.default_rng(0).choice(_n, size=min(_n, 150_000), replace=False)
             Xs, Ts = X.iloc[_idx], np.asarray(T).astype(int)[_idx]
-            X_tr, X_va, t_tr, t_va = train_test_split(Xs, Ts, test_size=0.25, random_state=0, stratify=Ts)
+            _g_pd = getattr(self, "_groups", None)
+            if _g_pd is not None and len(_g_pd) == _n:
+                # Gruppen-Holdout: Zwillinge derselben Gruppe würden die
+                # Propensity-AUC künstlich aufblasen (Wiedererkennung ≠ Selektion).
+                from sklearn.model_selection import GroupShuffleSplit
+                _gss = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=0)
+                _tr_i, _va_i = next(_gss.split(Xs, Ts, groups=_g_pd[_idx]))
+                X_tr, X_va, t_tr, t_va = Xs.iloc[_tr_i], Xs.iloc[_va_i], Ts[_tr_i], Ts[_va_i]
+            else:
+                X_tr, X_va, t_tr, t_va = train_test_split(Xs, Ts, test_size=0.25, random_state=0, stratify=Ts)
             clf = LGBMClassifier(n_estimators=200, learning_rate=0.1, num_leaves=31,
                                  n_jobs=4, random_state=0, verbosity=-1)
             clf.fit(X_tr, t_tr)
@@ -674,7 +751,7 @@ class AnalysisPipeline:
                 "Starte Tuning: X=%s, Y=%s (unique=%s), T=%s (unique=%s)",
                 X.shape, Y.shape, np.unique(Y).tolist(), T.shape, np.unique(T).tolist(),
             )
-            tuned_params_by_model = tuner.tune_all(cfg.models.models_to_train, X=X, Y=Y, T=T)
+            tuned_params_by_model = tuner.tune_all(cfg.models.models_to_train, X=X, Y=Y, T=T, groups=getattr(self, "_groups", None))
 
             # Logger: Zusammenfassung
             n_tasks = len(tuner.best_scores)
@@ -843,6 +920,7 @@ class AnalysisPipeline:
                         base_fixed_params=dict(cfg.base_learner.fixed_params or {}),
                         fmt_fixed_params=dict(cfg.final_model_tuning.fixed_params or {}),
                         tuned_roles=current,
+                        groups=getattr(self, "_groups", None),
                     )
                     if add:
                         current.update(add)
@@ -1203,6 +1281,7 @@ class AnalysisPipeline:
                         nuisance_params_y=_nuisance_y_params,
                         nuisance_params_t=_nuisance_t_params,
                         single_fold=bool(getattr(cfg.causal_forest, "single_fold", False)),
+                        groups=getattr(self, "_groups", None),
                     )
                     best_p = result.get("best_params", {})
                     best_score = result.get("best_score")
@@ -1296,6 +1375,7 @@ class AnalysisPipeline:
                     parallel_level=cfg.constants.parallel_level,
                     max_parallel_folds=n_fold_workers,
                     keep_last_fold_model=keep_fold,
+                    groups=getattr(self, "_groups", None),
                 )
                 if keep_fold:
                     df_pred, fold_model, fold_val_idx = result
@@ -1307,7 +1387,8 @@ class AnalysisPipeline:
             else:
                 X_test, T_test, Y_test, _ = holdout_data
                 self._logger.info("  %s: Single-Fit auf %d Training-Zeilen, Eval auf %d Holdout-Zeilen.", name, len(X), len(X_test))
-                model.fit(Y, T, X=X)
+                _g_ho = getattr(self, "_groups", None)
+                fit_estimator(model, Y, T, X, groups=(_g_ho if _g_ho is not None and len(_g_ho) == len(X) else None))
                 current_model = model
                 test_pred = _predict_effect(model, X_test)
                 df_pred = pd.DataFrame({"Y": Y_test, "T": T_test})
@@ -1487,6 +1568,10 @@ class AnalysisPipeline:
             X_val = holdout_data[0] if holdout_data is not None else X
             T_val = holdout_data[1] if holdout_data is not None else T
             Y_val = holdout_data[2] if holdout_data is not None else Y
+            # Gruppen für das DRTester-Nuisance-Cross-Fitting: nur im CV/TMES-
+            # Modus (X_val == X); für externe Eval-Daten liegen keine Gruppen vor.
+            _dr_g = getattr(self, "_groups", None)
+            _dr_groups_val = _dr_g if (holdout_data is None and _dr_g is not None and len(_dr_g) == len(X_val)) else None
 
             # Train-Daten für DRTester: Bei External Eval separater Datensatz,
             # bei Cross-Validation dieselben X/T/Y wie val (wie in causaluka).
@@ -1511,6 +1596,7 @@ class AnalysisPipeline:
                     Y_train=Y if has_train else None,
                     cv=_drtester_cv,
                     seed=cfg.constants.random_seed,
+                    groups=_dr_groups_val,
                 )
                 self._logger.info("DRTester Nuisance einmalig gefittet (BT, cv=%d, n_est≤%d). Wird für alle Modelle wiederverwendet.", _drtester_cv, _drtester_n_estimators_cap)
             else:
@@ -1537,6 +1623,7 @@ class AnalysisPipeline:
                         X_train=arm_X_train, T_train=arm_T_train, Y_train=arm_Y_train,
                         cv=_drtester_cv,
                         seed=cfg.constants.random_seed,
+                        groups=(_dr_groups_val[arm_mask_val] if _dr_groups_val is not None else None),
                     )
                     return arm, tester
 
@@ -2545,8 +2632,15 @@ class AnalysisPipeline:
                         # Fallback: OOF
                         oof_k = champion_df[mt_cols_pred[k]].to_numpy(dtype=float)
                         _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
-                        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-                        for tr_idx, va_idx in cv.split(X, _surr_strata):
+                        _g_su = getattr(self, "_groups", None)
+                        if _g_su is not None and len(_g_su) == len(X):
+                            from sklearn.model_selection import StratifiedGroupKFold as _SGKF
+                            cv = _SGKF(n_splits=n_splits, shuffle=True, random_state=seed)
+                            _surr_split = cv.split(X, _surr_strata, groups=_g_su)
+                        else:
+                            cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+                            _surr_split = cv.split(X, _surr_strata)
+                        for tr_idx, va_idx in _surr_split:
                             tree_k = self._build_surrogate_regressor(cfg)
                             tree_k.fit(X.iloc[tr_idx], oof_k[tr_idx])
                             surrogate_preds[va_idx, k] = tree_k.predict(X.iloc[va_idx])
@@ -2607,8 +2701,15 @@ class AnalysisPipeline:
                     oof_target = champion_df[pred_col].to_numpy(dtype=float)
                     surrogate_preds = np.full_like(oof_target, np.nan, dtype=float)
                     _surr_strata = (np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int))
-                    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-                    for tr_idx, va_idx in cv.split(X, _surr_strata):
+                    _g_su = getattr(self, "_groups", None)
+                    if _g_su is not None and len(_g_su) == len(X):
+                        from sklearn.model_selection import StratifiedGroupKFold as _SGKF
+                        cv = _SGKF(n_splits=n_splits, shuffle=True, random_state=seed)
+                        _surr_split = cv.split(X, _surr_strata, groups=_g_su)
+                    else:
+                        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+                        _surr_split = cv.split(X, _surr_strata)
+                    for tr_idx, va_idx in _surr_split:
                         tree = self._build_surrogate_regressor(cfg)
                         tree.fit(X.iloc[tr_idx], oof_target[tr_idx])
                         surrogate_preds[va_idx] = tree.predict(X.iloc[va_idx])
@@ -3066,12 +3167,15 @@ class AnalysisPipeline:
                 self._logger.warning("deepcopy von %s fehlgeschlagen, verwende Original.", _name, exc_info=True)
                 _obj = _src
             try:
+                _g_re = getattr(self, "_groups", None)
                 if _do_full_refit:
-                    _obj.fit(Y_full, T_full, X=X_refit)
+                    fit_estimator(_obj, Y_full, T_full, X_refit,
+                                  groups=(_g_re if _g_re is not None and len(_g_re) == len(X_refit) else None))
                     self._logger.info("Full-Data-Refit: %s auf %d Zeilen refittet.", _name, _refit_rows)
                 elif not holdout_data:
                     # Refit-All deaktiviert, CV-Modus: auf Trainingsdaten fitten.
-                    _obj.fit(Y, T, X=X.loc[:, selected_feature_columns])
+                    fit_estimator(_obj, Y, T, X.loc[:, selected_feature_columns],
+                                  groups=(_g_re if _g_re is not None and len(_g_re) == len(X) else None))
                 else:
                     # Holdout-Modus: kein Refit — _src ist bereits auf Train gefittet.
                     _obj = _src
@@ -3358,7 +3462,8 @@ class AnalysisPipeline:
             try:
                 _predict_effect(model, X.iloc[:1])
             except (AttributeError, Exception):
-                model.fit(Y, T, X=X)
+                _g_ex = getattr(self, "_groups", None)
+                fit_estimator(model, Y, T, X, groups=(_g_ex if _g_ex is not None and len(_g_ex) == len(X) else None))
             self._logger.info(
                 "Explainability für Champion '%s': %d Eval-Samples (out-of-sample).",
                 champion_name, len(X_expl),
@@ -3366,12 +3471,20 @@ class AnalysisPipeline:
         else:
             # Fallback: kein Fold-Modell, kein Holdout → Fit + stratifizierter Split
             model = models[champion_name]
-            from sklearn.model_selection import StratifiedShuffleSplit
             strat = np.asarray(T).astype(int) * 10 + np.asarray(Y).astype(int)
-            splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=seed)
-            train_idx, expl_idx = next(splitter.split(X, strat))
+            _g_sp = getattr(self, "_groups", None)
+            if _g_sp is not None and len(_g_sp) == len(X):
+                # Gruppen-Split: Zwillinge derselben Gruppe nicht in Train UND Explain-Set
+                from sklearn.model_selection import GroupShuffleSplit
+                splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed)
+                train_idx, expl_idx = next(splitter.split(X, strat, groups=_g_sp))
+            else:
+                from sklearn.model_selection import StratifiedShuffleSplit
+                splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=seed)
+                train_idx, expl_idx = next(splitter.split(X, strat))
             try:
-                model.fit(Y[train_idx], T[train_idx], X=X.iloc[train_idx])
+                fit_estimator(model, Y[train_idx], T[train_idx], X.iloc[train_idx],
+                              groups=(_g_sp[train_idx] if _g_sp is not None and len(_g_sp) == len(X) else None))
             except TypeError:
                 model.fit(Y[train_idx], T[train_idx], X.iloc[train_idx])
             X_expl = X.iloc[expl_idx].copy()
@@ -3768,6 +3881,15 @@ class AnalysisPipeline:
                         mlflow.log_artifact(str(_p))
                         self._logger.info("row_provenance.parquet nach MLflow geloggt (Analyse-Lauf): %s", _p)
                         break
+                # Gruppen-Datei (Gruppen-CV): vom KONFIGURIERTEN Pfad, sonst neben x_file —
+                # macht am Lauf nachvollziehbar, mit welcher Gruppenstruktur gefoldet wurde.
+                _grp_cfg_path = str(getattr(cfg.data_files, "groups_file", "") or "")
+                _grp_candidates = ([Path(_grp_cfg_path)] if _grp_cfg_path else []) + [x_dir / "groups.parquet"]
+                for _p in _grp_candidates:
+                    if _p.is_file():
+                        mlflow.log_artifact(str(_p))
+                        self._logger.info("groups.parquet nach MLflow geloggt (Analyse-Lauf): %s", _p)
+                        break
             except Exception:
                 pass  # Kein DataPrep-Output → kein Log, kein Fehler
 
@@ -3829,6 +3951,30 @@ class AnalysisPipeline:
 
             _progress("Daten laden & Preprocessing")
             X, T, Y, S, eval_mask = self._load_inputs()
+            # Gruppen-CV am Lauf dokumentieren (erst NACH _load_inputs bekannt)
+            if getattr(self, "_groups", None) is not None:
+                try:
+                    mlflow.log_param("group_cv", "aktiv")
+                    mlflow.log_metric("group_cv_n_groups", float(len(pd.unique(pd.Series(self._groups).astype(str)))))
+                except Exception:
+                    pass
+                # Report: Gruppen-CV-Kachel in der Datenaufbereitungs-Sektion
+                try:
+                    _gs = pd.Series(self._groups).astype(str)
+                    _src, _auto = getattr(self, "_groups_source", ("groups.parquet", True))
+                    _gmode = ("external" if getattr(self.cfg.data_files, "eval_x_file", None)
+                              else ("tmes" if eval_mask is not None else "cross"))
+                    report.group_cv_info = {
+                        "n_rows": int(len(_gs)),
+                        "n_groups": int(_gs.nunique()),
+                        "max_size": int(_gs.value_counts().max()),
+                        "mean_size": float(len(_gs) / max(1, _gs.nunique())),
+                        "source": str(_src).rsplit("/", 1)[-1],
+                        "auto": bool(_auto),
+                        "mode": _gmode,
+                    }
+                except Exception:
+                    pass
 
             if eval_mask is not None:
                 mlflow.log_param("eval_mask_mode", "train_many_evaluate_one")

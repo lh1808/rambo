@@ -41,6 +41,10 @@ const buildDataPrepYaml = (dp, cfg) => {
     a("  deduplicate: true");
     a(`  deduplicate_id_column: ${dp.dedupCol}`);
   }
+  // Gruppen-Spalte nur emittieren, wenn Dedup AUS ist: Die UI zeigt die beiden
+  // als Alternativen (das Feld ist bei aktivem Dedup ausgeblendet) — ein
+  // versteckter, früher eingegebener Wert darf die Config nicht verändern.
+  if(!dp.dedup && dp.groupCol && dp.groupCol.trim()) a(`  group_column: ${dp.groupCol.trim()}`);
   if(dp.scoreAsFeature) a("  score_as_feature: true");
   if(dp.multiOpt) a(`  multiple_files_option: ${dp.multiOpt}`);
   if(dp.controlFileIndex>0) a(`  control_file_index: ${dp.controlFileIndex}`);

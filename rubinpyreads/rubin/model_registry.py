@@ -18,6 +18,8 @@ from typing import Callable, Dict, List, Any, Optional
 from econml.dml import CausalForestDML, NonParamDML, LinearDML
 from econml.dr import DRLearner
 from sklearn.model_selection import StratifiedKFold
+
+from rubin.utils.group_cv import GroupAwareStratifiedKFold
 from econml.metalearners import SLearner, TLearner, XLearner
 from econml._cate_estimator import BaseCateEstimator
 
@@ -321,7 +323,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
             model_final=_base(ctx, "model_final"),
             discrete_treatment=True,
             discrete_outcome=True,
-            cv=StratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
+            cv=GroupAwareStratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
@@ -338,7 +340,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
             model_t=_base(ctx, "model_t"),
             discrete_treatment=True,
             discrete_outcome=True,
-            cv=StratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
+            cv=GroupAwareStratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
@@ -394,7 +396,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
             model_t=_base(ctx, "model_t"),
             discrete_treatment=True,
             discrete_outcome=True,
-            cv=StratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
+            cv=GroupAwareStratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,
@@ -415,7 +417,7 @@ CausalForest-Parameter werden via `_sanitize_forest_params` validiert
             # Kann optional über R-Score getunt werden.
             model_final=_base(ctx, "model_final"),
             discrete_outcome=True,
-            cv=StratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
+            cv=GroupAwareStratifiedKFold(n_splits=ctx.dml_crossfit_folds, shuffle=True, random_state=ctx.seed),
             mc_iters=ctx.mc_iters,
             mc_agg=ctx.mc_agg,
             random_state=ctx.seed,

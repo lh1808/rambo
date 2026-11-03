@@ -675,6 +675,10 @@ const buildDataPrepYaml = (dp, cfg) => {
     a("  deduplicate: true");
     a(`  deduplicate_id_column: ${dp.dedupCol}`);
   }
+  // Gruppen-Spalte nur emittieren, wenn Dedup AUS ist: Die UI zeigt die beiden
+  // als Alternativen (das Feld ist bei aktivem Dedup ausgeblendet) — ein
+  // versteckter, früher eingegebener Wert darf die Config nicht verändern.
+  if(!dp.dedup && dp.groupCol && dp.groupCol.trim()) a(`  group_column: ${dp.groupCol.trim()}`);
   if(dp.scoreAsFeature) a("  score_as_feature: true");
   if(dp.multiOpt) a(`  multiple_files_option: ${dp.multiOpt}`);
   if(dp.controlFileIndex>0) a(`  control_file_index: ${dp.controlFileIndex}`);
@@ -1448,14 +1452,16 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Bereinigung</div>
           <Row>
             <Col>
-              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction."/>
+              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction. Drei Optionen für Mehrfach-Samples: nichts tun (Standard), hier deduplizieren (echte Duplikate), oder unten per Gruppen-Spalte alle Samples behalten und in den Folds zusammenhalten (echte Mehrfach-Beobachtungen, z. B. verschiedene Lead-Arten je Partner)."/>
               {dp.dedup&&<Inp label="ID-Spalte" value={dp.dedupCol||""} onChange={v=>setDp(prev=>({...prev,dedupCol:v}))} placeholder="PARTNER_ID"/>}
+              {!dp.dedup&&<Inp label="Gruppen-Spalte (optional)" value={dp.groupCol||""} onChange={v=>setDp(prev=>({...prev,groupCol:v}))} placeholder="PARTNER_ID" help="Alternative zur Deduplizierung bei ECHTEN Mehrfach-Samples je Einheit (z. B. 2-3 Leads pro Partner mit unterschiedlichen Features): Alle Samples bleiben erhalten, landen aber in CV, Tuning und Cross-Fitting im SELBEN Fold — verhindert Zwillings-Leakage ohne Datenverlust. Schreibt groups.parquet, die Analyse erkennt sie automatisch."/>}
             </Col>
             {hasMulti && <Col>
               <Toggle label="Treatment-Balance" checked={dp.balanceTreat||false} onChange={v=>setDp(prev=>({...prev,balanceTreat:v}))} help="Per Random-Downsampling die Treatment-Raten über alle Dateien angleichen (Auswahl der Ziel-Rate nach maximaler effektiver Stichprobe)"/>
             </Col>}
           </Row>
           {dp.dedup&&<Info type="warn"><strong>Deduplizierung aktiv:</strong> Reduktion auf 1 Sample pro Kunde verhindert Leakage, wenn mehrere Einträge desselben Kunden in verschiedene Folds fallen.</Info>}
+          {!dp.dedup&&!!(dp.groupCol&&dp.groupCol.trim())&&<Info type="info"><strong>Gruppen-Folds aktiv:</strong> Alle Zeilen mit derselben <code>{dp.groupCol.trim()}</code> bleiben im selben CV-Fold (Cross-Prediction, BLT/FMT/CFT, EconML-Cross-Fitting). Alle Samples werden behalten — richtig, wenn die Mehrfach-Samples echte unterschiedliche Beobachtungen sind (z. B. verschiedene Lead-Arten je Partner).</Info>}
           {dp.balanceTreat&&<Info type="warn"><strong>Treatment-Balance aktiv:</strong> Bei mehr als 5 Prozentpunkten Abweichung zwischen Dateien werden Zeilen per Random-Downsampling entfernt. Die gemeinsame Ziel-Rate wird nach maximaler effektiver Stichprobe (N·p·(1−p)) gewählt — so bleibt die Balance erhalten, statt nur die Zeilenzahl zu maximieren.</Info>}
 
           <Divider/>
@@ -1532,7 +1538,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
 const YAML_TO_CFG = {
   "study_type":"studyType","mlflow.experiment_name":"expName","constants.SEED":"seed","constants.tuning_seed":"tuningSeed","constants.parallel_level":"parallelLevel","constants.work_dir":"workDir",
   "data_files.x_file":"x_file","data_files.t_file":"t_file","data_files.y_file":"y_file","data_files.s_file":"s_file",
-  "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file",
+  "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file","data_files.groups_file":"groups_file",
   "treatment.type":"treatmentType","treatment.reference_group":"refGroup",
   "historical_score.name":"histScoreName","historical_score.column":"histScoreCol","historical_score.higher_is_better":"histScoreHigher",
   "data_processing.validate_on":"validateOn","data_processing.cross_validation_splits":"cvSplits","data_processing.mc_iters":"mcIters","data_processing.mc_agg":"mcAgg","data_processing.dml_crossfit_folds":"dmlCrossfitFolds",
@@ -3236,6 +3242,10 @@ const buildYaml = (cfg, sp, spFmt) => {
     if(cfg.eval_y_file) a(`  eval_y_file: ${cfg.eval_y_file}`);
     if(cfg.eval_s_file) a(`  eval_s_file: ${cfg.eval_s_file}`);
   }
+  // Gruppen-Datei (Gruppen-CV): kein eigenes UI-Feld — Passthrough, damit ein
+  // importierter expliziter Pfad den Export-Roundtrip überlebt. Der Normalfall
+  // (groups.parquet neben x_file) braucht keinen Eintrag (Auto-Erkennung).
+  if(cfg.groups_file) a(`  groups_file: ${cfg.groups_file}`);
   if(cfg.eval_mask_file && cfg.validateOn !== "external") {
     if(Array.isArray(cfg.eval_mask_file)) {
       a(`  eval_mask_file:`);
@@ -3873,7 +3883,7 @@ function App() {
     const iv = setInterval(check, 15000);
     return () => { mounted = false; clearInterval(iv); };
   }, []);
-  const INIT_DP = {files:[""],evalFiles:[],featurePath:"",targets:[""],treatment:"",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",scoreAsFeature:false,outputPath:"runs/data",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],nanCols:[],colStats:{},dictResult:null,chunksize:300000,sasEncoding:"utf-8",dpMlflow:true,dpMlflowExp:"",balanceTreat:false,evalFileIdx:null,nRows:0};
+  const INIT_DP = {files:[""],evalFiles:[],featurePath:"",targets:[""],treatment:"",scoreName:"",multiOpt:"merge",controlFileIndex:0,fillNa:"(keine)",binaryTarget:false,dedup:false,dedupCol:"",groupCol:"",scoreAsFeature:false,outputPath:"runs/data",delimiter:",",detectedCols:null,featureSelection:{},treatValues:[],treatMap:{},colTypes:{},targetValues:[],nanCols:[],colStats:{},dictResult:null,chunksize:300000,sasEncoding:"utf-8",dpMlflow:true,dpMlflowExp:"",balanceTreat:false,evalFileIdx:null,nRows:0};
   const INIT_CFG = {studyType:"rct",expName:"rubin",seed:42,tuningSeed:18,parallelLevel:3,workDir:null,x_file:"",t_file:"",y_file:"",s_file:"",treatmentType:"binary",refGroup:0,hasNaN:false,nanCols:[],validateOn:"cross",cvSplits:5,downsample:false,dfFrac:0.1,reduceMem:true,fsEnabled:false,fsMethods:["catboost_importance"],fsCorrThresh:0.9,fsMaxFeatures:77,outputDir:"",models:["NonParamDML","DRLearner","SLearner","TLearner","XLearner","ParamDML","CausalForestDML","CausalForest"],baseLearner:"catboost",tuningEnabled:false,tuningTrials:50,tuningSingleFold:false,tuningModels:[],fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,fmtScorer:"auto",cfTune:false,cfTrials:50,cfSingleFold:false,cfScorer:"auto",cfTuneModels:[],cfOverfitPenalty:0.0,cfOverfitTolerance:0.1,selMetric:"qini",higherBetter:true,manualChamp:null,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,bundleEnabled:false,bundleDir:"runs/bundles",bundleMlflow:true,explEnabled:false,explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,maxPredRows:0,tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,blFixed:{},fmtFixed:{},cfFixed:{},ensembleEnabled:true,mcIters:null,mcAgg:"mean",fmtOverfitPenalty:0.0,fmtOverfitTolerance:0.1,dmlCrossfitFolds:5,overfitPenalty:0.0,overfitTolerance:0.2};
 
   const [dp,setDp] = useState(_ss0.dp ? {...INIT_DP, ..._ss0.dp} : {...INIT_DP});

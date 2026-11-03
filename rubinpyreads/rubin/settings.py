@@ -78,6 +78,15 @@ class DataFilesConfig(BaseModel):
     # Bei mehreren Masken werden diese per OR kombiniert.
     eval_mask_file: Optional[Union[str, List[str]]] = None
 
+    # Gruppen-Datei für Gruppen-CV (optional). Parquet mit Spalte "group",
+    # zeilengleich zu x_file: Alle Zeilen mit demselben Gruppenwert (z. B.
+    # Partner-ID) landen in CV, Tuning und EconML-Cross-Fitting im SELBEN Fold
+    # (Zwillings-Leakage-Prävention bei Mehrfach-Samples derselben Einheit).
+    # Wird NICHT gesetzt, sucht die Analyse automatisch nach groups.parquet
+    # neben x_file (DataPrep schreibt sie dort, wenn data_prep.group_column
+    # konfiguriert ist).
+    groups_file: Optional[str] = None
+
 
 class HistoricalScoreConfig(BaseModel):
     model_config = _STRICT
@@ -188,6 +197,16 @@ class DataPrepConfig(BaseModel):
     # reduziert wird.
     deduplicate: bool = False
     deduplicate_id_column: Optional[str] = None
+
+    # Gruppen-Spalte für Gruppen-CV (optional). Wenn gesetzt, schreibt DataPrep
+    # groups.parquet neben X/Y/T (eine Gruppen-ID je überlebender Zeile, z. B.
+    # Partner-ID). Die Analyse erkennt die Datei automatisch und hält alle
+    # Zeilen einer Gruppe im selben Fold — in Cross-Prediction, BLT/FMT/CFT
+    # und im EconML-internen Cross-Fitting. Einsatzfall: mehrere echte Samples
+    # je Einheit (z. B. 2-3 Leads pro Partner), die NICHT dedupliziert werden
+    # sollen, weil ihre Features variieren. Die Spalte wird NICHT als Feature
+    # übernommen (IDs tragen kein kausales Signal, öffnen aber Leakage-Kanäle).
+    group_column: Optional[str] = None
 
     # MLflow (DataPrep kann optional loggen)
     log_to_mlflow: bool = False

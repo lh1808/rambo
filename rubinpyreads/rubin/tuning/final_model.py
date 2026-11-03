@@ -14,6 +14,8 @@ import gc
 
 from sklearn.model_selection import StratifiedKFold
 
+from rubin.utils.group_cv import GroupAwareStratifiedKFold
+
 from rubin.tuning.common import (
     _iter_stratified_or_kfold, _safe_import_optuna, _create_fold_scorer,
     _suggest_params, build_base_learner, _log_trial_diagnostics,
@@ -192,7 +194,8 @@ in allen Cross-Prediction-Folds wiederverwendet."""
 
     def _run_fmt_study(self, *, model_name, base_type, role, cached_folds,
                        X_tune, Y_tune, T_tune, base_fixed_params, fmt_fixed_params,
-                       outcome_params, propensity_params, is_rct, op, ot, sf, outer_splits):
+                       outcome_params, propensity_params, is_rct, op, ot, sf, outer_splits,
+                       groups_tune=None):
         """Gemeinsame FMT-Study-Logik für NonParamDML und DRLearner.
 
         Wählt den Scorer (Qini/RScore), definiert das per-Trial-Objective
@@ -277,9 +280,18 @@ in allen Cross-Prediction-Folds wiederverwendet."""
             # FMT-Modell (z.B. DRLearner nach NonParamDML) Scorer wiederverwendet,
             # die mit ANDEREN Nuisance-Params gebaut wurden. Identische Configs
             # teilen sich weiterhin den Cache (Speed-Vorteil bleibt erhalten).
+            # Gruppen-Fingerprint: gecachte Scorer tragen die Gruppen-Splits in
+            # ihren Nuisances — bei geänderter Gruppenzuordnung wäre eine
+            # Wiederverwendung still falsch.
+            if groups_tune is None:
+                _g_fp = ("nogroups",)
+            else:
+                _g_series = pd.Series(np.asarray(groups_tune).astype(str))
+                _g_fp = (len(_g_series), int(_g_series.nunique()),
+                         int(pd.util.hash_pandas_object(_g_series, index=False).sum()))
             _cache_key = (
                 outer_splits, self.tuning_cv_seed, sf, len(Y_tune), op > 0,
-                base_type, bool(is_rct),
+                base_type, bool(is_rct), _g_fp,
                 self._fmt_params_fingerprint(outcome_params, propensity_params, base_fixed_params),
             )
             if self._scorer_cache_key == _cache_key and self._scorer_cache_val:
@@ -297,12 +309,14 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                         base_type, dict(base_fixed_params), outcome_params, propensity_params,
                         Y_tune[_va_b], T_tune[_va_b], X_tune.iloc[_va_b],
                         seed=self.seed, is_rct=is_rct, build_base_learner_fn=build_base_learner,
+                        groups=(groups_tune[_va_b] if groups_tune is not None else None),
                     ))
                     if op > 0:
                         _fold_train_scorers.append(_create_fold_scorer(
                             base_type, dict(base_fixed_params), outcome_params, propensity_params,
                             Y_tune[_tr_b], T_tune[_tr_b], X_tune.iloc[_tr_b],
                             seed=self.seed, is_rct=is_rct, build_base_learner_fn=build_base_learner,
+                            groups=(groups_tune[_tr_b] if groups_tune is not None else None),
                         ))
                 self._scorer_cache_val = _fold_scorers
                 self._scorer_cache_train = _fold_train_scorers
@@ -377,6 +391,7 @@ in allen Cross-Prediction-Folds wiederverwendet."""
         base_fixed_params: Dict[str, Any],
         tuned_roles: Dict[str, Dict[str, Any]],
         fmt_fixed_params: Optional[Dict[str, Any]] = None,
+        groups: Optional[np.ndarray] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Ermittelt getunte Parameter für die Rolle 'model_final'.
 
@@ -416,6 +431,17 @@ in allen Cross-Prediction-Folds wiederverwendet."""
         X_tune = X
         Y_tune = Y
         T_tune = T
+        # Gruppen-CV (Zwillings-Leakage): äußere FMT-Folds UND EconML-internes
+        # Cross-Fitting halten alle Zeilen einer Gruppe zusammen.
+        groups_tune = None
+        if groups is not None:
+            if len(groups) == len(X_tune):
+                groups_tune = np.asarray(groups)
+                _tlog.info("FMT: Gruppen-CV aktiv (%d Gruppen).",
+                           len(pd.unique(pd.Series(groups_tune).astype(str))))
+            else:
+                _tlog.warning("FMT: groups-Länge (%d) ≠ X-Länge (%d) — Gruppen-CV ignoriert.",
+                              len(groups), len(X_tune))
 
         max_rows = self.cfg.final_model_tuning.max_tuning_rows
         if max_rows is not None and len(X_tune) > int(max_rows):
@@ -424,6 +450,8 @@ in allen Cross-Prediction-Folds wiederverwendet."""
             X_tune = X_tune.iloc[idx]
             Y_tune = Y_tune[idx]
             T_tune = T_tune[idx]
+            if groups_tune is not None:
+                groups_tune = groups_tune[idx]
 
         role = "model_final"
         base_type = (base_type or "lgbm").lower()
@@ -459,9 +487,9 @@ in allen Cross-Prediction-Folds wiederverwendet."""
             # EconML's cache_values=True speichert die OOF-Residuals (Y_res, T_res) und die
             # gefitteten Nuisance-Modelle. refit_final() fittet dann NUR model_final neu.
             _fmt_strata = (T_tune.astype(int) * 10 + Y_tune.astype(int))
-            _fmt_cv = StratifiedKFold(n_splits=int(self.cfg.final_model_tuning.cv_splits), shuffle=True, random_state=self.seed)
+            _fmt_cv = GroupAwareStratifiedKFold(n_splits=int(self.cfg.final_model_tuning.cv_splits), shuffle=True, random_state=self.seed)
             _cached_folds = []  # [(est, tr, va), ...]
-            split_iter = _iter_stratified_or_kfold(labels=_fmt_strata, n_splits=_outer_splits, seed=self.tuning_cv_seed)
+            split_iter = _iter_stratified_or_kfold(labels=_fmt_strata, n_splits=_outer_splits, seed=self.tuning_cv_seed, groups=groups_tune)
             _n_cache_folds = 1 if _sf else _outer_splits
             for fold_i, (tr, va) in enumerate(split_iter):
                 if fold_i >= _n_cache_folds:
@@ -484,7 +512,8 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                     mc_agg=self.cfg.data_processing.mc_agg,
                     random_state=self.seed,
                 )
-                est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr], cache_values=True)
+                est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr], cache_values=True,
+                        groups=(groups_tune[tr] if groups_tune is not None else None))
                 _cached_folds.append((est, tr, va))
             _rct_suffix = " model_t = DummyClassifier (RCT: konstante Propensity)." if _fmt_is_rct else ""
             _tlog.info(
@@ -501,6 +530,7 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                 outcome_params=tuned_roles.get("model_y", tuned_roles.get("model_regression", {})),
                 propensity_params=tuned_roles.get("model_t", tuned_roles.get("model_propensity", {})),
                 is_rct=_fmt_is_rct, op=_op, ot=_ot, sf=_sf, outer_splits=_outer_splits,
+                groups_tune=groups_tune,
             )
 
         elif name == "drlearner":
@@ -513,9 +543,9 @@ in allen Cross-Prediction-Folds wiederverwendet."""
 
             # ── cache_values-Optimierung (analog NonParamDML) ──
             _fmt_strata = (T_tune.astype(int) * 10 + Y_tune.astype(int))
-            _fmt_cv = StratifiedKFold(n_splits=int(self.cfg.final_model_tuning.cv_splits), shuffle=True, random_state=self.seed)
+            _fmt_cv = GroupAwareStratifiedKFold(n_splits=int(self.cfg.final_model_tuning.cv_splits), shuffle=True, random_state=self.seed)
             _cached_folds = []
-            split_iter = _iter_stratified_or_kfold(labels=_fmt_strata, n_splits=_outer_splits, seed=self.tuning_cv_seed)
+            split_iter = _iter_stratified_or_kfold(labels=_fmt_strata, n_splits=_outer_splits, seed=self.tuning_cv_seed, groups=groups_tune)
             _n_cache_folds = 1 if _sf else _outer_splits
             for fold_i, (tr, va) in enumerate(split_iter):
                 if fold_i >= _n_cache_folds:
@@ -536,7 +566,8 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                     mc_agg=self.cfg.data_processing.mc_agg,
                     random_state=self.seed,
                 )
-                est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr], cache_values=True)
+                est.fit(Y_tune[tr], T_tune[tr], X=X_tune.iloc[tr], cache_values=True,
+                        groups=(groups_tune[tr] if groups_tune is not None else None))
                 _cached_folds.append((est, tr, va))
             _rct_suffix = " model_propensity = DummyClassifier (RCT: konstante Propensity)." if _fmt_is_rct else ""
             _tlog.info(
@@ -553,6 +584,7 @@ in allen Cross-Prediction-Folds wiederverwendet."""
                 outcome_params=tuned_roles.get("model_regression", tuned_roles.get("model_y", {})),
                 propensity_params=tuned_roles.get("model_propensity", tuned_roles.get("model_t", {})),
                 is_rct=_fmt_is_rct, op=_op, ot=_ot, sf=_sf, outer_splits=_outer_splits,
+                groups_tune=groups_tune,
             )
 
         return {}

@@ -138,6 +138,38 @@ def _auto_parallel_folds(n_splits: int, parallel_level: int = 2) -> int:
     return min(n_splits, max_workers, n_cpus)
 
 
+
+# ---------------------------------------------------------------------------
+# Gruppen-bewusstes Fitten (Duplikat-/Cluster-Leakage im internen Cross-Fitting)
+# ---------------------------------------------------------------------------
+_GROUPS_FIT_SUPPORT: dict = {}
+
+
+def fit_estimator(model: Any, Y: np.ndarray, T: np.ndarray, X, groups=None):
+    """Fittet einen CATE-Estimator, optional mit ``groups`` für EconMLs internes Cross-Fitting.
+
+    ``groups`` wird NUR durchgereicht, wenn die fit-Signatur des Modells einen
+    ``groups``-Parameter kennt (EconML-_OrthoLearner-Familie: DML/DR/CausalForestDML).
+    Meta-Learner (S/T/X) und der GRF-Adapter kennen keinen — sie haben kein
+    internes Cross-Fitting, dort gibt es diesen Leakage-Kanal nicht.
+    Voraussetzung: Der Estimator wurde mit einem groups-fähigen cv-Splitter
+    gebaut (GroupAwareStratifiedKFold) — sonst wirft EconML einen TypeError.
+    """
+    if groups is not None:
+        t = type(model)
+        ok = _GROUPS_FIT_SUPPORT.get(t)
+        if ok is None:
+            try:
+                import inspect as _inspect
+                ok = "groups" in _inspect.signature(t.fit).parameters
+            except (ValueError, TypeError):
+                ok = False
+            _GROUPS_FIT_SUPPORT[t] = ok
+        if ok:
+            return model.fit(Y, T, X=X, groups=np.asarray(groups))
+    return model.fit(Y, T, X=X)
+
+
 def _fit_single_fold(
     model_template: Any,
     X: pd.DataFrame,
@@ -145,6 +177,7 @@ def _fit_single_fold(
     T: np.ndarray,
     tr_idx: np.ndarray,
     va_idx: np.ndarray,
+    groups: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Trainiert einen einzelnen CV-Fold und gibt (va_idx, fold_predictions, full_predictions) zurück.
 
@@ -155,7 +188,8 @@ def _fit_single_fold(
     full_predictions: Predictions auf dem GESAMTEN Datensatz (nicht nur Val).
     Für Fold-Aligned Surrogate-Training (leakage-frei)."""
     m = copy.deepcopy(model_template)
-    m.fit(Y[tr_idx], T[tr_idx], X=X.iloc[tr_idx])
+    fit_estimator(m, Y[tr_idx], T[tr_idx], X.iloc[tr_idx],
+                  groups=(groups[tr_idx] if groups is not None else None))
     fold_pred = _predict_effect(m, X.iloc[va_idx])
     full_pred = _predict_effect(m, X)
     del m
@@ -173,6 +207,7 @@ def _run_folds_sequential(
     is_mt: bool,
     keep_last_model: bool = False,
     collect_full_preds: bool = False,
+    groups: np.ndarray | None = None,
 ) -> tuple[np.ndarray, Any, np.ndarray | None, dict | None]:
     """Sequentielle Fold-Verarbeitung.
 
@@ -195,7 +230,8 @@ def _run_folds_sequential(
                 "so erweitern, dass pro Fold eine neue Instanz erzeugt wird."
             ) from e
 
-        m.fit(Y[tr_idx], T[tr_idx], X=X.iloc[tr_idx])
+        fit_estimator(m, Y[tr_idx], T[tr_idx], X.iloc[tr_idx],
+                      groups=(groups[tr_idx] if groups is not None else None))
         fold_pred = _predict_effect(m, X.iloc[va_idx])
 
         if is_mt:
@@ -277,6 +313,7 @@ def train_and_crosspredict_bt_bo(
     parallel_level: int = 2,
     max_parallel_folds: int | None = None,
     keep_last_fold_model: bool = False,
+    groups: np.ndarray | None = None,
 ) -> pd.DataFrame | tuple[pd.DataFrame, Any, np.ndarray | None]:
     """Trainiert ein Modell und erzeugt Cross-Predictions für BT/BO und MT/BO.
 
@@ -312,7 +349,42 @@ Ergebnis (MT, K Treatment-Arme):
     if not strata_counts.empty:
         effective_splits = min(effective_splits, int(strata_counts.min()))
 
-    if effective_splits >= 2:
+    # ── Gruppen-CV: alle Zeilen einer Gruppe (z. B. eines Partners) im selben Fold ──
+    # Verhindert Zwillings-Leakage bei Mehrfach-Samples derselben Einheit:
+    # Ohne Gruppen-Folds landen nahezu identische Zeilen in Train UND Val,
+    # Modelle erkennen sie wieder und die OOF-Metriken werden optimistisch.
+    groups_arr: np.ndarray | None = None
+    if groups is not None:
+        groups_arr = np.asarray(groups)
+        if len(groups_arr) != len(X):
+            _logger.warning(
+                "%s: groups-Länge (%d) ≠ X-Länge (%d) — Gruppen-CV wird ignoriert.",
+                model_name, len(groups_arr), len(X),
+            )
+            groups_arr = None
+    split_iter = None
+    if groups_arr is not None:
+        from sklearn.model_selection import StratifiedGroupKFold
+        _n_groups = len(pd.unique(pd.Series(groups_arr).astype(str)))
+        _eff_g = min(int(n_splits), _n_groups)
+        if _eff_g >= 2:
+            cv = StratifiedGroupKFold(n_splits=_eff_g, shuffle=True, random_state=random_state)
+            split_iter = cv.split(np.zeros(len(X)), strata, groups_arr)
+            _logger.info(
+                "%s: Gruppen-CV aktiv — %d Folds über %d Gruppen "
+                "(alle Zeilen einer Gruppe im selben Fold, T×Y-stratifiziert).",
+                model_name, _eff_g, _n_groups,
+            )
+        else:
+            _logger.warning(
+                "%s: Nur %d eindeutige Gruppe(n) — Gruppen-CV unmöglich, "
+                "Fallback auf zeilenweise Folds.", model_name, _n_groups,
+            )
+            groups_arr = None
+
+    if split_iter is not None:
+        pass
+    elif effective_splits >= 2:
         cv = StratifiedKFold(n_splits=effective_splits, shuffle=True, random_state=random_state)
         split_iter = cv.split(np.zeros(len(X)), strata)
     else:
@@ -372,7 +444,7 @@ Ergebnis (MT, K Treatment-Arme):
             )
 
             results = Parallel(n_jobs=n_parallel, prefer="threads")(
-                delayed(_fit_single_fold)(model, X, Y, T, tr_idx, va_idx)
+                delayed(_fit_single_fold)(model, X, Y, T, tr_idx, va_idx, groups_arr)
                 for tr_idx, va_idx in folds
             )
 
@@ -391,7 +463,8 @@ Ergebnis (MT, K Treatment-Arme):
             if keep_last_fold_model:
                 last_tr, last_va = folds[-1]
                 last_fold_model = copy.deepcopy(model)
-                last_fold_model.fit(Y[last_tr], T[last_tr], X=X.iloc[last_tr])
+                fit_estimator(last_fold_model, Y[last_tr], T[last_tr], X.iloc[last_tr],
+                              groups=(groups_arr[last_tr] if groups_arr is not None else None))
                 last_fold_val_idx = last_va
 
         except Exception as e:
@@ -402,14 +475,14 @@ Ergebnis (MT, K Treatment-Arme):
             preds, last_fold_model, last_fold_val_idx, fold_full_preds = _run_folds_sequential(
                 model, X, Y, T, folds, preds, is_mt,
                 keep_last_model=keep_last_fold_model,
-                collect_full_preds=True)
+                collect_full_preds=True, groups=groups_arr)
     else:
         # ── Sequentielle Fold-Verarbeitung ──
         _logger.info("%s: %d Folds sequentiell.", model_name, len(folds))
         preds, last_fold_model, last_fold_val_idx, fold_full_preds = _run_folds_sequential(
             model, X, Y, T, folds, preds, is_mt,
             keep_last_model=keep_last_fold_model,
-            collect_full_preds=True)
+            collect_full_preds=True, groups=groups_arr)
 
     # ── NaN-Check: Jedes Sample sollte genau einmal predicted worden sein ──
     n_nan = int(np.isnan(preds).sum()) if preds.ndim == 1 else int(np.isnan(preds).any(axis=1).sum())
@@ -445,7 +518,7 @@ Ergebnis (MT, K Treatment-Arme):
             # Modell am Ende erneut auf vollen Daten — bewusster Memory-vs-Compute-Tradeoff
             # (ein zusätzlicher Full-Fit pro gebündeltem Modell statt N Full-Modelle im RAM).
             m_full = copy.deepcopy(model)
-            m_full.fit(Y, T, X=X)
+            fit_estimator(m_full, Y, T, X, groups=groups_arr)
             train_pred = _predict_effect(m_full, X)
             del m_full
             gc.collect()

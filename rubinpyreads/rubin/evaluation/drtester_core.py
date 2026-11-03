@@ -466,6 +466,7 @@ def fit_drtester_nuisance(
     Y_train: Optional[np.ndarray] = None,
     cv: int = 5,
     seed: int = 42,
+    groups: Optional[np.ndarray] = None,
 ) -> CustomDRTester:
     """Erstellt und fittet einen DRTester NUR für die Nuisance-Modelle (Outcome + Propensity).
 
@@ -475,24 +476,45 @@ def fit_drtester_nuisance(
 
     cv: Anzahl Cross-Fitting-Folds für Nuisance-Predictions (Default: 5).
         Weniger Folds = schneller, leicht ungenauere DR-Outcomes."""
-    from sklearn.model_selection import StratifiedKFold
+    from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
     # StratifiedKFold auf T×Y für balancierte Treatment- und Outcome-Gruppen pro Fold
     _dr_strata = np.asarray(T_val).ravel().astype(int) * 10 + np.clip(np.asarray(Y_val).ravel(), 0, 1).astype(int)
 
     class _TxYSplitter:
-        """Wrapper: DRTester ruft cv.split(X, D) mit nur T — wir erzwingen T×Y."""
-        def __init__(self, skf, strata):
-            self._skf, self._strata = skf, strata
+        """Wrapper: DRTester ruft cv.split(X, D) mit nur T — wir erzwingen T×Y
+        (und optional Gruppen-Reinheit: keine Gruppe in Train UND Val)."""
+        def __init__(self, skf, strata, groups=None):
+            self._skf, self._strata, self._groups = skf, strata, groups
         def split(self, X, y=None, groups=None):
+            if self._groups is not None:
+                return self._skf.split(X, self._strata, groups=self._groups)
             return self._skf.split(X, self._strata)
         def get_n_splits(self, *a, **kw):
-            return self._skf.get_n_splits(*a, **kw)
+            return self._skf.get_n_splits()
 
-    cv_splitter = _TxYSplitter(
-        StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed),
-        _dr_strata,
-    )
+    # Gruppen-CV: Zwillinge derselben Gruppe würden die DR-Nuisance-Qualität
+    # (und damit Kalibrierungs-/CI-Diagnostik) optimistisch verzerren.
+    _dr_groups = None
+    if groups is not None and len(groups) == len(_dr_strata):
+        _g_arr = np.asarray(groups)
+        _n_g = len(pd.unique(pd.Series(_g_arr).astype(str)))
+        _eff = min(int(cv), _n_g)
+        if _eff >= 2:
+            cv_splitter = _TxYSplitter(
+                StratifiedGroupKFold(n_splits=_eff, shuffle=True, random_state=seed),
+                _dr_strata, _g_arr,
+            )
+            _dr_groups = _g_arr
+            logging.getLogger("rubin.evaluation").info(
+                "DRTester: Gruppen-CV für Nuisance-Cross-Fitting (%d Folds über %d Gruppen).",
+                _eff, _n_g,
+            )
+    if _dr_groups is None:
+        cv_splitter = _TxYSplitter(
+            StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed),
+            _dr_strata,
+        )
 
     # Dummy-CATE-Preds (werden bei der Nuisance-Fitphase nicht benötigt,
     # aber der Konstruktor verlangt entweder cate oder cate_preds_val)

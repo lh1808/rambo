@@ -62,6 +62,7 @@ data_prep:
   fill_na_method: median                    # "median" | "mean" | "zero" | "mode" | null
   deduplicate: false                        # true: Kunden auf 1 Eintrag pro ID reduzieren
   deduplicate_id_column: null               # Spaltenname der Kunden-ID (z. B. "PARTNER_ID")
+  group_column: null                        # Gruppen-Folds statt Dedup: Mehrfach-Samples je Einheit behalten, aber alle Zeilen einer Gruppe im selben CV-Fold (schreibt groups.parquet)
   eval_data_path: null                       # Separater Eval-Datensatz (fit-on-train, transform-on-eval)
   log_to_mlflow: false
   mlflow_experiment_name: null
@@ -78,6 +79,7 @@ data_files:
   eval_y_file: null                          # Separater Eval-Datensatz (Outcome)
   eval_s_file: null                          # Separater Eval-Datensatz (Score, optional)
   eval_mask_file: null                       # Boolean-Maske (.npy) für "Train Many, Evaluate Some"
+  groups_file: null                          # Gruppen-Datei (Parquet, Spalte "group") für Gruppen-CV; ohne Angabe wird groups.parquet neben x_file auto-erkannt
   dtypes_file: data/processed/dtypes.json
 
 # --- Historischer Score ---------------------------------------

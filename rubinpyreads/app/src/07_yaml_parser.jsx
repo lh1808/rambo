@@ -1,7 +1,7 @@
 const YAML_TO_CFG = {
   "study_type":"studyType","mlflow.experiment_name":"expName","constants.SEED":"seed","constants.tuning_seed":"tuningSeed","constants.parallel_level":"parallelLevel","constants.work_dir":"workDir",
   "data_files.x_file":"x_file","data_files.t_file":"t_file","data_files.y_file":"y_file","data_files.s_file":"s_file",
-  "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file",
+  "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file","data_files.groups_file":"groups_file",
   "treatment.type":"treatmentType","treatment.reference_group":"refGroup",
   "historical_score.name":"histScoreName","historical_score.column":"histScoreCol","historical_score.higher_is_better":"histScoreHigher",
   "data_processing.validate_on":"validateOn","data_processing.cross_validation_splits":"cvSplits","data_processing.mc_iters":"mcIters","data_processing.mc_agg":"mcAgg","data_processing.dml_crossfit_folds":"dmlCrossfitFolds",
