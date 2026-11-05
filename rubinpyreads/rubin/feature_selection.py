@@ -55,6 +55,16 @@ def remove_highly_correlated_features(
     Importance-Score entfernt. Ohne Importances wird das spätere Feature
     (nach Spaltenreihenfolge) entfernt.
 
+    Greedy-Garantie (Ketten-Fall A~B, B~C, A!~C): Die Auswahl läuft über die
+    Features in absteigender Wichtigkeit — das jeweils wichtigste noch
+    verbleibende Feature wird Keeper und entfernt nur seine ÜBERLEBENDEN
+    über-korrelierten Partner. Dadurch korreliert jedes entfernte Feature
+    nachweislich mit einem BEHALTENEN Feature (seinem ``absorbed_by``-Partner),
+    und ein einmal behaltenes Feature fällt nie nachträglich. Ohne diese
+    Garantie konnten in Korrelationsketten BEIDE Features eines Paares
+    verschwinden (B fällt wegen A, C fällt wegen des bereits entfernten B),
+    obwohl C mit dem Überlebenden A gar nicht korreliert.
+
     Returns
     -------
     X_filtered : DataFrame ohne korrelierte Features
@@ -63,8 +73,10 @@ def remove_highly_correlated_features(
         Wird für Importance-Umverteilung genutzt: das überlebende Feature
         erhält die Importance des entfernten Partners dazu.
 
-    Optimierung: Pearson wird zuerst berechnet (schneller, O(n*p²)).
-    Spearman nur auf den überlebenden Spalten (Rang-Transformation ist teuer)."""
+    Beide Korrelationsmatrizen werden auf dem VOLLEN Spaltensatz berechnet und
+    die über-Schwelle-Paare vereint, bevor entfernt wird — die frühere
+    Optimierung (Spearman nur auf Pearson-Überlebenden) öffnete die
+    Ketten-Kaskade über die Methoden-Runden hinweg."""
     methods = list(correlation_methods or ["pearson", "spearman"])
     threshold = float(correlation_threshold)
 
@@ -72,51 +84,60 @@ def remove_highly_correlated_features(
     if len(numeric_cols) < 2:
         return X.copy(), [], {}
 
-    # Aggregierte Importance pro Feature (Durchschnitt über Methoden)
+    # Aggregierte Importance pro Feature: Mittel der je Methode auf Summe 1
+    # NORMIERTEN Importances. Die Methoden haben völlig verschiedene Skalen
+    # (LGBM-Gain ~10^3-10^5, CatBoost PredictionValuesChange ~0-100, GRF ~0-1) —
+    # ein Mittel über Rohwerte ließe die größt-skalierte Methode die Keeper-Wahl
+    # allein entscheiden (ein knappes 52:48 von LGBM überstimmte ein klares
+    # 90:10 von CatBoost). Normiert zählt jede Methode gleich; bei nur einer
+    # Methode ist die Ordnung identisch zum Rohwert.
     agg_imp: Dict[str, float] = {}
     if importances:
+        _norm_imps = []
+        for imp in importances.values():
+            _vals = imp.astype(float)
+            _total = float(_vals.clip(lower=0).sum())
+            _norm_imps.append(_vals / _total if _total > 0 else _vals * 0.0)
         for col in numeric_cols:
-            scores = [float(imp.get(col, 0.0)) for imp in importances.values() if col in imp.index]
+            scores = [float(ni.get(col, 0.0)) for ni in _norm_imps if col in ni.index]
             agg_imp[col] = sum(scores) / max(len(scores), 1)
 
-    # Korrelierte Paare finden und das weniger wichtige Feature entfernen
+    # Korrelierte Paare finden und das weniger wichtige Feature entfernen.
+    # WICHTIG: Die Adjazenz wird über ALLE Methoden (Pearson + Spearman) vereint
+    # und erst dann EIN Greedy-Lauf gemacht — sonst können Ketten-Kaskaden über
+    # die Methoden-Runden entstehen (Runde 1: W verdrängt F; Runde 2: V verdrängt
+    # W → F UND W beide weg, obwohl F mit dem Überlebenden V nicht korreliert).
     to_drop: set = set()
     absorbed_by: Dict[str, str] = {}  # entferntes → überlebendes Feature
-    remaining = list(numeric_cols)
+    adj: Dict[str, set] = {c: set() for c in numeric_cols}
     for method in sorted(methods, key=lambda m: 0 if m == "pearson" else 1):
-        if len(remaining) < 2:
-            break
-        corr_matrix = X[remaining].corr(method=method).abs()
-        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        corr_matrix = X[numeric_cols].corr(method=method).abs()
+        _cols = list(corr_matrix.columns)
+        _arr = corr_matrix.to_numpy()
+        _iu, _ju = np.triu_indices(len(_cols), k=1)
+        _mask = np.nan_to_num(_arr[_iu, _ju], nan=0.0) > threshold
+        for _a, _b in zip(_iu[_mask], _ju[_mask]):
+            adj[_cols[_a]].add(_cols[_b])
+            adj[_cols[_b]].add(_cols[_a])
 
-        if agg_imp:
-            # Importance-gesteuertes Entfernen: pro Paar das schwächere Feature droppen
-            for col_i in upper.columns:
-                for col_j in upper.index:
-                    if pd.notna(upper.at[col_j, col_i]) and upper.at[col_j, col_i] > threshold:
-                        # col_j (Zeile) vs. col_i (Spalte) sind korreliert
-                        if col_i in to_drop or col_j in to_drop:
-                            continue  # bereits markiert
-                        imp_i = agg_imp.get(col_i, 0.0)
-                        imp_j = agg_imp.get(col_j, 0.0)
-                        if imp_i >= imp_j:
-                            drop, keep = col_j, col_i
-                        else:
-                            drop, keep = col_i, col_j
-                        to_drop.add(drop)
-                        absorbed_by[drop] = keep
-        else:
-            # Fallback: oberes Dreieck → spätere Spalte wird entfernt
-            for col_i in upper.columns:
-                if any(upper[col_i] > threshold) and col_i not in to_drop:
-                    to_drop.add(col_i)
-                    for col_j in upper.index:
-                        if pd.notna(upper.at[col_j, col_i]) and upper.at[col_j, col_i] > threshold and col_j not in to_drop:
-                            absorbed_by[col_i] = col_j
-                            break
-
-        # Spearman nur auf Spalten, die Pearson überlebt haben
-        remaining = [c for c in remaining if c not in to_drop]
+    # Greedy in absteigender Wichtigkeit (ohne Importances: Spaltenreihenfolge —
+    # die frühere Spalte gewinnt). Das wichtigste verbleibende Feature wird
+    # Keeper und entfernt NUR seine noch lebenden über-korrelierten Partner.
+    # Garantie: Keeper fallen nie nachträglich; jedes entfernte Feature
+    # korreliert (in mindestens einer Methode) über der Schwelle mit seinem
+    # ÜBERLEBENDEN absorbed_by-Partner.
+    if agg_imp:
+        _pos = {c: k for k, c in enumerate(numeric_cols)}
+        _order = sorted(numeric_cols, key=lambda c: (-agg_imp.get(c, 0.0), _pos[c]))
+    else:
+        _order = list(numeric_cols)
+    for _keeper in _order:
+        if _keeper in to_drop:
+            continue
+        for _p in sorted(adj.get(_keeper, ())):
+            if _p not in to_drop:
+                to_drop.add(_p)
+                absorbed_by[_p] = _keeper
 
     to_drop_sorted = sorted(to_drop)
     if to_drop_sorted:

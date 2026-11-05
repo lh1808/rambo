@@ -192,3 +192,239 @@ class TestExactFeatureBudget:
         _, _, top = select_features_by_importance(X, {"m1": imp, "m2": imp.copy()}, max_features=10)
         assert set(top.keys()) == {"m1", "m2"}
         assert all(len(v) >= 1 for v in top.values())
+
+
+class TestCorrelationChainNoCascade:
+    """Realer Vorfall: Ein wichtiges Feature W korrelierte stark mit F — und
+    BEIDE wurden entfernt. Ursache: Ketten-Kaskade V~W~F (V!~F). Die alte
+    Paar-Schleife entfernte F wegen W (absorbed_by[F]=W) und danach W wegen V —
+    F's Keeper war tot, F's Information komplett verloren, obwohl F mit dem
+    Überlebenden V gar nicht über-korreliert. Der Greedy-Fix (absteigende
+    Wichtigkeit, Keeper entfernen nur LEBENDE Partner) garantiert: Jeder
+    Entfernte korreliert mit einem BEHALTENEN Feature."""
+
+    def _chain(self, n=20000, seed=0):
+        rng = np.random.default_rng(seed)
+        e1, e2, e3 = rng.normal(size=(3, n))
+        V = e1
+        W = 0.93 * e1 + np.sqrt(1 - 0.93**2) * e2       # corr(V,W)≈0.93
+        F = 0.92 * W + np.sqrt(1 - 0.92**2) * e3        # corr(W,F)≈0.92, corr(V,F)≈0.86
+        return V, W, F
+
+    def test_chain_importance_keeps_tail_feature(self):
+        V, W, F = self._chain()
+        X = pd.DataFrame({"F_FEAT": F, "W_WICHTIG": W, "V_STARK": V})
+        imp = {"m": pd.Series({"V_STARK": 100.0, "W_WICHTIG": 90.0, "F_FEAT": 50.0})}
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"], importances=imp)
+        assert sorted(Xf.columns) == ["F_FEAT", "V_STARK"]
+        assert removed == ["W_WICHTIG"]
+        assert absorbed == {"W_WICHTIG": "V_STARK"}
+
+    def test_chain_fallback_keeps_tail_feature(self):
+        V, W, F = self._chain(seed=1)
+        X = pd.DataFrame({"A": V, "B": W, "C": F})
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"])
+        assert sorted(Xf.columns) == ["A", "C"]
+        assert removed == ["B"] and absorbed == {"B": "A"}
+
+    def test_clique_collapses_to_most_important(self):
+        """Echte Clique (alle Paare über der Schwelle): Dann ist 'beide weg'
+        korrekt — beide korrelieren mit dem überlebenden Wichtigsten."""
+        rng = np.random.default_rng(2)
+        n = 20000
+        e1, e2, e3 = rng.normal(size=(3, n))
+        V = e1
+        W = 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2
+        F = 0.97 * W + np.sqrt(1 - 0.97**2) * e3        # corr(V,F)≈0.92 → Clique
+        X = pd.DataFrame({"F_FEAT": F, "W_WICHTIG": W, "V_STARK": V})
+        imp = {"m": pd.Series({"V_STARK": 100.0, "W_WICHTIG": 90.0, "F_FEAT": 50.0})}
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"], importances=imp)
+        assert list(Xf.columns) == ["V_STARK"]
+        assert absorbed == {"F_FEAT": "V_STARK", "W_WICHTIG": "V_STARK"}
+
+    def test_invariant_every_removed_correlates_with_a_survivor(self):
+        """Strukturelle Garantie auf zufälligen Korrelationsgeflechten:
+        (a) jeder absorbed_by-Keeper ÜBERLEBT, (b) jedes entfernte Feature
+        korreliert über der Schwelle mit seinem Keeper, (c) kein überlebendes
+        Paar liegt über der Schwelle (bezogen auf die Pearson-Runde)."""
+        for seed in range(5):
+            rng = np.random.default_rng(seed)
+            n, k = 4000, 12
+            base = rng.normal(size=(n, 4))
+            cols = {}
+            for i in range(k):
+                w = rng.dirichlet(np.ones(4)) * rng.choice([1, 1, 1, 3])
+                sig = base @ w
+                noise = rng.uniform(0.05, 1.0)
+                cols[f"f{i}"] = sig / sig.std() + noise * rng.normal(size=n)
+            X = pd.DataFrame(cols)
+            imp = {"m": pd.Series(rng.uniform(1, 100, k), index=X.columns)}
+            thr = 0.9
+            Xf, removed, absorbed = remove_highly_correlated_features(
+                X, correlation_threshold=thr, correlation_methods=["pearson"], importances=imp)
+            corr = X.corr(method="pearson").abs()
+            surv = set(Xf.columns)
+            assert set(removed) == set(absorbed)
+            for drop, keep in absorbed.items():
+                assert keep in surv, f"seed {seed}: Keeper {keep} wurde selbst entfernt"
+                assert corr.loc[drop, keep] > thr, f"seed {seed}: {drop}~{keep} nicht über Schwelle"
+            for a in surv:
+                for b in surv:
+                    if a < b:
+                        assert corr.loc[a, b] <= thr, f"seed {seed}: Überlebende {a}~{b} über Schwelle"
+
+    def test_redistribution_lands_on_survivor(self):
+        """Nach dem Fix zeigen alle absorbed_by auf Überlebende — die
+        Importance-Umverteilung (analysis_pipeline) kann nicht mehr auf ein
+        totes Feature schieben."""
+        V, W, F = self._chain(seed=3)
+        X = pd.DataFrame({"F_FEAT": F, "W_WICHTIG": W, "V_STARK": V})
+        imp = {"m": pd.Series({"V_STARK": 100.0, "W_WICHTIG": 90.0, "F_FEAT": 50.0})}
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"], importances=imp)
+        # Umverteilung wie in _run_feature_selection
+        for method_name, s in imp.items():
+            for dropped, keeper in absorbed.items():
+                if dropped in s.index and keeper in s.index:
+                    s[keeper] = s[keeper] + s[dropped]
+        assert imp["m"]["V_STARK"] == 190.0  # V erbt W
+        assert imp["m"]["F_FEAT"] == 50.0    # F bleibt eigenständig erhalten
+
+    def test_no_cascade_across_methods(self):
+        """Kaskade über Methoden-Runden: V~W nur in SPEARMAN über der Schwelle
+        (monoton, nichtlinear), W~F in Pearson. Früher: Pearson-Runde droppt F
+        (Keeper W), Spearman-Runde droppt W (Keeper V) → F und W beide weg.
+        Jetzt: vereinte Adjazenz → ein Greedy → F überlebt."""
+        rng = np.random.default_rng(4)
+        n = 20000
+        e2, e3 = rng.normal(size=(2, n))
+        V = rng.normal(size=n)
+        # W monoton in V (Spearman ≈ 1), aber durch starke Konvexität Pearson < 0.9
+        W_mono = np.exp(2.2 * V)
+        W = (W_mono - W_mono.mean()) / W_mono.std()
+        F = 0.95 * W + np.sqrt(1 - 0.95**2) * e3
+        X = pd.DataFrame({"F_FEAT": F, "W_WICHTIG": W, "V_STARK": V})
+        pear = X.corr("pearson").abs(); spear = X.corr("spearman").abs()
+        assert pear.loc["V_STARK", "W_WICHTIG"] < 0.9 < spear.loc["V_STARK", "W_WICHTIG"]
+        assert pear.loc["W_WICHTIG", "F_FEAT"] > 0.9
+        assert max(pear.loc["V_STARK", "F_FEAT"], spear.loc["V_STARK", "F_FEAT"]) < 0.9
+        imp = {"m": pd.Series({"V_STARK": 100.0, "W_WICHTIG": 90.0, "F_FEAT": 50.0})}
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, importances=imp)
+        assert sorted(Xf.columns) == ["F_FEAT", "V_STARK"], (removed, absorbed)
+        assert absorbed == {"W_WICHTIG": "V_STARK"}
+
+
+class TestScaleFreeKeeperChoice:
+    """Keeper-Wahl über Methoden hinweg: je Methode auf Summe 1 normiert.
+    Vorher entschied die größt-skalierte Methode (LGBM-Gain ~10^3-10^5) allein —
+    ein knappes 52:48 von LGBM überstimmte ein klares 90:10 von CatBoost."""
+
+    def test_small_scale_method_vote_counts(self):
+        rng = np.random.default_rng(0)
+        n = 20000
+        e1, e2 = rng.normal(size=(2, n))
+        X = pd.DataFrame({"A": e1, "B": 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2})
+        imp = {"lgbm_importance": pd.Series({"A": 4800.0, "B": 5200.0}),
+               "catboost_importance": pd.Series({"A": 90.0, "B": 10.0})}
+        _, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"], importances=imp)
+        assert removed == ["B"] and absorbed == {"B": "A"}
+
+    def test_single_method_order_unchanged_by_normalization(self):
+        rng = np.random.default_rng(1)
+        n = 20000
+        e1, e2 = rng.normal(size=(2, n))
+        X = pd.DataFrame({"A": e1, "B": 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2})
+        imp = {"m": pd.Series({"A": 10.0, "B": 5.0})}
+        _, removed, _ = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"], importances=imp)
+        assert removed == ["B"]
+
+
+class TestFeatureReductionPipelineIntegration:
+    """Durchstich der gesamten Reduction-Strecke über _run_feature_selection:
+    Importances → Korrelationsfilter (Kette!) → Umverteilung → Budget →
+    Buchhaltung (removed-Listen getrennt nach Grund)."""
+
+    def _pipe(self):
+        import logging as _logging
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        pipe = AnalysisPipeline.__new__(AnalysisPipeline)
+        pipe._logger = _logging.getLogger("test_fs_integration")
+        return pipe
+
+    def _cfg(self, max_features, threshold=0.9, methods=("lgbm_importance",)):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            feature_selection=SimpleNamespace(
+                enabled=True, methods=list(methods),
+                correlation_threshold=threshold, max_features=max_features),
+            constants=SimpleNamespace(random_seed=42, parallel_level=1),
+        )
+
+    def _data(self, n=4000, seed=5):
+        """V~W~F-Kette (V!~F) + Signalfeature S + Rauschfeatures.
+        Y hängt von V und F ab → F muss es durch die gesamte Strecke schaffen."""
+        rng = np.random.default_rng(seed)
+        e = rng.normal(size=(5, n))
+        V = e[0]
+        W = 0.93 * V + np.sqrt(1 - 0.93**2) * e[1]
+        F = 0.92 * W + np.sqrt(1 - 0.92**2) * e[2]
+        X = pd.DataFrame({
+            "F_FEAT": F, "W_MITTE": W, "V_STARK": V,
+            "S_SIGNAL": e[3], "N1": rng.normal(size=n), "N2": rng.normal(size=n),
+        })
+        T = rng.integers(0, 2, n)
+        Y = 2.0 * V + 1.5 * F + 1.0 * e[3] + 0.3 * rng.normal(size=n)
+        return X, T, Y
+
+    def test_chain_survivor_passes_budget(self):
+        """F überlebt Kette UND Budget; W steht als Korrelations-Entfernung in
+        der Buchhaltung, nicht als Importance-Entfernung."""
+        from unittest.mock import MagicMock
+        X, T, Y = self._data()
+        pipe = self._pipe()
+        X_out, removed = pipe._run_feature_selection(self._cfg(max_features=4), X, T, Y, MagicMock())
+        assert "W_MITTE" in removed["high_correlation"]
+        assert "F_FEAT" not in removed["high_correlation"], "Kaskade: F fälschlich wegen Korrelation entfernt"
+        assert "F_FEAT" in X_out.columns, "F muss Budget überleben (trägt Y-Signal)"
+        assert "V_STARK" in X_out.columns
+        # Getrennte Buchhaltung: keine Doppelnennung
+        assert not (set(removed["high_correlation"]) & set(removed.get("importance", [])))
+
+    def test_redistribution_strengthens_survivor_in_budget(self):
+        """Verzahnung Umverteilung→Budget: V erbt W's Importance und muss im
+        engen Budget vor den Rauschfeatures liegen."""
+        from unittest.mock import MagicMock
+        X, T, Y = self._data(seed=6)
+        pipe = self._pipe()
+        X_out, removed = pipe._run_feature_selection(self._cfg(max_features=3), X, T, Y, MagicMock())
+        assert "V_STARK" in X_out.columns
+        assert set(X_out.columns).issubset({"V_STARK", "F_FEAT", "S_SIGNAL"}), list(X_out.columns)
+
+    def test_constant_and_bool_columns_do_not_break_filter(self):
+        rng = np.random.default_rng(7)
+        n = 1000
+        X = pd.DataFrame({"a": rng.normal(size=n), "konst": np.ones(n),
+                          "flag": rng.integers(0, 2, n).astype(bool)})
+        imp = {"m": pd.Series({"a": 5.0, "konst": 1.0, "flag": 2.0})}
+        Xf, removed, _ = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, importances=imp)
+        # Konstante Spalte: corr=NaN → kein Paar → bleibt (Budget-Sache)
+        assert removed == [] and set(Xf.columns) == {"a", "konst", "flag"}
+
+    def test_empty_importances_fall_back_cleanly(self):
+        """Alle Methoden fehlgeschlagen → Korrfilter läuft im Fallback,
+        Budget-Schritt entfällt, keine Exception."""
+        rng = np.random.default_rng(8)
+        n = 2000
+        e1, e2 = rng.normal(size=(2, n))
+        X = pd.DataFrame({"A": e1, "B": 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2,
+                          "C": rng.normal(size=n)})
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, importances=None)
+        assert removed == ["B"] and "A" in Xf.columns and "C" in Xf.columns

@@ -1030,7 +1030,7 @@ def _render_dataprep(collector, cs) -> str:
 def _render_feature_selection(collector, cs) -> str:
     """Baut den Inhalt der Feature-Selektions-Sektion."""
     fs = collector.feature_selection_info
-    h = '<p class="expl">Vierstufiger Prozess: ① Importances auf allen Features berechnen → ② Korrelationsfilter (importance-gesteuert: das wichtigere Feature im Paar bleibt) → ③ Importance-Umverteilung (die Importance des entfernten Features wird auf den Partner addiert) → ④ auf das exakte Feature-Budget bringen: Top-N pro Methode (garantierte Repräsentation) per Union, dann bei Überschreitung per Konsens-Rang kappen bzw. bei Unterschreitung mit den global bestbewerteten Features auffüllen.</p><div class="cg">'
+    h = '<p class="expl">Vierstufiger Prozess: ① Importances auf allen Features berechnen → ② Korrelationsfilter (importance-gesteuert, Greedy über absteigende Wichtigkeit: jedes entfernte Feature korreliert über der Schwelle mit einem BEHALTENEN Feature — keine Ketten-Kaskaden) → ③ Importance-Umverteilung (die Importance des entfernten Features wird auf den Partner addiert) → ④ auf das exakte Feature-Budget bringen: Top-N pro Methode (garantierte Repräsentation) per Union, dann bei Überschreitung per Konsens-Rang kappen bzw. bei Unterschreitung mit den global bestbewerteten Features auffüllen.</p><div class="cg">'
     methods_html = "".join(f'<span class="cd-pill">{escape(m)}</span>' for m in cs.get("feature_selection_methods", []))
     h += f'<div class="cd"><div class="cd-l">Methoden</div><div class="cd-v pills">{methods_html}</div></div>'
     h += f'<div class="cd"><div class="cd-l">Ziel-Feature-Anzahl</div><div class="cd-v">{cs.get("feature_selection_max_features","77")} (exakt, sofern Pool groß genug)</div></div>'
