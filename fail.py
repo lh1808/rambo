@@ -1,3 +1,41 @@
-multi = df[df.duplicated("PARTNER_ID", keep=False)]
-feat_var = (multi.groupby("PARTNER_ID")[feature_cols].nunique() > 1).any(axis=1).mean()
-print(f"Anteil Mehrfach-Partner mit variierenden Features: {feat_var:.1%}")
+df.groupby('BEA_SCORE_WERT_HIST')['Treatment'].mean()
+BEA_SCORE_WERT_HIST
+1.000000     0.774211
+2.000000     0.758850
+3.000000     0.747844
+3.655734     0.792009
+4.000000     0.755879
+5.000000     0.745840
+6.000000     0.745543
+7.000000     0.750164
+8.000000     0.748733
+9.000000     0.742369
+10.000000    0.767051
+
+df.BEA_SCORE_WERT_HIST.value_counts()
+BEA_SCORE_WERT_HIST
+3.655734     124967
+1.000000      44081
+2.000000      17458
+3.000000      14380
+4.000000      13268
+5.000000      10938
+6.000000       9031
+7.000000       7641
+8.000000       6312
+9.000000       5733
+10.000000      4941
+
+df.groupby('BEA_SCORE_WERT_HIST')['TA_HUS_RS_ABSCHLUSS_CNT'].mean()
+BEA_SCORE_WERT_HIST
+1.000000     0.201379
+2.000000     0.167373
+3.000000     0.143185
+3.655734     0.136524
+4.000000     0.113205
+5.000000     0.102578
+6.000000     0.097442
+7.000000     0.086638
+8.000000     0.083175
+9.000000     0.078319
+10.000000    0.120219
