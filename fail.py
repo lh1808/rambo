@@ -1,1 +1,3 @@
-df.corrwith(df["meine_variable"], numeric_only=True).drop("meine_variable").sort_values(key=abs, ascending=False).head(10)
+tab = pd.crosstab(df["produkt"], df["binaer"], normalize="columns")
+tab["diff"] = tab[1] - tab[0]
+tab.sort_values("diff")
