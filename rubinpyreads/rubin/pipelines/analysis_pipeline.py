@@ -629,6 +629,32 @@ class AnalysisPipeline:
         removed: Dict[str, Any] = {}
         fs = cfg.feature_selection
 
+        # Schutzliste (feature_selection.always_keep) case-insensitiv auf die
+        # tatsächlichen Spalten auflösen; unbekannte Namen laut benennen.
+        _ak_cfg = [str(c) for c in (getattr(fs, "always_keep", None) or []) if str(c).strip()]
+        _col_by_upper = {str(c).upper(): c for c in X.columns}
+        always_keep_resolved = []
+        _ak_missing = []
+        for _name in _ak_cfg:
+            _hit = _col_by_upper.get(_name.upper())
+            (always_keep_resolved.append(_hit) if _hit is not None else _ak_missing.append(_name))
+        if _ak_missing:
+            self._logger.warning(
+                "feature_selection.always_keep: %d Name(n) nicht in den Features gefunden "
+                "und ignoriert: %s (Tippfehler? Spalten sind nach DataPrep UPPERCASE).",
+                len(_ak_missing), _ak_missing,
+            )
+        if always_keep_resolved:
+            self._logger.info(
+                "Feature-Selektion: %d Feature(s) geschützt (always_keep) — werden weder vom "
+                "Korrelationsfilter noch vom Budget entfernt: %s",
+                len(always_keep_resolved), always_keep_resolved,
+            )
+            try:
+                mlflow.log_param("feature_selection_always_keep", ",".join(map(str, always_keep_resolved))[:450])
+            except Exception:
+                pass
+
         # 1. Importances auf ALLEN Features berechnen
         importances = {}
         effective_methods = [m for m in fs.methods if m != "none"]
@@ -658,6 +684,7 @@ class AnalysisPipeline:
                 X, correlation_threshold=fs.correlation_threshold,
                 correlation_methods=["pearson", "spearman"],
                 importances=importances if importances else None,
+                protected=always_keep_resolved,
             )
             removed["high_correlation"] = removed_corr
             mlflow.log_metric("features_removed_correlation", len(removed_corr))
@@ -690,6 +717,7 @@ class AnalysisPipeline:
             X, removed_imp, top_per_method = select_features_by_importance(
                 X, importances,
                 max_features=fs.max_features,
+                always_keep=always_keep_resolved,
             )
             removed["importance"] = removed_imp
 

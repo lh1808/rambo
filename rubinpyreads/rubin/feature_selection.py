@@ -43,6 +43,7 @@ def remove_highly_correlated_features(
     correlation_threshold: float = 0.9,
     correlation_methods: Iterable[str] | None = None,
     importances: Dict[str, pd.Series] | None = None,
+    protected: Iterable[str] | None = None,
 ) -> Tuple[pd.DataFrame, List[str], Dict[str, str]]:
     """Entfernt stark korrelierte numerische Features.
 
@@ -126,18 +127,30 @@ def remove_highly_correlated_features(
     # Garantie: Keeper fallen nie nachträglich; jedes entfernte Feature
     # korreliert (in mindestens einer Methode) über der Schwelle mit seinem
     # ÜBERLEBENDEN absorbed_by-Partner.
+    # Geschützte Features (feature_selection.always_keep): immer Keeper —
+    # sie stehen in der Greedy-Reihenfolge ganz vorn und werden nie entfernt.
+    # Korrelieren zwei geschützte Features miteinander, bleiben beide (Warnung).
+    _protected = {c for c in numeric_cols if c in set(protected or ())}
     if agg_imp:
         _pos = {c: k for k, c in enumerate(numeric_cols)}
-        _order = sorted(numeric_cols, key=lambda c: (-agg_imp.get(c, 0.0), _pos[c]))
+        _order = sorted(numeric_cols, key=lambda c: (c not in _protected, -agg_imp.get(c, 0.0), _pos[c]))
     else:
-        _order = list(numeric_cols)
+        _pos = {c: k for k, c in enumerate(numeric_cols)}
+        _order = sorted(numeric_cols, key=lambda c: (c not in _protected, _pos[c]))
     for _keeper in _order:
         if _keeper in to_drop:
             continue
         for _p in sorted(adj.get(_keeper, ())):
-            if _p not in to_drop:
+            if _p not in to_drop and _p not in _protected:
                 to_drop.add(_p)
                 absorbed_by[_p] = _keeper
+    _prot_pairs = [(a, b) for a in _protected for b in adj.get(a, ()) if b in _protected and a < b]
+    if _prot_pairs:
+        _logger.warning(
+            "Korrelationsfilter: %d über-korrelierte Paare zwischen GESCHÜTZTEN Features "
+            "(always_keep) — beide bleiben jeweils erhalten: %s",
+            len(_prot_pairs), _prot_pairs[:5],
+        )
 
     to_drop_sorted = sorted(to_drop)
     if to_drop_sorted:
@@ -303,9 +316,32 @@ def _causal_forest_importance(
     import random
     random.seed(seed)
 
+    # ── Adaptive Mindest-Blattgröße (gegen Kleine-Gruppen-Bias) ──
+    # Realer Vorfall: Ein binäres Feature mit starkem Moderationseffekt
+    # (2pp→8pp) landete mit min_samples_leaf=20 HINTER 30 reinen
+    # Rauschfeatures (Rang 36/36 bei n=6k, Rang 5-20 bei n=20k). Mechanismus:
+    # Kontinuierliche Features bieten ~n Kandidaten-Schwellen — das Maximum
+    # über so viele Kandidaten findet in kleinen Blättern immer scheinbare
+    # Effekt-Heterogenität (Rauschen), während ein binäres Feature genau
+    # EINEN ehrlichen Split beisteuert. Mehr Bäume helfen dagegen NICHT
+    # (der Bias ist strukturell, keine Varianz; 300 Bäume ranken identisch
+    # oder schlechter). Große Mindest-Blätter (~2.5% der Zeilen) entziehen
+    # der Rausch-Jagd die kleinen Gruppen: binärer Moderator stabil in den
+    # Top-Rängen (n=20k: Rang 4-6 statt 5-20; n=60k: 1-6), und kontinuier-
+    # liche echte Moderatoren werden dadurch nicht schlechter (gemessen
+    # gleich gut oder besser). Gilt NUR für diesen Importance-Fit — die
+    # CATE-Modelle (CausalForest/CausalForestDML) bleiben unberührt.
+    _adaptive_leaf = int(max(20, min(len(X_np) // 40, 2500)))
+    if _adaptive_leaf > 20:
+        _logger.info(
+            "CausalForest FS: min_samples_leaf=%d (adaptiv, ~2.5%% von %d Zeilen) — "
+            "verhindert Kleine-Gruppen-Bias der Importance gegen Features mit "
+            "wenigen Splitpunkten (z. B. binäre Effekt-Moderatoren).",
+            _adaptive_leaf, len(X_np),
+        )
     cf = CausalForest(
         n_estimators=100,
-        min_samples_leaf=20,
+        min_samples_leaf=_adaptive_leaf,
         random_state=seed,
         n_jobs=effective_n_jobs,
     )
@@ -465,6 +501,7 @@ def select_features_by_importance(
     X: pd.DataFrame,
     importances: Dict[str, pd.Series],
     max_features: int = 77,
+    always_keep: Iterable[str] | None = None,
 ) -> Tuple[pd.DataFrame, List[str], Dict[str, List[str]]]:
     """Wählt Features auf das exakte Feature-Budget ``max_features``.
 
@@ -535,12 +572,25 @@ def select_features_by_importance(
         imp_reindexed = imp.reindex(X.columns).fillna(0.0)
         rank_sum += imp_reindexed.rank(ascending=False)
 
+    # Geschützte Features (always_keep): gesetzt, zählen gegen das Budget.
+    _ak = {c for c in X.columns if c in set(always_keep or ())}
+    if _ak:
+        all_keep |= _ak
+        if len(_ak) > target:
+            _logger.warning(
+                "feature_selection.always_keep umfasst %d Features — mehr als das "
+                "Budget max_features=%d. Alle geschützten werden behalten; das "
+                "Budget wird dadurch überschritten.", len(_ak), int(max_features),
+            )
+            target = len(_ak)
+
     n_union = len(all_keep)
     n_topped_up = 0
     if n_union > target:
-        # Über Budget → die per Konsens-Rang schwächsten aus der Union entfernen
-        ranked_union = rank_sum.loc[list(all_keep)].sort_values()
-        all_keep = set(ranked_union.head(target).index)
+        # Über Budget → die per Konsens-Rang schwächsten NICHT-GESCHÜTZTEN entfernen
+        _cuttable = [c for c in all_keep if c not in _ak]
+        ranked_cuttable = rank_sum.loc[_cuttable].sort_values()
+        all_keep = _ak | set(ranked_cuttable.head(target - len(_ak)).index)
     elif n_union < target:
         # Unter Budget (Methoden-Overlap → Doppelungen) → mit global bestbewerteten
         # verbleibenden Features auffüllen, bis das Budget exakt erreicht ist.

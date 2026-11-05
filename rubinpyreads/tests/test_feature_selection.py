@@ -428,3 +428,178 @@ class TestFeatureReductionPipelineIntegration:
         Xf, removed, absorbed = remove_highly_correlated_features(
             X, correlation_threshold=0.9, importances=None)
         assert removed == ["B"] and "A" in Xf.columns and "C" in Xf.columns
+
+
+
+class TestCausalForestSmallGroupBias:
+    """Realer Vorfall: Ein binäres Feature mit starker kausaler Information
+    (Effekt-Moderator) flog in der Selektion raus, obwohl GRF lief. Wurzel:
+    Mit min_samples_leaf=20 jagt der Forest Rausch-Heterogenität in kleinen
+    Blättern kontinuierlicher Features (~n Schwellen-Kandidaten je Feature);
+    der ehrliche Ein-Split-Kontrast des Binärs verlor dagegen (gemessen:
+    Rang 36/36 hinter purem Rauschen bei n=6k; mehr Bäume helfen NICHT).
+    Fix: adaptive Mindest-Blattgröße ~2.5% der Zeilen, nur für den
+    Importance-Fit."""
+
+    def _data(self, n=12000, seed=1, tau_lift=0.06):
+        rng = np.random.default_rng(seed)
+        B = rng.integers(0, 2, n).astype(float)
+        X = pd.DataFrame({"B_MOD": B})
+        for i in range(12):
+            X[f"N{i}"] = rng.normal(size=n)
+        for i in range(2):
+            X[f"P{i}"] = rng.normal(size=n)
+        base = 0.30 + 0.05 * np.tanh(X["P0"]) + 0.05 * np.tanh(X["P1"])
+        T = rng.integers(0, 2, n)
+        Y = (rng.random(n) < np.clip(base + (0.02 + tau_lift * B) * T, 0.01, 0.95)).astype(float)
+        return X, T, Y
+
+    def test_binary_moderator_ranks_high_with_adaptive_leaf(self):
+        """A/B auf IDENTISCHEN Daten: alte fixe 20er-Blätter vs. neue adaptive
+        Blattgröße — der binäre Moderator muss mit dem Fix klar besser und
+        absolut vorne ranken."""
+        from econml.grf import CausalForest
+        from rubin.feature_selection import _causal_forest_importance
+        X, T, Y = self._data(seed=1, tau_lift=0.12)
+        # ALT: fixe 20er-Blätter (das frühere Verhalten), direkt via GRF
+        cf_alt = CausalForest(n_estimators=100, min_samples_leaf=20, random_state=1, n_jobs=-1)
+        cf_alt.fit(X.to_numpy(np.float64), T.astype(float), Y)
+        imp_alt = pd.Series(np.asarray(cf_alt.feature_importances_).ravel(), index=X.columns)
+        rang_alt = int(imp_alt.rank(ascending=False)["B_MOD"])
+        # NEU: Produktionsfunktion mit adaptiver Blattgröße
+        imp_neu = _causal_forest_importance(X, T, Y, seed=1, n_jobs=-1)
+        rang_neu = int(imp_neu.rank(ascending=False)["B_MOD"])
+        assert rang_neu <= 3, (rang_alt, rang_neu)
+        assert rang_neu <= rang_alt, (rang_alt, rang_neu)
+
+    def test_adaptive_leaf_formula(self):
+        """max(20, min(n//40, 2500)): klein-n behält 20, dann ~2.5%, Cap 2500."""
+        for n, expected in ((500, 20), (800, 20), (6000, 150), (20000, 500),
+                            (100000, 2500), (500000, 2500)):
+            assert int(max(20, min(n // 40, 2500))) == expected
+
+    def test_continuous_moderator_not_hurt_by_adaptive_leaf(self):
+        """Gegenprobe: Ein glatter kontinuierlicher Moderator bleibt mit
+        großen Blättern vorne (Kalibrierungsmatrix: gleich gut oder besser)."""
+        from rubin.feature_selection import _causal_forest_importance
+        rng = np.random.default_rng(3)
+        n = 12000
+        C = rng.normal(size=n)
+        X = pd.DataFrame({"C_MOD": C})
+        for i in range(12):
+            X[f"N{i}"] = rng.normal(size=n)
+        T = rng.integers(0, 2, n)
+        tau = 0.02 + 0.06 / (1 + np.exp(-2 * C))
+        Y = (rng.random(n) < np.clip(0.30 + tau * T, 0.01, 0.95)).astype(float)
+        imp = _causal_forest_importance(X, T, Y, seed=3, n_jobs=-1)
+        assert int(imp.rank(ascending=False)["C_MOD"]) <= 3
+
+
+class TestAlwaysKeep:
+    """Realer Vorfall (Wurzel gefunden): Eine binäre Missing-Flag (Neukunden-
+    Kennzeichen, kausal stark) flog aus der Selektion. Mechanismus: Bei
+    fill_na_method='max' sitzen alle Neukunden in JEDER imputierten Spalte
+    exakt auf dem Max-Punkt — die Punktmassen duplizieren die Flag-Information
+    (gemessen: |corr(Flag, imputierte Spalte)| bis 0.902, GRF-Rang der Flag
+    16/16 statt 3/16 ohne Punktmassen). Die Flag verliert dadurch sowohl die
+    Importance als auch die Korrelations-Keeper-Wahl. feature_selection.
+    always_keep schützt fachlich gesetzte Features vor beidem."""
+
+    def _flagged_data(self, n=8000, seed=1):
+        rng = np.random.default_rng(seed)
+        flag = (rng.random(n) < 0.25).astype(float)
+        X = pd.DataFrame({"NEUKUNDE_FLAG": flag})
+        for i in range(8):
+            col = rng.normal(size=n)
+            mx = col[flag == 0].max()
+            X[f"B{i}"] = np.where(flag == 1, mx, col)   # max-imputierte Spalten
+        for i in range(3):
+            X[f"A{i}"] = rng.normal(size=n)
+        base = 0.30 + 0.05 * np.tanh(X["A0"])
+        tau = 0.03 + 0.07 * flag
+        T = rng.integers(0, 2, n)
+        Y = (rng.random(n) < np.clip(base + tau * T, 0.01, 0.95)).astype(float)
+        return X, T, Y
+
+    def test_protected_survives_correlation_pair_despite_lowest_importance(self):
+        rng = np.random.default_rng(2)
+        n = 10000
+        e1, e2 = rng.normal(size=(2, n))
+        X = pd.DataFrame({"FLAG": e1, "ZWILLING": 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2,
+                          "C": rng.normal(size=n)})
+        imp = {"m": pd.Series({"FLAG": 1.0, "ZWILLING": 100.0, "C": 50.0})}
+        Xf, removed, absorbed = remove_highly_correlated_features(
+            X, correlation_threshold=0.9, correlation_methods=["pearson"],
+            importances=imp, protected=["FLAG"])
+        assert "FLAG" in Xf.columns
+        assert removed == ["ZWILLING"] and absorbed == {"ZWILLING": "FLAG"}
+
+    def test_two_protected_correlated_both_kept_with_warning(self, caplog):
+        rng = np.random.default_rng(3)
+        n = 10000
+        e1, e2 = rng.normal(size=(2, n))
+        X = pd.DataFrame({"P1": e1, "P2": 0.95 * e1 + np.sqrt(1 - 0.95**2) * e2})
+        import logging
+        imp = {"m": pd.Series({"P1": 10.0, "P2": 5.0})}
+        with caplog.at_level(logging.WARNING, logger="rubin.feature_selection"):
+            Xf, removed, _ = remove_highly_correlated_features(
+                X, correlation_threshold=0.9, correlation_methods=["pearson"],
+                importances=imp, protected=["P1", "P2"])
+        assert sorted(Xf.columns) == ["P1", "P2"] and removed == []
+        assert any("GESCHÜTZTEN" in r.message for r in caplog.records)
+
+    def test_budget_keeps_protected_despite_worst_rank(self):
+        rng = np.random.default_rng(4)
+        X = pd.DataFrame(rng.normal(size=(500, 10)), columns=[f"f{i}" for i in range(10)])
+        imp = {"m": pd.Series({f"f{i}": float(10 - i) for i in range(10)})}
+        # f9 hat die schlechteste Importance — muss via always_keep trotzdem bleiben
+        Xf, removed, _ = select_features_by_importance(X, imp, max_features=4, always_keep=["f9"])
+        assert "f9" in Xf.columns and len(Xf.columns) == 4
+        assert set(Xf.columns) == {"f0", "f1", "f2", "f9"}
+
+    def test_full_pipeline_flag_scenario_protected(self, caplog):
+        """E2E des Nutzer-Szenarios: Max-Punktmassen, Flag mit always_keep —
+        die Flag überlebt Korrelationsfilter UND Budget; case-insensitive
+        Auflösung; unbekannte Namen warnen."""
+        import logging as _logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        X, T, Y = self._flagged_data()
+        pipe = AnalysisPipeline.__new__(AnalysisPipeline)
+        pipe._logger = _logging.getLogger("test_fs_ak")
+        cfg = SimpleNamespace(
+            feature_selection=SimpleNamespace(
+                enabled=True, methods=["lgbm_importance"],
+                correlation_threshold=0.9, max_features=5,
+                always_keep=["neukunde_flag", "GIBTS_NICHT"]),
+            constants=SimpleNamespace(random_seed=42, parallel_level=1),
+        )
+        with caplog.at_level(_logging.WARNING):
+            X_out, removed = pipe._run_feature_selection(cfg, X, T, Y, MagicMock())
+        assert "NEUKUNDE_FLAG" in X_out.columns, (list(X_out.columns), removed)
+        assert "NEUKUNDE_FLAG" not in removed["high_correlation"]
+        assert "NEUKUNDE_FLAG" not in removed.get("importance", [])
+        assert any("GIBTS_NICHT" in r.message for r in caplog.records)
+
+    def test_without_always_keep_flag_can_fall(self):
+        """Kontrast: OHNE Schutz kann die Flag im selben Szenario fallen —
+        dokumentiert, warum always_keep existiert (kein Assert auf MUSS fallen,
+        nur: der Schutz ist der Unterschied, kein Zufall)."""
+        import logging as _logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from rubin.pipelines.analysis_pipeline import AnalysisPipeline
+        X, T, Y = self._flagged_data(seed=5)
+        pipe = AnalysisPipeline.__new__(AnalysisPipeline)
+        pipe._logger = _logging.getLogger("test_fs_ak2")
+        cfg = SimpleNamespace(
+            feature_selection=SimpleNamespace(
+                enabled=True, methods=["lgbm_importance"],
+                correlation_threshold=0.9, max_features=5, always_keep=[]),
+            constants=SimpleNamespace(random_seed=42, parallel_level=1),
+        )
+        X_out, removed = pipe._run_feature_selection(cfg, X, T, Y, MagicMock())
+        total_removed = set(removed["high_correlation"]) | set(removed.get("importance", []))
+        assert len(X_out.columns) == 5
+        assert total_removed  # Selektion hat real reduziert

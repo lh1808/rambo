@@ -248,6 +248,8 @@ data_prep:
 ---
 
 
+**Schutzliste (`feature_selection.always_keep`, optional):** Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung; korrelieren zwei geschützte miteinander, bleiben beide mit Warnung) noch das Feature-Budget (sie zählen gegen `max_features`). Abgleich case-insensitiv, unbekannte Namen werden mit Warnung ignoriert, mlflow-Param `feature_selection_always_keep` und Report-Zeile dokumentieren den Einsatz. **Wofür:** Features mit fachlich bekannter kausaler Rolle, die datengetriebene Importances strukturell unterbewerten. Der dokumentierte Realfall: Eine binäre Missing-Flag (Neukunden-Kennzeichen, hohe Effekt-Heterogenität) wird bei `fill_na_method: max` von den Imputations-Punktmassen der anderen Spalten dupliziert — jede imputierte Spalte trägt die Flag-Information am Max-Punkt selbst (gemessen |r| bis 0.9), die Importance der Flag verdünnt sich über viele Spalten, und im Korrelationspaar verliert sie die Keeper-Wahl. Median-Imputation hat dieses Problem nicht (Punktmasse in der Verteilungsmitte, |r|≈0).
+
 **Use-Case-Ausschlüsse** (`exclude_features`, optional): Das zentrale
 Feature-Dictionary bleibt die eine Wahrheit, *was grundsätzlich Input ist*;
 diese Liste nimmt davon für einen Use Case gezielt Spalten aus — ohne das

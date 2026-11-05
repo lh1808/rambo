@@ -497,7 +497,7 @@ const ProgressTracker = ({currentStep,error,steps,enabled,completedSteps,stepPro
 
 // ── Column Role Picker ──
 
-const DEFAULT_CFG = {studyType:"rct",expName:"rubin",seed:42,tuningSeed:18,models:["NonParamDML","DRLearner","SLearner","TLearner","XLearner","ParamDML","CausalForestDML","CausalForest"],baseLearner:"catboost",ensembleEnabled:true,tuningEnabled:false,tuningTrials:50,tuningSingleFold:false,tuningModels:[],fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,fmtOverfitPenalty:0.0,fmtOverfitTolerance:0.1,fmtOverfitMaxGap:1.0,fmtScorer:"auto",cfTune:false,cfTrials:50,cfSingleFold:false,cfScorer:"auto",cfTuneModels:[],cfOverfitPenalty:0.0,cfOverfitTolerance:0.1,cfOverfitMaxGap:1.0,bundleEnabled:false,bundleDir:"runs/bundles",bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["catboost_importance"],fsCorrThresh:0.9,fsMaxFeatures:77,downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,outputDir:"",blFixed:{},fmtFixed:{},cfFixed:{},tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,maxPredRows:0,parallelLevel:3,workDir:null,mcIters:null,mcAgg:"mean",dmlCrossfitFolds:5,overfitPenalty:0.0,overfitTolerance:0.2,overfitMaxGap:1.0};
+const DEFAULT_CFG = {studyType:"rct",expName:"rubin",seed:42,tuningSeed:18,models:["NonParamDML","DRLearner","SLearner","TLearner","XLearner","ParamDML","CausalForestDML","CausalForest"],baseLearner:"catboost",ensembleEnabled:true,tuningEnabled:false,tuningTrials:50,tuningSingleFold:false,tuningModels:[],fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,fmtOverfitPenalty:0.0,fmtOverfitTolerance:0.1,fmtOverfitMaxGap:1.0,fmtScorer:"auto",cfTune:false,cfTrials:50,cfSingleFold:false,cfScorer:"auto",cfTuneModels:[],cfOverfitPenalty:0.0,cfOverfitTolerance:0.1,cfOverfitMaxGap:1.0,bundleEnabled:false,bundleDir:"runs/bundles",bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["catboost_importance"],fsCorrThresh:0.9,fsMaxFeatures:77,fsAlwaysKeep:[],downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,outputDir:"",blFixed:{},fmtFixed:{},cfFixed:{},tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,maxPredRows:0,parallelLevel:3,workDir:null,mcIters:null,mcAgg:"mean",dmlCrossfitFolds:5,overfitPenalty:0.0,overfitTolerance:0.2,overfitMaxGap:1.0};
 
 
 
@@ -1503,7 +1503,7 @@ const YAML_TO_CFG = {
   "historical_score.name":"histScoreName","historical_score.column":"histScoreCol","historical_score.higher_is_better":"histScoreHigher",
   "data_processing.validate_on":"validateOn","data_processing.cross_validation_splits":"cvSplits","data_processing.mc_iters":"mcIters","data_processing.mc_agg":"mcAgg","data_processing.dml_crossfit_folds":"dmlCrossfitFolds",
   "data_processing.df_frac":"dfFrac","data_processing.reduce_memory":"reduceMem",
-  "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",
+  "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.always_keep":"fsAlwaysKeep","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",
   "models.models_to_train":"models","models.ensemble":"ensembleEnabled",
   "base_learner.type":"baseLearner","base_learner.fixed_params":"blFixed",
   "causal_forest.tune_enabled":"cfTune","causal_forest.search_space":"_cfSS","causal_forest.depth_choices":"_cfDepthChoices","causal_forest.criterion_choices":"_cfCriterionChoices","causal_forest.n_trials":"cfTrials","causal_forest.single_fold":"cfSingleFold","causal_forest.scorer":"cfScorer","causal_forest.overfit_penalty":"cfOverfitPenalty","causal_forest.overfit_tolerance":"cfOverfitTolerance","causal_forest.overfit_max_penalized_gap":"cfOverfitMaxGap","causal_forest.tune_models":"cfTuneModels",
@@ -1559,7 +1559,7 @@ const parseYamlToCfg = (yamlText) => {
         if(s==="true"||s==="True") return true;
         if(s==="false"||s==="False") return false;
         if(!isNaN(Number(s))&&s!=="") return Number(s);
-        return s;
+        return s.replace(/^["']|["']$/g,"");
       }).filter(v=>v!==undefined);
     } else if(val.startsWith("{") && val.endsWith("}")) {
       try {
@@ -2433,8 +2433,9 @@ const PConfig = ({cfg,set}) => {
       <Divider/>
       <div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:10}}>Korrelationsfilter</div>
       <Sld label="Korrelations-Schwelle" min={0.5} max={1} step={0.05} value={cfg.fsCorrThresh||0.9} onChange={v=>set({...cfg,fsCorrThresh:v})} help="Schwellwert für |r|. Feature-Paare mit höherer Korrelation werden reduziert — das weniger wichtige Feature wird entfernt."/>
+      <Inp label="Immer behalten (optional)" value={(cfg.fsAlwaysKeep||[]).join(", ")} onChange={v=>set({...cfg,fsAlwaysKeep:v.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean)})} placeholder="NEUKUNDE_FLAG, ..." help="Schutzliste: Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung) noch das Feature-Budget. Für Features mit fachlich bekannter kausaler Rolle, die datengetrieben strukturell unterbewertet werden. Typischer Fall: eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) — bei NaN-Imputation mit 'max' duplizieren die Punktmassen der imputierten Spalten ihre Information, die Flag verliert Importance UND die Korrelations-Keeper-Wahl. Komma-getrennt, Groß-/Kleinschreibung egal."/>
       <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
-        Zwei Korrelationsmaße werden nacheinander berechnet: <strong>Pearson</strong> (lineare Zusammenhänge) und <strong>Spearman</strong> (monotone, auch nicht-lineare Zusammenhänge). Ein Feature-Paar gilt als redundant, sobald es in <em>einem</em> der beiden Maße |r| {">"} {cfg.fsCorrThresh||0.9} erreicht. Das Feature mit der niedrigeren aggregierten Importance wird entfernt — seine Importance wird auf den überlebenden Partner addiert (Importance-Umverteilung). Spearman wird nur auf den nach Pearson verbliebenen Features berechnet (Performance-Optimierung).
+        Zwei Korrelationsmaße werden nacheinander berechnet: <strong>Pearson</strong> (lineare Zusammenhänge) und <strong>Spearman</strong> (monotone, auch nicht-lineare Zusammenhänge). Ein Feature-Paar gilt als redundant, sobald es in <em>einem</em> der beiden Maße |r| {">"} {cfg.fsCorrThresh||0.9} erreicht. Die Entfernung läuft als Greedy über die absteigende (je Methode normierte) Wichtigkeit auf der vereinten Paar-Menge beider Maße: jedes entfernte Feature korreliert mit einem BEHALTENEN Feature (keine Ketten-Kaskaden), seine Importance wird auf den überlebenden Partner addiert (Importance-Umverteilung). Features aus „Immer behalten" gewinnen jede Paar-Entscheidung.
       </div>
     </>}
   </Sec>
@@ -3247,6 +3248,7 @@ const buildYaml = (cfg, sp, spFmt) => {
   if(cfg.fsEnabled) {
     a(`  methods: [${(cfg.fsMethods||["catboost_importance"]).join(", ")}]`);
     a(`  max_features: ${cfg.fsMaxFeatures||77}`);
+    if((cfg.fsAlwaysKeep||[]).length > 0) a(`  always_keep: [${cfg.fsAlwaysKeep.map(f=>`"${f}"`).join(", ")}]`);
     a(`  correlation_threshold: ${cfg.fsCorrThresh||0.9}`);
   }
   a("");

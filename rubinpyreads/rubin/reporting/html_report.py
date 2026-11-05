@@ -152,6 +152,7 @@ class ReportCollector:
             "feature_selection_enabled": cfg.feature_selection.enabled,
             "feature_selection_methods": list(cfg.feature_selection.methods) if cfg.feature_selection.enabled else [],
             "feature_selection_max_features": cfg.feature_selection.max_features,
+            "feature_selection_always_keep": list(getattr(cfg.feature_selection, "always_keep", None) or []),
             "feature_selection_corr_threshold": cfg.feature_selection.correlation_threshold,
             "surrogate_enabled": cfg.surrogate_tree.enabled,
             "selection_metric": cfg.selection.metric,
@@ -1034,6 +1035,10 @@ def _render_feature_selection(collector, cs) -> str:
     methods_html = "".join(f'<span class="cd-pill">{escape(m)}</span>' for m in cs.get("feature_selection_methods", []))
     h += f'<div class="cd"><div class="cd-l">Methoden</div><div class="cd-v pills">{methods_html}</div></div>'
     h += f'<div class="cd"><div class="cd-l">Ziel-Feature-Anzahl</div><div class="cd-v">{cs.get("feature_selection_max_features","77")} (exakt, sofern Pool groß genug)</div></div>'
+    _ak_rep = cs.get("feature_selection_always_keep") or []
+    if _ak_rep:
+        _ak_pills = "".join(f'<span class="cd-pill">{escape(str(f))}</span>' for f in _ak_rep)
+        h += f'<div class="cd"><div class="cd-l">Immer behalten (always_keep)</div><div class="cd-v pills">{_ak_pills}</div></div>'
     corr_thresh = cs.get("feature_selection_corr_threshold")
     if corr_thresh and float(corr_thresh) > 0:
         h += f'<div class="cd"><div class="cd-l">Korrelations-Schwelle</div><div class="cd-v">|r| &gt; {corr_thresh}</div></div>'

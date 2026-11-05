@@ -270,6 +270,19 @@ class FeatureSelectionConfig(BaseModel):
     # Features (aufgerundet). Die Union aller Methoden wird auf max_features gekappt.
     max_features: int = 77
 
+    # Schutzliste: Diese Features werden von der Selektion NIE entfernt —
+    # weder vom Korrelationsfilter (sie sind immer Keeper ihres Paares) noch
+    # vom Feature-Budget (sie zählen gegen max_features und bleiben gesetzt).
+    # Einsatzfall: Features, deren kausale Rolle fachlich bekannt ist, die
+    # aber von datengetriebenen Importances strukturell unterbewertet werden.
+    # Realer Fall: Eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) wird
+    # bei fill_na_method="max" von den Imputations-Punktmassen der anderen
+    # Spalten dupliziert — ihre Importance verdünnt sich über viele Spalten,
+    # und im Korrelationspaar Flag↔imputierte Spalte (|r| kann > 0.9 liegen)
+    # verliert sie die Keeper-Wahl. Abgleich case-insensitiv; unbekannte Namen
+    # werden mit Warnung ignoriert.
+    always_keep: List[str] = Field(default_factory=list)
+
     # Korrelation: ab welchem Betrag (|corr|) eine Spalte als redundant gilt.
     correlation_threshold: float = 0.9
 

@@ -168,6 +168,7 @@ const buildYaml = (cfg, sp, spFmt) => {
   if(cfg.fsEnabled) {
     a(`  methods: [${(cfg.fsMethods||["catboost_importance"]).join(", ")}]`);
     a(`  max_features: ${cfg.fsMaxFeatures||77}`);
+    if((cfg.fsAlwaysKeep||[]).length > 0) a(`  always_keep: [${cfg.fsAlwaysKeep.map(f=>`"${f}"`).join(", ")}]`);
     a(`  correlation_threshold: ${cfg.fsCorrThresh||0.9}`);
   }
   a("");

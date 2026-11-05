@@ -6,7 +6,7 @@ const YAML_TO_CFG = {
   "historical_score.name":"histScoreName","historical_score.column":"histScoreCol","historical_score.higher_is_better":"histScoreHigher",
   "data_processing.validate_on":"validateOn","data_processing.cross_validation_splits":"cvSplits","data_processing.mc_iters":"mcIters","data_processing.mc_agg":"mcAgg","data_processing.dml_crossfit_folds":"dmlCrossfitFolds",
   "data_processing.df_frac":"dfFrac","data_processing.reduce_memory":"reduceMem",
-  "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",
+  "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.always_keep":"fsAlwaysKeep","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",
   "models.models_to_train":"models","models.ensemble":"ensembleEnabled",
   "base_learner.type":"baseLearner","base_learner.fixed_params":"blFixed",
   "causal_forest.tune_enabled":"cfTune","causal_forest.search_space":"_cfSS","causal_forest.depth_choices":"_cfDepthChoices","causal_forest.criterion_choices":"_cfCriterionChoices","causal_forest.n_trials":"cfTrials","causal_forest.single_fold":"cfSingleFold","causal_forest.scorer":"cfScorer","causal_forest.overfit_penalty":"cfOverfitPenalty","causal_forest.overfit_tolerance":"cfOverfitTolerance","causal_forest.overfit_max_penalized_gap":"cfOverfitMaxGap","causal_forest.tune_models":"cfTuneModels",
@@ -62,7 +62,7 @@ const parseYamlToCfg = (yamlText) => {
         if(s==="true"||s==="True") return true;
         if(s==="false"||s==="False") return false;
         if(!isNaN(Number(s))&&s!=="") return Number(s);
-        return s;
+        return s.replace(/^["']|["']$/g,"");
       }).filter(v=>v!==undefined);
     } else if(val.startsWith("{") && val.endsWith("}")) {
       try {
