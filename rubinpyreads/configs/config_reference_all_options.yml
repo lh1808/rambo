@@ -89,6 +89,15 @@ historical_score:
   higher_is_better: true
 
 # --- Datenverarbeitung ----------------------------------------
+
+# Qini-Einordnung: Rauschband (Permutations-Null) + Segment-Benchmark ("Mini-Oracle").
+evaluation:
+  qini_noise_band: true              # graue Zone in Qini-Plots + qini_noise_sd (mlflow)
+  qini_noise_permutations: 200
+  benchmark_segments: []             # z. B. ["NEUKUNDE_FLAG", "LEAD_ART"] — diskrete X-Spalten
+  benchmark_max_levels: 25           # Kardinalitäts-Guard je Spalte
+  benchmark_min_rows: 20             # Mindestzeilen je Segment für eigenen ATE
+  benchmark_name: "segment_benchmark"
 data_processing:
   reduce_memory: true                       # Datentypen downcasten (float64→float32 etc.) – in DataPrep und Analyse-Pipeline aktiv
   df_frac: null                             # Downsampling (0..1]

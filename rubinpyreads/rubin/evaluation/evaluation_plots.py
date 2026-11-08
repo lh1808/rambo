@@ -394,7 +394,7 @@ def _native_treatment_balance(
 def _native_qini_curve(
     y_true: np.ndarray, uplift: np.ndarray, treatment: np.ndarray,
     random: bool = True, perfect: bool = False, negative_effect: bool = True,
-    name: str = None,
+    name: str = None, noise_envelope: Optional[dict] = None,
 ) -> Optional[plt.Figure]:
     """Qini-Kurve — native rubin-Implementierung.
 
@@ -432,6 +432,22 @@ def _native_qini_curve(
             ax.plot(x, y_random, label="Random", color=COLOR_BASELINE, linewidth=1.2, linestyle="--")
             ax.fill_between(x, y_qini, y_random, alpha=0.12, color=COLOR_MODEL)
 
+        # Permutations-Rauschband: Zone, in der Kurven OHNE jedes Signal liegen.
+        # Erzeugt aus der Qini-Nullverteilung (Score zufällig vergeben, bei
+        # Gruppen-CV gruppenweise) — siehe uplift_metrics.qini_null_band.
+        if noise_envelope is not None:
+            try:
+                _fg = np.asarray(noise_envelope["frac_grid"], dtype=float) * n
+                ax.fill_between(
+                    _fg, np.asarray(noise_envelope["curve_lo"], dtype=float),
+                    np.asarray(noise_envelope["curve_hi"], dtype=float),
+                    color="#9ca3af", alpha=0.22, linewidth=0, zorder=0,
+                    label=f"Rauschband 95% (B={noise_envelope.get('n_permutations', '?')}"
+                          f"{', gruppiert' if noise_envelope.get('grouped') else ''})",
+                )
+            except Exception:
+                _logger.debug("Rauschband im Qini-Plot übersprungen.", exc_info=True)
+
         # Perfect curve
         if perfect:
             y_arr = np.asarray(y_true).ravel()
@@ -467,6 +483,7 @@ def generate_uplift_plots(
     cate_preds_val: np.ndarray,
     T_val: np.ndarray,
     Y_val: np.ndarray,
+    noise_envelope: Optional[dict] = None,
 ) -> tuple:
     """Erzeugt Uplift-Plots: Qini-Kurve, Uplift-by-Percentile, Treatment-Balance.
 
@@ -481,7 +498,7 @@ def generate_uplift_plots(
     y_val_arr = np.asarray(Y_val).ravel()
     t_val_arr = np.asarray(T_val).ravel()
 
-    sk_qini = _native_qini_curve(y_val_arr, uplift, t_val_arr)
+    sk_qini = _native_qini_curve(y_val_arr, uplift, t_val_arr, noise_envelope=noise_envelope)
     sk_pct = _native_uplift_by_percentile(y_val_arr, uplift, t_val_arr)
     sk_tb = _native_treatment_balance(uplift, t_val_arr)
 
@@ -504,6 +521,7 @@ def evaluate_cate_with_plots(
     fitted_tester: Optional[CustomDRTester] = None,
     n_bootstrap: int = 1000,
     seed: Optional[int] = None,
+    noise_envelope: Optional[dict] = None,
 ) -> DrTesterPlotBundle:
     """Hauptfunktion: DRTester-Auswertung + Uplift-Plots.
 
@@ -593,7 +611,7 @@ def evaluate_cate_with_plots(
     y_val_arr = np.asarray(Y_val).ravel()
     t_val_arr = np.asarray(T_val).ravel()
 
-    sk_qini = _native_qini_curve(y_val_arr, uplift, t_val_arr)
+    sk_qini = _native_qini_curve(y_val_arr, uplift, t_val_arr, noise_envelope=noise_envelope)
     sk_pct = _native_uplift_by_percentile(y_val_arr, uplift, t_val_arr)
     sk_tb = _native_treatment_balance(uplift, t_val_arr)
 

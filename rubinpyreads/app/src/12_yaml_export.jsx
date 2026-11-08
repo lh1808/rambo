@@ -116,7 +116,7 @@ const buildYaml = (cfg, sp, spFmt) => {
   a(`  x_file: ${cfg.x_file||"runs/data/X.parquet"}`);
   a(`  t_file: ${cfg.t_file||"runs/data/T.parquet"}`);
   a(`  y_file: ${cfg.y_file||"runs/data/Y.parquet"}`);
-  a(`  s_file: ${cfg.s_file||"null"}`);
+  if(cfg.s_file) a(`  s_file: ${cfg.s_file}`);
   if(cfg.validateOn==="external") {
     if(cfg.eval_x_file) a(`  eval_x_file: ${cfg.eval_x_file}`);
     if(cfg.eval_t_file) a(`  eval_t_file: ${cfg.eval_t_file}`);
@@ -149,6 +149,15 @@ const buildYaml = (cfg, sp, spFmt) => {
     a(`  name: ${cfg.histScoreName||"historical_score"}`);
     a(`  column: ${cfg.histScoreCol||"S"}`);
     a(`  higher_is_better: ${cfg.histScoreHigher!==false}`);
+    a("");
+  }
+  // evaluation nur emittieren, wenn vom Backend-Default abgewichen wird
+  const _benchCols = cfg.benchSegCols||[];
+  if(cfg.qiniNoiseBand===false || (cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) || _benchCols.length>0){
+    a("evaluation:");
+    if(cfg.qiniNoiseBand===false) a("  qini_noise_band: false");
+    if(cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) a(`  qini_noise_permutations: ${cfg.qiniNoisePerms}`);
+    if(_benchCols.length>0) a(`  benchmark_segments: [${_benchCols.map(f=>`"${f}"`).join(", ")}]`);
     a("");
   }
   a("data_processing:");

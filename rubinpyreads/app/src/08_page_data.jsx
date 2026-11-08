@@ -230,6 +230,15 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
             <Col><Toggle label="Höher = besser" checked={cfg.histScoreHigher!==false} onChange={v=>set({...cfg,histScoreHigher:v})} help="Score-Richtung: höher = besser"/></Col>
           </Row>
         </Sec>}
+
+        <Sec title="Qini-Einordnung (Rauschband & Segment-Benchmark)">
+          <Info>Zwei Referenzpunkte, die jede Qini-Zahl im Report einordnen: Das <b>Rauschband</b> zeigt als graue Zone in den Qini-Plots, welche Werte ein Score ganz ohne Signal erreicht (Permutations-Null auf den Eval-Daten; bei Gruppen-Folds gruppenweise) — Werte innerhalb sind von Zufall nicht unterscheidbar. Der <b>Segment-Benchmark</b> misst, wie viel Qini allein die Kenntnis deklarierter Segmente wert wäre (z. B. einer Missing-Flag oder der Lead-Art): Segment-Effekte werden nur aus Trainingsdaten geschätzt (cross-fitted, Cluster-SEs, Shrinkage) — der ehrliche Deckel, an dem die Modelle zu messen sind.</Info>
+          <Row>
+            <Col><Toggle label="Qini-Rauschband" checked={cfg.qiniNoiseBand!==false} onChange={v=>set({...cfg,qiniNoiseBand:v})} help="Permutations-Nullband in Qini-Plots, mlflow (qini_noise_sd) und Report-Einordnung"/></Col>
+            <Col><Inp label="Permutationen" type="number" value={cfg.qiniNoisePerms===0?0:(cfg.qiniNoisePerms||200)} onChange={v=>set({...cfg,qiniNoisePerms:v})} help="Anzahl Score-Permutationen für das Band (Default 200)"/></Col>
+          </Row>
+          <Inp label="Segment-Benchmark-Spalten (optional)" value={(cfg.benchSegCols||[]).join(", ")} onChange={v=>set({...cfg,benchSegCols:v.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean)})} placeholder="NEUKUNDE_FLAG, LEAD_ART" help="Diskrete Spalten aus X (Groß-/Kleinschreibung egal, max. 25 Ausprägungen je Spalte). Das Kreuzprodukt bildet die Segmente; der Benchmark erscheint als eigene Zeile im Modellvergleich und mit ΔATE-Tabelle (inkl. z-Werten) im Report. Leer = aus."/>
+        </Sec>
       </>}
 
       {view==="template"&&(cfg.dpRunName ? (

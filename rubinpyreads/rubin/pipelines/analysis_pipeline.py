@@ -1690,6 +1690,9 @@ class AnalysisPipeline:
             )
 
         self._eval_scores_ctx_full = {}  # mname -> (y, t, score) UNMASKIERT (für Train-Zeilen der Je-Datei-Qini)
+
+        # ── Qini-Rauschband: Permutations-Null auf dem Eval-Kontext ──
+        self._compute_qini_noise_band(cfg, X, T, Y, holdout_data, eval_mask, mlflow, is_mt)
         for mname, dfp in preds.items():
             _dfp_full = dfp
             # ── Train Many, Evaluate Some: Nur Eval-Zeilen für Metriken ──
@@ -1898,7 +1901,7 @@ class AnalysisPipeline:
                     continue
                 cate_vals = dfp[pred_col].to_numpy(dtype=float)
                 try:
-                    sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, eval_T_sk, eval_Y_sk)
+                    sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, eval_T_sk, eval_Y_sk, noise_envelope=self._band_for(len(eval_Y_sk)))
                     if not _is_rct:
                         sk_tb = None  # Treatment Balance nur bei RCT aussagekräftig
                     if sk_qini is not None:
@@ -1935,6 +1938,12 @@ class AnalysisPipeline:
                         plt.close(fig_redist)
                     except Exception:
                         self._logger.warning("Score-Redistribution-Plot für %s fehlgeschlagen.", mname, exc_info=True)
+
+        # ── Segment-Benchmark: "Mini-Oracle" aus deklarierten Segmenten ──
+        try:
+            self._run_segment_benchmark(cfg, X, T, Y, holdout_data, eval_mask, eval_summary, mlflow, is_mt)
+        except Exception:
+            self._logger.warning("Segment-Benchmark fehlgeschlagen — Lauf geht ohne Benchmark weiter.", exc_info=True)
 
         # Historischer Score (nur BT) — hist_score_eval bereits oben berechnet
         if hist_score_eval is not None and is_mt:
@@ -2102,6 +2111,192 @@ class AnalysisPipeline:
 
         return eval_summary, policy_values_dict
 
+    def _compute_qini_noise_band(self, cfg, X, T, Y, holdout_data, eval_mask, mlflow, is_mt):
+        """Permutations-Nullband des Qini auf dem Eval-Kontext berechnen.
+
+        Hängt nur von (y, t, n) ab und gilt für ALLE Scores dieses Laufs
+        (Modelle, historischer Score, Segment-Benchmark). Bei Gruppen-CV wird
+        gruppenweise permutiert. Ergebnis: self._qini_null_band (mit
+        Kurven-Envelope für die Plots), mlflow-Metriken, Report-Info."""
+        self._qini_null_band = None
+        _ev_cfg = getattr(cfg, "evaluation", None)
+        if is_mt or _ev_cfg is None or not getattr(_ev_cfg, "qini_noise_band", False):
+            return
+        try:
+            from rubin.evaluation.uplift_metrics import qini_null_band
+            if holdout_data is not None:
+                _nb_y, _nb_t, _nb_g = holdout_data[2], holdout_data[1], None
+            elif eval_mask is not None:
+                _nb_y, _nb_t = Y[eval_mask], T[eval_mask]
+                _g = getattr(self, "_groups", None)
+                _nb_g = _g[np.asarray(eval_mask).astype(bool)] if _g is not None and len(_g) == len(Y) else None
+            else:
+                _nb_y, _nb_t = Y, T
+                _nb_g = getattr(self, "_groups", None)
+            self._qini_null_band = qini_null_band(
+                _nb_y, _nb_t,
+                n_permutations=int(getattr(_ev_cfg, "qini_noise_permutations", 200)),
+                groups=_nb_g, seed=int(cfg.constants.random_seed),
+            )
+            _nb = self._qini_null_band
+            self._logger.info(
+                "Qini-Rauschband (Permutations-Null, B=%d%s): sd=%.5f, 95%%-Band [%.5f, %.5f] "
+                "auf n=%d Eval-Zeilen — Qini-Werte innerhalb des Bands sind von Zufall "
+                "nicht unterscheidbar.",
+                _nb["n_permutations"], ", gruppenweise" if _nb["grouped"] else "",
+                _nb["sd"], _nb["lo"], _nb["hi"], _nb["n"],
+            )
+            mlflow.log_metric("qini_noise_sd", _nb["sd"])
+            mlflow.log_metric("qini_noise_lo", _nb["lo"])
+            mlflow.log_metric("qini_noise_hi", _nb["hi"])
+            if hasattr(self, "_report"):
+                self._report.qini_noise_info = {
+                    "sd": _nb["sd"], "lo": _nb["lo"], "hi": _nb["hi"],
+                    "n": _nb["n"], "n_permutations": _nb["n_permutations"],
+                    "grouped": _nb["grouped"], "n_groups": _nb["n_groups"],
+                }
+        except Exception:
+            self._logger.warning("Qini-Rauschband fehlgeschlagen — Lauf geht ohne Band weiter.", exc_info=True)
+
+    def _band_for(self, n):
+        """Qini-Rauschband, wenn es zum Kontext der Länge n gehört (sonst None)."""
+        band = getattr(self, "_qini_null_band", None)
+        return band if (band is not None and band.get("n") == int(n)) else None
+
+    def _run_segment_benchmark(self, cfg, X, T, Y, holdout_data, eval_mask, eval_summary, mlflow, is_mt):
+        """Segment-Benchmark bewerten (siehe rubin/evaluation/segment_benchmark.py).
+
+        Ehrlichkeits-Regeln: Segment-ATEs kommen NIE aus den Eval-Zeilen —
+        cross: out-of-fold; TMES: aus den Train-Zeilen (~eval_mask);
+        external: aus den Trainingsdaten. Der Score läuft danach durch die
+        normale Eval-Strecke (eval_summary, _eval_scores_ctx → per-File-Qini,
+        Vergleichsplots)."""
+        _ev_cfg = getattr(cfg, "evaluation", None)
+        cols_req = list(getattr(_ev_cfg, "benchmark_segments", None) or []) if _ev_cfg is not None else []
+        if not cols_req:
+            return
+        if is_mt:
+            self._logger.info("Segment-Benchmark übersprungen: Multi-Treatment wird (noch) nicht unterstützt.")
+            return
+        from rubin.evaluation.segment_benchmark import (
+            fit_segment_benchmark, fit_score_segment_benchmark_oof,
+            resolve_benchmark_columns, score_segment_benchmark)
+        bench_name = str(getattr(_ev_cfg, "benchmark_name", "segment_benchmark"))
+        max_levels = int(getattr(_ev_cfg, "benchmark_max_levels", 25))
+        min_rows = int(getattr(_ev_cfg, "benchmark_min_rows", 20))
+        seed = int(cfg.constants.random_seed)
+        groups = getattr(self, "_groups", None)
+        if groups is not None and len(groups) != len(Y):
+            groups = None
+
+        cols, skipped = resolve_benchmark_columns(cols_req, list(X.columns), max_levels, X)
+        for sk in skipped:
+            self._logger.warning("Segment-Benchmark: Spalte '%s' übersprungen (%s).", sk["column"], sk["reason"])
+        if not cols:
+            self._logger.warning("Segment-Benchmark entfällt: keine der Spalten %s nutzbar.", cols_req)
+            return
+
+        if holdout_data is not None:
+            # External: fit auf Train, score auf Holdout (Spalten dort nötig)
+            eval_X_h = holdout_data[0]
+            miss = [c for c in cols if c not in eval_X_h.columns]
+            if miss:
+                self._logger.warning("Segment-Benchmark entfällt: Spalten %s fehlen im Eval-Datensatz.", miss)
+                return
+            bench = fit_segment_benchmark(X[cols], T, Y, columns=cols, groups=groups, min_rows=min_rows)
+            if bench is None:
+                return
+            score = score_segment_benchmark(bench, eval_X_h[cols])
+            eval_y, eval_t = np.asarray(holdout_data[2]), np.asarray(holdout_data[1])
+            mode = "external"
+        elif eval_mask is not None:
+            _m = np.asarray(eval_mask).astype(bool)
+            g_tr = groups[~_m] if groups is not None else None
+            bench = fit_segment_benchmark(X[cols].loc[~_m], T[~_m], Y[~_m], columns=cols, groups=g_tr, min_rows=min_rows)
+            if bench is None:
+                return
+            score = score_segment_benchmark(bench, X[cols].loc[_m])
+            eval_y, eval_t = np.asarray(Y[_m]), np.asarray(T[_m])
+            mode = "tmes"
+        else:
+            score, bench = fit_score_segment_benchmark_oof(
+                X[cols], T, Y, columns=cols, groups=groups,
+                n_splits=int(getattr(cfg.data_processing, "cross_validation_splits", 5)),
+                seed=seed, min_rows=min_rows)
+            if bench is None or score is None:
+                return
+            eval_y, eval_t = np.asarray(Y), np.asarray(T)
+            mode = "cross"
+
+        score = np.asarray(score, dtype=float)
+        curve_b = uplift_curve(y=eval_y, t=eval_t, score=score)
+        self._eval_scores_ctx[bench_name] = (eval_y, eval_t, score)
+        eval_summary[bench_name] = {
+            "qini": float(qini_coefficient(curve_b)),
+            "auuc": float(auuc(curve_b)),
+            "uplift_at_10pct": float(uplift_at_k(curve_b, k_fraction=0.10)),
+            "uplift_at_20pct": float(uplift_at_k(curve_b, k_fraction=0.20)),
+            "uplift_at_50pct": float(uplift_at_k(curve_b, k_fraction=0.50)),
+        }
+        if getattr(cfg, "study_type", "rct") == "rct":
+            # Tie-feste Top-50%-Politik (Begründung: siehe historischer Score)
+            from rubin.evaluation.uplift_metrics import tiebreak_jitter
+            _rng_b = np.random.default_rng(42)
+            _order_b = np.argsort(-(score + tiebreak_jitter(score, _rng_b)))
+            _tmask = np.zeros(len(score))
+            _tmask[_order_b[: len(score) // 2]] = 1.0
+            eval_summary[bench_name]["policy_value"] = float(policy_value(y=eval_y, t=eval_t, score=_tmask, threshold=0.5))
+        for key, val in eval_summary[bench_name].items():
+            short = {"uplift_at_10pct": "uplift10", "uplift_at_20pct": "uplift20", "uplift_at_50pct": "uplift50"}.get(key, key)
+            mlflow.log_metric(f"{short}__{bench_name}", val)
+        self._logger.info(
+            "Segment-Benchmark '%s' (%s, Spalten %s, %d Segmente, tau²=%.3g%s): Qini=%.5f — "
+            "so viel Ranking-Ausbeute steckt in der bloßen Kenntnis dieser Segmente; "
+            "der ehrliche Deckel für die Modelle.",
+            bench_name, mode, cols, bench.n_segments, bench.tau2,
+            "" if bench.heterogeneity_detected else " → keine belegbare Heterogenität, Score ≈ konstant",
+            eval_summary[bench_name]["qini"],
+        )
+        # T-Raten-Drift über die Segmente (nur RCT relevant): balance_treatments
+        # gleicht Treatment-Raten nur ZWISCHEN DATEIEN aus — Drift über
+        # inhaltliche Segmente (Realfall: 0.74-0.79 über Score-Klassen) bleibt
+        # davon unberührt und bedeutet: kein einheitlich randomisiertes Design
+        # über diese Segmente. Diff-in-Means JE Segment bleibt intern valide,
+        # aber gepoolte Metriken (ATE, Qini) mischen Designs.
+        t_rate_drift = None
+        try:
+            _tr = [r["t_rate"] for r in bench.table if r.get("estimable") and isinstance(r.get("t_rate"), (int, float))]
+            if len(_tr) >= 2:
+                t_rate_drift = float(max(_tr) - min(_tr))
+                if getattr(cfg, "study_type", "rct") == "rct" and t_rate_drift > 0.03:
+                    self._logger.warning(
+                        "Segment-Benchmark '%s': Treatment-Raten driften über die Segmente "
+                        "um %.1fpp (%.3f bis %.3f). Das ist KEIN einheitlich randomisiertes "
+                        "Design über diese Segmente — balance_treatments (DataPrep) gleicht "
+                        "nur zwischen DATEIEN aus, nicht zwischen Segmenten. Diff-in-Means je "
+                        "Segment bleibt intern valide; gepoolte Metriken mischen Designs. "
+                        "Bei starkem Drift study_type='observational' (Propensity-Korrektur) erwägen.",
+                        bench_name, t_rate_drift * 100, min(_tr), max(_tr),
+                    )
+        except Exception:
+            self._logger.debug("T-Raten-Drift-Check übersprungen.", exc_info=True)
+        _summary = {
+            "name": bench_name, "mode": mode, "columns": cols,
+            "skipped_columns": skipped, "n_segments": bench.n_segments,
+            "tau2": bench.tau2, "heterogeneity_detected": bench.heterogeneity_detected,
+            "q_stat": bench.q_stat, "q_pvalue": bench.q_pvalue,
+            "t_rate_drift": t_rate_drift,
+            "global_ate": bench.global_ate, "grouped": groups is not None,
+            "qini": eval_summary[bench_name]["qini"],
+            "table": [
+                {k: (round(v, 6) if isinstance(v, float) else v) for k, v in r.items()}
+                for r in bench.table[:40]
+            ],
+        }
+        self._segment_benchmark_summary = _summary
+        if hasattr(self, "_report"):
+            self._report.segment_benchmark_info = _summary
+
     def _plot_hist_uplift_basics(self, hist_name, hist_score, eval_y, eval_t, is_rct, mlflow):
         """Standard-Uplift-Plots (Qini-Kurve, Uplift-by-Percentile, bei RCT
         Treatment-Balance) für den HISTORISCHEN Score — bundle-unabhängig,
@@ -2110,7 +2305,8 @@ class AnalysisPipeline:
         jeden Analyseplot im Report)."""
         import matplotlib.pyplot as plt
         try:
-            sk_qini, sk_pct, sk_tb = generate_uplift_plots(np.asarray(hist_score, dtype=float), np.asarray(eval_t), np.asarray(eval_y))
+            _bf = getattr(self, "_band_for", None)  # Methoden-Harness-Tests nutzen SimpleNamespace-self
+            sk_qini, sk_pct, sk_tb = generate_uplift_plots(np.asarray(hist_score, dtype=float), np.asarray(eval_t), np.asarray(eval_y), noise_envelope=_bf(len(np.asarray(eval_y))) if _bf else None)
             if not is_rct:
                 sk_tb = None
             for fig, key in [(sk_qini, "uplift_qini"), (sk_pct, "uplift_percentile"), (sk_tb, "treatment_balance")]:
@@ -2139,7 +2335,8 @@ class AnalysisPipeline:
                     mname: dfp_cmp[pred_col].to_numpy(dtype=float), hist_name: hist_score,
                 })
                 fig, ax = plt.subplots(figsize=(10, 6))
-                plot_custom_qini_curve(data=df_cmp, causal_score_label=mname, affinity_score_label=hist_name, ax=ax, relative_axes=True)
+                _bf = getattr(self, "_band_for", None)
+                plot_custom_qini_curve(data=df_cmp, causal_score_label=mname, affinity_score_label=hist_name, ax=ax, relative_axes=True, noise_envelope=_bf(len(df_cmp)) if _bf else None)
                 _log_figure_fast(mlflow, fig, f"custom_qini__{mname}_vs_{hist_name}.png")
                 if hasattr(self, '_report'):
                     self._report.add_plot(mname, f"qini_vs_{hist_name}", fig)
@@ -2157,11 +2354,54 @@ class AnalysisPipeline:
         from rubin.evaluation.uplift_metrics import orient_historical_score
         hist_score = orient_historical_score(hist_score_eval, cfg.historical_score.higher_is_better)
 
+
         # Bei eval_mask: X/T/Y auf Eval-Subset filtern (hist_score ist bereits gefiltert)
         use_mask = eval_mask is not None and holdout_data is None
-        eval_X = X.loc[eval_mask].reset_index(drop=True) if use_mask else X
+        # External-Eval: X_val muss der HOLDOUT-Datensatz sein, nicht das
+        # Trainings-X (sonst Längen-Mismatch im DRTester-Zweig → der lief bei
+        # validate_on=external immer in die Fallback-Warnung; realer Befund).
+        if holdout_data is not None:
+            eval_X = holdout_data[0]
+        else:
+            eval_X = X.loc[eval_mask].reset_index(drop=True) if use_mask else X
         eval_y = holdout_data[2] if holdout_data is not None else (Y[eval_mask] if use_mask else Y)
         eval_t = holdout_data[1] if holdout_data is not None else (T[eval_mask] if use_mask else T)
+
+        # ── Plausibilitäts-Guards für den historischen Score (reale Vorfälle:
+        # upstream imputierter "Mittelwert pro Score"-Block und invers skalierte
+        # Rang-Scores beim Default higher_is_better=true) ──
+        try:
+            from rubin.evaluation.uplift_metrics import historical_score_anomalies
+            _diag = historical_score_anomalies(
+                hist_score, eval_y, eval_t,
+                higher_is_better=cfg.historical_score.higher_is_better,
+            )
+            if _diag["dominance_suspect"]:
+                self._logger.warning(
+                    "Historischer Score '%s': Der Einzelwert %.6g stellt %.0f%% aller Zeilen "
+                    "(%d von %d) — typisch ein upstream imputierter Mittelwert/Default für "
+                    "Zeilen OHNE echten Score. Dieser Block ist im Ranking unsortierbar und "
+                    "DECKELT den Qini des historischen Scores strukturell; auch das Qini-"
+                    "Potenzial der Gesamtpopulation sinkt entsprechend. Empfehlung: score-lose "
+                    "Zeilen upstream als fehlend lassen oder den Vergleich zusätzlich auf "
+                    "Zeilen mit echtem Score lesen.",
+                    hist_name, _diag["dominant_value"], _diag["dominant_share"] * 100,
+                    _diag["dominant_count"], len(hist_score),
+                )
+            if _diag["orientation_suspect"]:
+                self._logger.warning(
+                    "Historischer Score '%s': Nach Orientierung (higher_is_better=%s) "
+                    "korreliert der Score in der Kontrollgruppe NEGATIV mit dem Outcome "
+                    "(r=%.3f, n=%d). Bei Affinitäts-/Response-Scores spricht das für eine "
+                    "verkehrte Orientierung — bitte historical_score.higher_is_better "
+                    "prüfen (Rang-Scores mit '1 = beste Klasse' brauchen false). Qini/AUUC "
+                    "des historischen Scores wären sonst systematisch zu schlecht.",
+                    hist_name, cfg.historical_score.higher_is_better,
+                    _diag["control_corr"], _diag["control_n"],
+                )
+        except Exception:
+            self._logger.debug("Hist-Score-Guards übersprungen.", exc_info=True)
+
         curve_h = uplift_curve(y=eval_y, t=eval_t, score=hist_score)
         self._eval_scores_ctx[hist_name] = (np.asarray(eval_y), np.asarray(eval_t), np.asarray(hist_score, dtype=float))
         eval_summary[hist_name] = {
@@ -2399,6 +2639,16 @@ class AnalysisPipeline:
         - hist_comparison: Vergleich mit historischem Score (falls vorhanden)
         """
         _exclude = {SURROGATE_MODEL_NAME, "Ensemble"}
+        # Nicht-Modelle aus dem Konsens heraushalten: historischer Score und
+        # Segment-Benchmark sind Referenz-Scores, keine Modell-Stimmen.
+        try:
+            if getattr(cfg.historical_score, "name", None):
+                _exclude.add(str(cfg.historical_score.name))
+        except Exception:
+            pass
+        _ev_cfg = getattr(cfg, "evaluation", None)
+        _bench_name = str(getattr(_ev_cfg, "benchmark_name", "segment_benchmark")) if _ev_cfg is not None else "segment_benchmark"
+        _exclude.add(_bench_name)
 
         champ_metrics = eval_summary.get(champion_name, {})
         champ_qini = champ_metrics.get("qini", 0.0)
@@ -2434,6 +2684,29 @@ class AnalysisPipeline:
             level = "weak"
             details.append(f"Nur {n_positive_qini}/{n_models} Modell(e) mit positivem Qini.")
 
+        # ── Rauschband-Einordnung: Qini-Werte innerhalb der Permutations-Null
+        # sind von Zufall nicht unterscheidbar → Einstufung ehrlich dämpfen.
+        _nb = getattr(self, "_qini_null_band", None)
+        noise_within = None
+        noise_two_sd = None
+        if _nb and _nb.get("sd"):
+            noise_two_sd = 2.0 * float(_nb["sd"])
+            noise_within = bool(abs(champ_qini) <= noise_two_sd)
+            if noise_within:
+                details.append(
+                    f"Champion-Qini {champ_qini:.4f} liegt INNERHALB des Qini-Rauschbands "
+                    f"(2σ = ±{noise_two_sd:.4f}, Permutations-Null) — von Zufall nicht "
+                    f"unterscheidbar; power-stärkere Belege sind BLP-p und Segment-ΔATEs."
+                )
+                if level in ("strong", "moderate"):
+                    _old = level
+                    level = "moderate" if _old == "strong" else "weak"
+                    details.append(f"Einstufung von '{_old}' herabgestuft (Qini im Rauschband).")
+            else:
+                details.append(
+                    f"Champion-Qini {champ_qini:.4f} liegt außerhalb des Rauschbands (2σ = ±{noise_two_sd:.4f})."
+                )
+
         _levels = {
             "strong":   {"color": "#1a7f37", "bg": "#e8f5ec", "border": "#a3d9b1", "label": "Starke Heterogenität"},
             "moderate": {"color": "#7a5a00", "bg": "#fffbeb", "border": "#e8d49c", "label": "Moderate Heterogenität"},
@@ -2451,6 +2724,8 @@ class AnalysisPipeline:
             "n_positive_qini": n_positive_qini,
             "n_models": n_models,
             "concentration": round(concentration, 2),
+            "noise_two_sd": round(noise_two_sd, 6) if noise_two_sd is not None else None,
+            "noise_within": noise_within,
         }
 
         # ── 2. Historischer Score-Vergleich (separat) ──
@@ -2497,7 +2772,58 @@ class AnalysisPipeline:
                 "beats_pv": beats_pv,
             }
 
-        return {"heterogeneity": heterogeneity, "hist_comparison": hist_comparison}
+        # ── 3. Segment-Benchmark-Vergleich: die Drei-Stufen-Diagnose ──
+        benchmark_comparison = None
+        _bs = getattr(self, "_segment_benchmark_summary", None)
+        if _bs:
+            b_qini = float(_bs.get("qini", 0.0))
+            b_within = bool(noise_two_sd is not None and abs(b_qini) <= noise_two_sd)
+            b_details = []
+            if (not _bs.get("heterogeneity_detected")) or b_within:
+                bc_level, bc_style = "bench_nothing", _levels["weak"]
+                bc_label = "Deklarierte Segmente ohne messbare Ranking-Ausbeute"
+                if not _bs.get("heterogeneity_detected"):
+                    b_details.append(
+                        "Die Zwischen-Segment-Varianz ist statistisch nicht belegbar (τ² ≈ 0) — "
+                        "der Benchmark-Score kollabiert auf den Gesamt-ATE."
+                    )
+                if b_within and noise_two_sd is not None:
+                    b_details.append(
+                        f"Benchmark-Qini {b_qini:.4f} liegt im Rauschband (±{noise_two_sd:.4f})."
+                    )
+                b_details.append(
+                    "Konsequenz: Aus diesen Segmenten kann KEIN Modell mehr Qini holen — "
+                    "ein flacher Modell-Qini ist hier kein Lernversagen."
+                )
+            elif champ_qini >= b_qini - (float(_nb["sd"]) if _nb and _nb.get("sd") else 0.0):
+                bc_level, bc_style = "bench_captured", _levels["strong"]
+                bc_label = "Modell hat die bekannte Segment-Moderation eingefangen"
+                b_details.append(
+                    f"Champion-Qini {champ_qini:.4f} erreicht den Segment-Benchmark ({b_qini:.4f}) — "
+                    "mehr ist aus den deklarierten Segmenten nicht zu holen; zusätzlicher Qini "
+                    "müsste aus anderer, bisher unbelegter Heterogenität kommen."
+                )
+            else:
+                bc_level, bc_style = "bench_gap", _levels["moderate"]
+                bc_label = "Lücke zum Segment-Benchmark — Modell lernt bekannte Moderation nicht voll"
+                b_details.append(
+                    f"Der Benchmark erreicht Qini {b_qini:.4f}, der Champion nur {champ_qini:.4f}. "
+                    "Die deklarierten Segmente tragen messbare Moderation, die das Modell nicht "
+                    "ausschöpft — Hebel: Segment-Spalten in feature_selection.always_keep, "
+                    "Imputation prüfen, Regularisierung/Blattgrößen."
+                )
+            benchmark_comparison = {
+                "level": bc_level, **bc_style, "label": bc_label, "details": b_details,
+                "bench_name": _bs.get("name"), "bench_qini": round(b_qini, 6),
+                "champion_qini": round(champ_qini, 6),
+                "tau2": _bs.get("tau2"), "n_segments": _bs.get("n_segments"),
+                "columns": _bs.get("columns"), "mode": _bs.get("mode"),
+                "heterogeneity_detected": _bs.get("heterogeneity_detected"),
+                "within_noise": b_within,
+            }
+
+        return {"heterogeneity": heterogeneity, "hist_comparison": hist_comparison,
+                "benchmark_comparison": benchmark_comparison}
 
     def _build_surrogate_regressor(self, cfg):
         """Erzeugt einen Einzelbaum-Regressor aus der Surrogate- und Base-Learner-Konfiguration."""
@@ -2909,7 +3235,7 @@ class AnalysisPipeline:
                 if pred_col_s in surr_eval_df.columns:
                     cate_vals = surr_eval_df[pred_col_s].to_numpy(dtype=float)
                     try:
-                        sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, t_s, y_s)
+                        sk_qini, sk_pct, sk_tb = generate_uplift_plots(cate_vals, t_s, y_s, noise_envelope=self._band_for(len(y_s)))
                         if getattr(cfg, "study_type", "rct") != "rct":
                             sk_tb = None
                         for fig, key, fname in [
@@ -2966,7 +3292,7 @@ class AnalysisPipeline:
                                     hist_name: hist_score_eval,
                                 })
                                 fig_cq, ax_cq = plt.subplots(figsize=(10, 6))
-                                plot_custom_qini_curve(data=df_cmp, causal_score_label=sname, affinity_score_label=hist_name, ax=ax_cq, relative_axes=True)
+                                plot_custom_qini_curve(data=df_cmp, causal_score_label=sname, affinity_score_label=hist_name, ax=ax_cq, relative_axes=True, noise_envelope=self._band_for(len(df_cmp)))
                                 _log_figure_fast(mlflow, fig_cq, f"custom_qini__{sname}_vs_{hist_name}.png")
                                 if hasattr(self, '_report'):
                                     self._report.add_plot(sname, f"qini_vs_{hist_name}", fig_cq)

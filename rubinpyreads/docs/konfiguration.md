@@ -147,6 +147,69 @@ Wichtig ist dabei die Interpretation der Score-Richtung:
 - `higher_is_better: false` bedeutet: kleine Score-Werte sind "gut". In diesem Fall invertiert rubin den Score intern,
   damit die Sortierung in den Uplift-Metriken korrekt ist.
 
+> **Achtung Rang-/Klassen-Scores:** Historische Scores, bei denen Klasse **1 die beste** ist
+> (klassische Scorekarten-Ränge), brauchen `higher_is_better: false` — der Default ist `true`.
+> rubin prüft das inzwischen selbst: Korreliert der orientierte Score in der **Kontrollgruppe**
+> negativ mit dem Outcome, warnt die Analyse („verkehrte Orientierung — higher_is_better prüfen").
+>
+> **Achtung Imputations-Blöcke:** Stellt ein einzelner Score-Wert einen großen Teil der Zeilen
+> (typisch: upstream wurde für Kunden ohne Score der Mittelwert eingesetzt), ist dieser Block im
+> Ranking unsortierbar und **deckelt den Qini des historischen Scores strukturell** — und senkt
+> zugleich das erreichbare Qini-Niveau der Gesamtpopulation, an dem auch die Modelle zu messen
+> sind. rubin warnt ab >20 % Anteil eines Einzelwerts. Besser: score-lose Zeilen upstream als
+> fehlend lassen (rubin sortiert fehlende Scores ans Ende der historischen Rangliste) oder den
+> Vergleich zusätzlich auf Zeilen mit echtem Score lesen.
+
+---
+
+## `evaluation` – Qini-Einordnung: Rauschband & Segment-Benchmark (optional)
+
+```yaml
+evaluation:
+  qini_noise_band: true          # Default: an
+  qini_noise_permutations: 200
+  benchmark_segments: ["NEUKUNDE_FLAG", "LEAD_ART"]   # Default: [] = aus
+  benchmark_max_levels: 25
+```
+
+Zwei Referenzpunkte, die jede Qini-Zahl im Report interpretierbar machen — besonders wichtig
+bei niedrigen Response-Raten, wo das Bernoulli-Rauschen des Qini so groß ist wie realistische
+Effekte:
+
+**Qini-Rauschband (`qini_noise_band`)** — Permutations-Nullverteilung auf den Eval-Daten:
+Y und T bleiben fest, der Score wird B-mal rein zufällig vergeben. Das 95%-Envelope der
+Null-Kurven erscheint als graue Zone in allen Qini-Plots; `qini_noise_sd/lo/hi` gehen nach
+mlflow, und die Heterogenitäts-Bewertung im Report stuft herab, wenn der Champion-Qini im
+Band liegt. Bei Gruppen-Folds wird **gruppenweise** permutiert (jede Gruppe erbt EINEN
+Score) — zeilenweises Permutieren unterschätzte das Band bei geclusterten Daten. Das Band
+hängt nur von (Y, T, n) ab und gilt für alle Scores des Laufs gleichermaßen.
+Wichtig für die Lesart: **Trainings-/Tuning-OOF-Metriken sind zusätzlich selektionsverzerrt**
+(Maximum über viele Trials/Modelle, Gewinner-Fluch) — ein Training-OOF-Qini von ~σ·√(2·ln K)
+entsteht schon ohne jedes Signal und ist nie mit den Eval-Werten vergleichbar.
+
+**Segment-Benchmark (`benchmark_segments`)** — das ehrliche „Mini-Oracle": Diskrete Spalten
+aus X (case-insensitiv, max. `benchmark_max_levels` Ausprägungen je Spalte, Kreuzprodukt =
+Segmente). Jede Eval-Zeile erhält den geschätzten Treatment-Effekt ihres Segments als Score;
+der Benchmark läuft als eigene Zeile durch die normale Evaluation (Modellvergleich,
+per-File-Qini, Plots) und beantwortet: *Wie viel Qini wäre allein die Kenntnis dieser
+Segmente wert?* — der Deckel, an dem die Modelle zu messen sind. Drei Ehrlichkeits-Regeln:
+
+1. Segment-ATEs kommen **nie aus den Eval-Zeilen** (cross: out-of-fold über GroupAware-KFold;
+   TMES: aus den Zeilen außerhalb der Eval-Maske; external: aus den Trainingsdaten).
+2. Standardfehler sind bei Gruppen-Folds **cluster-robust** (zeilenweise SEs überverkaufen
+   Signifikanz).
+3. **Pre-Test-Shrinkage** (Cochrans Q + DerSimonian-Laird): Verwirft der Homogenitätstest
+   nicht (p ≥ 0.05), kollabiert der Score exakt auf den Gesamt-ATE und sein Qini ehrlich
+   auf ~0; sonst werden unsichere Zell-ATEs präzisionsgewichtet Richtung Gesamt-ATE gezogen —
+   kleine Segmente mit großen Zufalls-Effekten (der klassische „3,6pp ± 4,0"-Fall) können
+   den Benchmark nicht kapern.
+
+Der Report zeigt die ΔATE-Tabelle je Segment (n, T-Rate, ΔATE, SE, z, geshrunkener ATE),
+den Homogenitätstest-p-Wert und eine automatische Drei-Stufen-Diagnose: Benchmark im
+Rauschband → aus den Segmenten ist nichts zu holen; Benchmark darüber, Modell darunter →
+Lern-Problem (Hebel: `feature_selection.always_keep`, Imputation, Regularisierung); Modell ≈
+Benchmark → bekannte Moderation eingefangen. Multi-Treatment wird (noch) nicht unterstützt.
+
 **Warum konfigurierbar?**  
 Dateipfade unterscheiden sich zwischen lokalen Läufen, Batch‑Jobs und CI‑Umgebungen. Die Pipeline soll dafür
 nicht angepasst werden müssen.

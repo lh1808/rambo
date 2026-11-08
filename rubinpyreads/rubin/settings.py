@@ -98,6 +98,35 @@ class HistoricalScoreConfig(BaseModel):
     higher_is_better: bool = True
 
 
+class EvaluationConfig(BaseModel):
+    model_config = _STRICT
+
+    """Einordnung der Evaluations-Metriken: Rauschband + Segment-Benchmark.
+
+    qini_noise_band: Permutations-Nullverteilung des Qini auf den Eval-Daten
+      (Score zufällig vergeben, bei Gruppen-CV gruppenweise). Erscheint als
+      graue Zone in den Qini-Plots und als qini_noise_sd in mlflow — Werte
+      innerhalb des Bands sind von Zufall nicht unterscheidbar.
+    benchmark_segments: Spalten aus X (diskret, case-insensitiv), deren
+      Segment-Kreuzprodukt als "Mini-Oracle" bewertet wird: Segment-ATEs
+      werden NUR aus Trainingsdaten geschätzt (im Cross-Modus out-of-fold),
+      mit Cluster-SEs (bei Gruppen) und Empirical-Bayes-Shrinkage — ohne
+      belegbare Heterogenität kollabiert der Score ehrlich auf den
+      Gesamt-ATE (Qini ≈ 0). Der Benchmark läuft als eigene Zeile durch
+      die normale Evaluation (eval_summary, per-File-Qini, Plots).
+      Realfall: ["FEATURES_FEHLEN_FLG", "LEAD_ART"] beantwortet "wie viel
+      Qini wäre die Kenntnis dieser Segmente überhaupt wert?" — der
+      ehrliche Deckel, an dem die Modelle zu messen sind.
+    """
+
+    qini_noise_band: bool = True
+    qini_noise_permutations: int = 200
+    benchmark_segments: List[str] = Field(default_factory=list)
+    benchmark_max_levels: int = 25
+    benchmark_name: str = "segment_benchmark"
+    benchmark_min_rows: int = 20
+
+
 class DataPrepConfig(BaseModel):
     model_config = _STRICT
 
@@ -558,6 +587,7 @@ class AnalysisConfig(BaseModel):
     constants: ConstantsConfig = Field(default_factory=ConstantsConfig)
     data_files: DataFilesConfig
     historical_score: HistoricalScoreConfig = Field(default_factory=HistoricalScoreConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     data_prep: Optional[DataPrepConfig] = None
 
     data_processing: DataProcessingConfig = Field(default_factory=DataProcessingConfig)

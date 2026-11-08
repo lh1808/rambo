@@ -8,6 +8,8 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
   const [dpError,setDpError] = useState(null);
   const [detecting, setDetecting] = useState(false);
   const [detectError, setDetectError] = useState(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
   const [dpTab, setDpTab] = useState("Dateipfade");
@@ -17,7 +19,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
   useEffect(() => { if(onDpDone) onDpDone(dpDone); }, [dpDone]);
 
   const files = dp.files || [""];
-  const setFiles = (fn) => setDp(prev => ({...prev, files: typeof fn==="function" ? fn(prev.files||[""]) : fn, targetValues: [], treatValues: [], detectedCols: null, nanCols: [], colStats: {}}));
+  const setFiles = (fn) => { setDetectError(null); setApplyError(null); setDp(prev => ({...prev, files: typeof fn==="function" ? fn(prev.files||[""]) : fn, targetValues: [], treatValues: [], detectedCols: null, nanCols: [], colStats: {}})); };
   const addFile = () => setFiles(prev => [...prev, ""]);
   const removeFile = (i) => setFiles(prev => prev.filter((_,j)=>j!==i));
   const updateFile = (i,v) => setFiles(prev => prev.map((f,j)=>j===i?v:f));
@@ -442,7 +444,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
         </div>
 
         <div style={{marginTop:14}}>
-          <Inp label="Score-Spalte (S, optional)" value={dp.scoreName!=null?dp.scoreName:""} onChange={v=>setDp(prev=>({...prev,scoreName:v}))} help="Historischer Score für Benchmark-Vergleich"/>
+          <Inp label="Score-Spalte (S, optional)" value={dp.scoreName!=null?dp.scoreName:""} onChange={v=>setDp(prev=>({...prev,scoreName:v}))} placeholder="z.B. S, BEA_SCORE, ..." help="Historischer Score für Benchmark-Vergleich. Achtung bei Rang-Scores (1 = beste Klasse): in der Analyse higher_is_better auf false stellen."/>
         </div>
 
         {/* Validierung: Existieren die zugewiesenen Spalten in den erkannten Daten? */}
@@ -562,8 +564,8 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           </div>
         )}
         <div style={{marginTop:10,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn small disabled={!dp.featurePath} onClick={async()=>{
-              setDetecting(true); setDetectError(null);
+            <Btn small onClick={async()=>{
+              setApplying(true); setApplyError(null);
               try {
                 const res = await fetch("./api/apply-dictionary", {
                   method:"POST", headers:{"Content-Type":"application/json"},
@@ -581,13 +583,13 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
                   setDp(prev => ({...prev, featureSelection:newSel, colTypes:newTypes, dictResult:d}));
                   setSimCols(allCols);
                 } else {
-                  setDetectError(d.message || "Dictionary konnte nicht angewendet werden.");
+                  setApplyError(d.message || "Dictionary konnte nicht angewendet werden.");
                 }
               } catch(e) {
-                setDetectError("Backend nicht erreichbar: "+(e.message||"Netzwerkfehler"));
+                setApplyError("Backend nicht erreichbar: "+(e.message||"Netzwerkfehler"));
               }
-              setDetecting(false);
-            }} disabled={detecting}>{detecting ? "Wird angewendet ..." : "Dictionary anwenden"}</Btn>
+              setApplying(false);
+            }} disabled={!dp.featurePath || applying}>{applying ? "Wird angewendet ..." : "Dictionary anwenden"}</Btn>
             {dp.dictResult && (
               <span style={{fontSize:12,color:"#059669",fontWeight:500}}>
                 ✓ {dp.dictResult.total_input} INPUT, {(dp.dictResult.matched_features||[]).length} in Daten
@@ -611,7 +613,7 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
           </div>
           <div style={{fontSize:10.5,color:C.gray,marginTop:3}}>Prüft nur die Schreibweise gegen die INPUT-Liste des Dictionaries — ändert keine Auswahl. Die Liste wirkt erst beim DataPrep-Lauf und sperrt unten die betroffenen Checkboxen.</div>
         </div>
-        {detectError && <Info type="error">{detectError}</Info>}
+        {applyError && <Info type="error">{applyError}</Info>}
       </Sec>
 
       <Sec title="Features manuell bearbeiten">
@@ -695,38 +697,78 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
             const reserved = new Set([...((dp.targets||[""]).map(t=>(t||"").toUpperCase())), (dp.treatment||"").toUpperCase(), ...((dp.scoreName||"").trim() ? [(dp.scoreName||"").toUpperCase()] : [])]);
             const nanFeatures = (dp.nanCols||[]).filter(c => !reserved.has(c.toUpperCase()) && sel[c] !== false);
             return (<>
-          <Sel label="NaN-Behandlung" options={["(keine)","zero","median","mean","mode","max"]} value={dp.fillNa||"(keine)"} onChange={v=>{setDp(prev=>({...prev,fillNa:v}));if(v!=="(keine)"){setCfg(prev=>({...prev,hasNaN:false,nanCols:[]}))}else if(nanFeatures.length>0){setCfg(prev=>({...prev,hasNaN:true,nanCols:nanFeatures}))}}} help="Fehlende Werte in Features auffüllen. Bei Auswahl einer Methode werden NaN vor der Analyse bereinigt."/>
+          <div style={{maxWidth:420}}>
+          <Sel label="NaN-Behandlung" options={["(keine)","zero","median","mean","mode","max"]} value={dp.fillNa||"(keine)"} onChange={v=>{setDp(prev=>({...prev,fillNa:v}));if(v!=="(keine)"){setCfg(prev=>({...prev,hasNaN:false,nanCols:[]}))}else if(nanFeatures.length>0){setCfg(prev=>({...prev,hasNaN:true,nanCols:nanFeatures}))}}} help="Fehlende Werte in Features auffüllen. Bei Auswahl einer Methode werden NaN vor der Analyse bereinigt. Hinweis: 'max' erzeugt Punktmassen am Rand, die Missing-Flags über viele Spalten duplizieren — 'median' ist meist die robustere Wahl (Flag ggf. in feature_selection.always_keep schützen)."/>
+          </div>
           {nanFeatures.length > 0 && (dp.fillNa||"(keine)")==="(keine)" && (
             <Info type="warn"><strong>{nanFeatures.length} Feature-Spalten mit fehlenden Werten.</strong> Ohne NaN-Behandlung werden CausalForestDML, CausalForest und die Feature-Selektionsmethode CausalForest automatisch übersprungen. Alle anderen Modelle (LightGBM/CatBoost-basiert) sind davon nicht betroffen. Wähle oben eine Auffüll-Methode, um alle Modelle nutzen zu können.</Info>
           )}
           {nanFeatures.length > 0 && (dp.fillNa||"(keine)")!=="(keine)" && (
             <Info type="success"><strong>NaN werden bereinigt</strong> ({dp.fillNa}). Alle Modelle inkl. CausalForestDML und CausalForest sind verfügbar.</Info>
           )}
-          {nanFeatures.length === 0 && simCols && (
+          {nanFeatures.length === 0 && dp.detectedCols && (
             <Info type="success">Keine fehlenden Werte in Features erkannt. Alle Modelle sind verfügbar.</Info>
           )}
             </>);
           })()}
 
-          <div style={{marginTop:14}}>
-            
-          </div>
-
           <Divider/>
-          <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Bereinigung</div>
-          <Row>
-            <Col>
-              <Toggle label="Deduplizierung" checked={dp.dedup||false} onChange={v=>setDp(prev=>({...prev,dedup:v}))} help="Auf einen Eintrag pro Kunde reduzieren — bei Duplikaten über mehrere Dateien wird ein ZUFÄLLIGER Vertreter behalten (seed-reproduzierbar, kein Datei-Bias). Verhindert Leakage bei Cross-Prediction. Drei Optionen für Mehrfach-Samples: nichts tun (Standard), hier deduplizieren (echte Duplikate), oder unten per Gruppen-Spalte alle Samples behalten und in den Folds zusammenhalten (echte Mehrfach-Beobachtungen, z. B. verschiedene Lead-Arten je Partner)."/>
-              {dp.dedup&&<Inp label="ID-Spalte" value={dp.dedupCol||""} onChange={v=>setDp(prev=>({...prev,dedupCol:v}))} placeholder="PARTNER_ID"/>}
-              {!dp.dedup&&<Inp label="Gruppen-Spalte (optional)" value={dp.groupCol||""} onChange={v=>setDp(prev=>({...prev,groupCol:v}))} placeholder="PARTNER_ID" help="Alternative zur Deduplizierung bei ECHTEN Mehrfach-Samples je Einheit (z. B. 2-3 Leads pro Partner mit unterschiedlichen Features): Alle Samples bleiben erhalten, landen aber in CV, Tuning und Cross-Fitting im SELBEN Fold — verhindert Zwillings-Leakage ohne Datenverlust. Schreibt groups.parquet, die Analyse erkennt sie automatisch."/>}
-            </Col>
-            {hasMulti && <Col>
-              <Toggle label="Treatment-Balance" checked={dp.balanceTreat||false} onChange={v=>setDp(prev=>({...prev,balanceTreat:v}))} help="Per Random-Downsampling die Treatment-Raten über alle Dateien angleichen (Auswahl der Ziel-Rate nach maximaler effektiver Stichprobe)"/>
-            </Col>}
-          </Row>
-          {dp.dedup&&<Info type="warn"><strong>Deduplizierung aktiv:</strong> Reduktion auf 1 Sample pro Kunde verhindert Leakage, wenn mehrere Einträge desselben Kunden in verschiedene Folds fallen.</Info>}
-          {!dp.dedup&&!!(dp.groupCol&&dp.groupCol.trim())&&<Info type="info"><strong>Gruppen-Folds aktiv:</strong> Alle Zeilen mit derselben <code>{dp.groupCol.trim()}</code> bleiben im selben CV-Fold (Cross-Prediction, BLT/FMT/CFT, EconML-Cross-Fitting). Alle Samples werden behalten — richtig, wenn die Mehrfach-Samples echte unterschiedliche Beobachtungen sind (z. B. verschiedene Lead-Arten je Partner).</Info>}
-          {dp.balanceTreat&&<Info type="warn"><strong>Treatment-Balance aktiv:</strong> Bei mehr als 5 Prozentpunkten Abweichung zwischen Dateien werden Zeilen per Random-Downsampling entfernt. Die gemeinsame Ziel-Rate wird nach maximaler effektiver Stichprobe (N·p·(1−p)) gewählt — so bleibt die Balance erhalten, statt nur die Zeilenzahl zu maximieren.</Info>}
+          <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Mehrfach-Samples je Einheit</div>
+          {(() => {
+            const gcTrim = (dp.groupCol||"").trim();
+            const dcTrim = (dp.dedupCol||"").trim();
+            const mode = dp.dedup ? "dedup" : ((dp.multiMode==="group" || gcTrim) ? "group" : "none");
+            const setMode = (k) => setDp(prev => ({...prev, dedup: k==="dedup", multiMode: k, ...(k!=="group" ? {groupCol:""} : {})}));
+            const opts = [
+              {k:"none", label:"Nichts tun", desc:"Jede Zeile ist eine eigenständige Beobachtung. Standard, wenn keine Einheit (Partner, Kunde) mehrfach vorkommt."},
+              {k:"dedup", label:"Deduplizieren", desc:"Eine Zeile je Einheit behalten — zufälliger Vertreter, seed-reproduzierbar, ohne Datei-Bias. Für echte Duplikate: nahezu identische Zeilen derselben Einheit."},
+              {k:"group", label:"Gruppen-Folds", desc:"Alle Zeilen behalten; dieselbe Einheit bleibt in CV, Tuning und Cross-Fitting im selben Fold. Für echte Mehrfach-Beobachtungen, z. B. 2\u20133 Leads je Partner."},
+            ];
+            return (<>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:4}}>
+                {opts.map(o => {
+                  const active = mode === o.k;
+                  return (
+                    <label key={o.k} onClick={()=>setMode(o.k)} style={{display:"flex",flexDirection:"column",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid "+C.ruby:"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:"pointer",transition:"all 0.15s"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                        <input type="radio" name="dp_multiMode" checked={active} readOnly style={{accentColor:C.ruby,pointerEvents:"none"}}/>
+                        <span style={{fontSize:13,fontWeight:600,color:active?C.dark:C.text}}>{o.label}</span>
+                      </div>
+                      <div style={{fontSize:11,color:C.textMuted,lineHeight:1.45}}>{o.desc}</div>
+                    </label>
+                  );
+                })}
+              </div>
+              {mode==="dedup" && <div style={{maxWidth:420,marginTop:12}}>
+                <Inp label="ID-Spalte" value={dp.dedupCol||""} onChange={v=>setDp(prev=>({...prev,dedupCol:v}))} placeholder="PARTNER_ID" help="Einheit, auf die reduziert wird — eine Zeile je eindeutigem Wert."/>
+              </div>}
+              {mode==="group" && <div style={{maxWidth:420,marginTop:12}}>
+                <Inp label="Gruppen-Spalte" value={dp.groupCol||""} onChange={v=>setDp(prev=>({...prev,groupCol:v}))} placeholder="PARTNER_ID" help="Einheit, deren Zeilen zusammenbleiben. Schreibt groups.parquet neben X/T/Y — die Analyse erkennt sie automatisch."/>
+              </div>}
+              {mode==="dedup" && !dcTrim && <Info type="warn"><strong>ID-Spalte fehlt:</strong> Ohne Spaltennamen wird nicht dedupliziert — der Lauf verhält sich wie „Nichts tun".</Info>}
+              {mode==="dedup" && !!dcTrim && <Info type="warn"><strong>Deduplizierung aktiv:</strong> Reduktion auf 1 Sample je <code>{dcTrim}</code> verhindert Zwillings-Leakage, kostet aber alle weiteren Samples der Einheit. Bei Duplikaten über mehrere Dateien wird ein zufälliger Vertreter behalten (seed-reproduzierbar, kein Datei-Bias).</Info>}
+              {mode==="group" && !gcTrim && <Info type="warn"><strong>Gruppen-Spalte fehlt:</strong> Ohne Spaltennamen werden keine Gruppen-Folds geschrieben — der Lauf verhält sich wie „Nichts tun".</Info>}
+              {mode==="group" && !!gcTrim && <Info type="info"><strong>Gruppen-Folds aktiv:</strong> Alle Zeilen mit derselben <code>{gcTrim}</code> bleiben im selben CV-Fold (Cross-Prediction, BLT/FMT/CFT, EconML-Cross-Fitting). Alle Samples werden behalten — richtig, wenn die Mehrfach-Samples echte unterschiedliche Beobachtungen sind (z. B. verschiedene Lead-Arten je Partner).</Info>}
+            </>);
+          })()}
+
+          {hasMulti && <>
+            <Divider/>
+            <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Datei-Balance</div>
+            {(() => {
+              const active = dp.balanceTreat||false;
+              return (
+                <div onClick={()=>setDp(prev=>({...prev,balanceTreat:!prev.balanceTreat}))} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"14px 16px",borderRadius:10,border:active?"1.5px solid "+C.ruby:"1.5px solid "+C.border,background:active?C.rose:"#fff",cursor:"pointer",transition:"all 0.15s",userSelect:"none"}}>
+                  <input type="checkbox" checked={active} readOnly style={{accentColor:C.ruby,marginTop:2,pointerEvents:"none"}}/>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:active?C.dark:C.text,marginBottom:4}}>Treatment-Balance über Dateien</div>
+                    <div style={{fontSize:11,color:C.textMuted,lineHeight:1.45}}>Gleicht unterschiedliche Treatment-Raten zwischen den Eingangsdateien per Random-Downsampling an (Ziel-Rate nach maximaler effektiver Stichprobe). Wirkt nur <b>zwischen Dateien</b> — Raten-Drift über inhaltliche Segmente (z. B. Score-Klassen) bleibt bestehen; der Segment-Benchmark der Analyse weist ihn aus.</div>
+                  </div>
+                </div>
+              );
+            })()}
+            {dp.balanceTreat&&<Info type="warn"><strong>Treatment-Balance aktiv:</strong> Bei mehr als 5 Prozentpunkten Abweichung zwischen Dateien werden Zeilen per Random-Downsampling entfernt. Die gemeinsame Ziel-Rate wird nach maximaler effektiver Stichprobe (N·p·(1−p)) gewählt — so bleibt die Balance erhalten, statt nur die Zeilenzahl zu maximieren.</Info>}
+          </>}
 
           <Divider/>
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Ausgabe</div>
@@ -734,10 +776,10 @@ const PDataPrep = ({dp,setDp,cfg,setCfg,setPg,onDpDone}) => {
 
           {(hasCSV || hasSAS) && <><Divider/>
           <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:".5px",color:"#999",marginBottom:8}}>Dateiformat</div>
-          <Row>
-            {hasCSV && <Col><Sel label="Trennzeichen (CSV)" options={[",",";","|","\t"]} value={dp.delimiter||","} onChange={v=>setDp(prev=>({...prev,delimiter:v}))}/></Col>}
-            {hasSAS && <Col><Sel label="SAS-Encoding" options={["utf-8","latin-1","cp1252","iso-8859-1"]} value={dp.sasEncoding||"utf-8"} onChange={v=>setDp(prev=>({...prev,sasEncoding:v}))} help="Zeichensatz für SAS7BDAT-Dateien"/></Col>}
-          </Row></>}
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            {hasCSV && <div style={{width:260}}><Sel label="Trennzeichen (CSV)" options={[",",";","|","\t"]} value={dp.delimiter||","} onChange={v=>setDp(prev=>({...prev,delimiter:v}))}/></div>}
+            {hasSAS && <div style={{width:260}}><Sel label="SAS-Encoding" options={["utf-8","latin-1","cp1252","iso-8859-1"]} value={dp.sasEncoding||"utf-8"} onChange={v=>setDp(prev=>({...prev,sasEncoding:v}))} help="Zeichensatz für SAS7BDAT-Dateien"/></div>}
+          </div></>}
 
           <Expander title="Erweiterte DataPrep-Einstellungen">
             <Inp label="Chunksize" type="number" value={dp.chunksize||300000} onChange={v=>setDp(prev=>({...prev,chunksize:Number(v)}))} help="Zeilenzahl pro Chunk beim Einlesen großer Dateien"/>

@@ -54,6 +54,7 @@ def plot_custom_qini_curve(
     affinity_score_label: Optional[str] = None,
     ax: Optional[Any] = None,
     relative_axes: bool = True,
+    noise_envelope: Optional[dict] = None,
 ):
     """Custom-Qini-Plot zur direkten Gegenüberstellung zweier Scores.
 
@@ -77,6 +78,23 @@ def plot_custom_qini_curve(
     if ax is None:
         fig, ax = plt.subplots()
 
+    if noise_envelope is not None:
+        try:
+            _fg = np.asarray(noise_envelope["frac_grid"], dtype=float)
+            _lo = np.asarray(noise_envelope["curve_lo"], dtype=float)
+            _hi = np.asarray(noise_envelope["curve_hi"], dtype=float)
+            if relative_axes:
+                _it = float(inc_total) if inc_total else 1.0
+                _lo, _hi = _lo / _it, _hi / _it
+            else:
+                _fg = _fg * float(np.max(x)) if len(x) else _fg
+            ax.fill_between(
+                _fg, _lo, _hi, color="#9ca3af", alpha=0.22, linewidth=0, zorder=0,
+                label=f"Rauschband 95% (B={noise_envelope.get('n_permutations', '?')}"
+                      f"{', gruppiert' if noise_envelope.get('grouped') else ''})",
+            )
+        except Exception:
+            pass
     ax.plot(x, y_random, color=COLOR_BASELINE, label="Random", linewidth=1.5, linestyle=":")
 
     ax.plot(x, y_causal, color=COLOR_MODEL, label=causal_score_label)

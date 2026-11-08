@@ -94,6 +94,8 @@ class ReportCollector:
     explainability_info: Dict[str, Any] = field(default_factory=dict)
     ate_barplot: str = ""  # Base64-encoded ATE Barplot
     heterogeneity_assessment: Dict[str, Any] = field(default_factory=dict)
+    qini_noise_info: Dict[str, Any] = field(default_factory=dict)
+    segment_benchmark_info: Dict[str, Any] = field(default_factory=dict)
     per_file_qini: List[Dict[str, Any]] = field(default_factory=list)
     per_file_qini_models: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     per_file_qini_hist_name: str = ""
@@ -372,12 +374,14 @@ def _assessment_card(data, metrics_list, title_override=None):
 
     # Header: Symbol + Label + Level-Badge
     _badge_bg = {"strong": "#e8f5ec", "moderate": "#fffbeb", "weak": "#fff3e6", "none": "#fef2f2",
-                 "beats_both": "#e8f5ec", "beats_qini": "#fffbeb", "hist_negative": "#fff3e6", "behind": "#fef2f2"}.get(lvl, "#f5f5f5")
+                 "beats_both": "#e8f5ec", "beats_qini": "#fffbeb", "hist_negative": "#fff3e6", "behind": "#fef2f2",
+                 "bench_captured": "#e8f5ec", "bench_gap": "#fffbeb", "bench_nothing": "#fff3e6"}.get(lvl, "#f5f5f5")
     card += '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">'
     card += f'<span style="font-size:24px;color:{color};line-height:1">{sym}</span>'
     card += f'<div style="font-size:17px;font-weight:700;color:var(--text)">{escape(label)}</div>'
     _badge_text = {"strong": "stark", "moderate": "moderat", "weak": "schwach", "none": "keine",
-                  "beats_both": "übertrifft", "beats_qini": "partiell", "hist_negative": "kein Uplift", "behind": "unterlegen"}.get(lvl, lvl)
+                  "beats_both": "übertrifft", "beats_qini": "partiell", "hist_negative": "kein Uplift", "behind": "unterlegen",
+                  "bench_captured": "eingefangen", "bench_gap": "Lücke", "bench_nothing": "nichts zu holen"}.get(lvl, lvl)
     card += f'<span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:{color};background:{_badge_bg};padding:3px 10px;border-radius:20px">{_badge_text}</span>'
     card += '</div>'
 
@@ -609,10 +613,14 @@ def _render_per_file_qini(collector) -> str:
 def _render_heterogeneity(collector) -> str:
     """Baut den Inhalt der Heterogenitäts-Sektion (leerer String, wenn keine Daten)."""
     ha = collector.heterogeneity_assessment
-    if not ha:
+    qn = getattr(collector, "qini_noise_info", {}) or {}
+    sb = getattr(collector, "segment_benchmark_info", {}) or {}
+    if not ha and not qn and not sb:
         return ""
+    ha = ha or {}
     het = ha.get("heterogeneity")
     hc = ha.get("hist_comparison")
+    bc = ha.get("benchmark_comparison")
 
     h2 = ''
     # Karte 1: Heterogenität
@@ -643,6 +651,93 @@ def _render_heterogeneity(collector) -> str:
             ("Δ Qini", f'{hc["qini_diff"]:+.4f}'),
             ("Δ Policy Value", f'{hc["pv_diff"]:+.4f}'),
         ], title_override=hc["label"])
+
+    # Karte 3: Segment-Benchmark-Vergleich (Drei-Stufen-Diagnose)
+    if bc:
+        h2 += _assessment_card(bc, [
+            ("Benchmark Qini", f'{bc.get("bench_qini", 0):.4f}'),
+            ("Champion Qini", f'{bc.get("champion_qini", 0):.4f}'),
+            ("Segmente", f'{bc.get("n_segments", 0)}'),
+            ("τ²", f'{bc.get("tau2", 0):.2e}'),
+        ])
+
+    # Karte 4: Qini-Rauschband (Permutations-Null) — Einordnung aller Qini-Werte
+    if qn:
+        _two = 2.0 * float(qn.get("sd", 0.0))
+        _g_txt = "gruppenweise permutiert" if qn.get("grouped") else "zeilenweise permutiert"
+        h2 += '<div style="margin:14px 28px;background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:20px 24px">'
+        h2 += '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Qini-Rauschband (Permutations-Null)</div>'
+        h2 += (f'<div style="font-size:13px;color:var(--text-l);line-height:1.7">Auf diesem Eval-Kontext '
+               f'(n={qn.get("n", 0):,}) erreicht ein Score <strong>ohne jedes Signal</strong> Qini-Werte im Band '
+               f'<strong>[{qn.get("lo", 0):.4f}, {qn.get("hi", 0):.4f}]</strong> (2σ = ±{_two:.4f}; '
+               f'{qn.get("n_permutations", 0)} Permutationen, {_g_txt}). '
+               f'Qini-Werte innerhalb dieses Bands — egal ob Modell, historischer Score oder Benchmark — '
+               f'sind von Zufall nicht unterscheidbar. In den Qini-Plots erscheint das Band als graue Zone.</div>')
+        h2 += ('<details style="margin-top:10px"><summary style="font-size:12px;color:var(--text-f);cursor:pointer">'
+               'Wie wird das Rauschband erzeugt — und warum braucht man es?</summary>'
+               '<div style="font-size:12px;color:var(--text-l);line-height:1.7;margin-top:8px">'
+               'Y und T bleiben fest, der Score wird viele Male rein zufällig vergeben; je Permutation wird die '
+               'komplette Qini-Kurve berechnet. Das 95%-Envelope dieser Null-Kurven zeigt, wie viel Qini das '
+               'Bernoulli-Rauschen der Outcomes allein erzeugt — bei niedrigen Response-Raten ist diese Zone oft '
+               'so groß wie realistische Effekte. Bei Gruppen-Folds wird gruppenweise permutiert (jede Gruppe '
+               'erbt EINEN Score), weil zeilenweises Permutieren das Band bei geclusterten Daten unterschätzt. '
+               'Das Band hängt nur von (Y, T, n) ab und gilt daher für alle Scores dieses Laufs gleichermaßen. '
+               'Wichtig: Trainings-/Tuning-OOF-Metriken sind zusätzlich selektionsverzerrt (Maximum über viele '
+               'Trials, Gewinner-Fluch) und daher grundsätzlich NICHT mit den Eval-Werten hier vergleichbar.'
+               '</div></details>')
+        h2 += '</div>'
+
+    # Segment-Benchmark: Methodik + ΔATE-Tabelle
+    if sb:
+        h2 += '<div style="margin:14px 28px;background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:20px 24px">'
+        h2 += '<div style="font-size:15px;font-weight:700;margin-bottom:8px">Segment-Benchmark: Treatment-Effekte je deklariertem Segment</div>'
+        _mode_txt = {"cross": "out-of-fold (GroupAware-KFold)", "tmes": "aus den Trainings-Zeilen (außerhalb der Eval-Maske)", "external": "aus den Trainingsdaten"}.get(sb.get("mode"), str(sb.get("mode", "")))
+        _qp = sb.get("q_pvalue")
+        _qp_txt = f" (Homogenitätstest p = {_qp:.3f})" if isinstance(_qp, (int, float)) else ""
+        _het_txt = (f"Zwischen-Segment-Heterogenität belegbar{_qp_txt} — der Benchmark rankt die Segmente."
+                    if sb.get("heterogeneity_detected") else
+                    f"Zwischen-Segment-Heterogenität statistisch NICHT belegbar{_qp_txt} — der Score kollabiert (fast) auf den Gesamt-ATE; aus diesen Segmenten ist kein Qini zu holen.")
+        h2 += (f'<div style="font-size:13px;color:var(--text-l);line-height:1.7">Spalten: <strong>{escape(", ".join(sb.get("columns", [])))}</strong> '
+               f'({sb.get("n_segments", 0)} Segmente) · Schätzung {escape(_mode_txt)} · '
+               f'{"Cluster-robuste SEs (Gruppen)" if sb.get("grouped") else "zeilenweise SEs"} · '
+               f'Benchmark-Qini: <strong>{sb.get("qini", 0):.4f}</strong><br>{_het_txt}</div>')
+        _skips = sb.get("skipped_columns") or []
+        if _skips:
+            h2 += '<div style="font-size:12px;color:#b35900;margin-top:6px">Übersprungen: ' + escape("; ".join(f'{x["column"]} ({x["reason"]})' for x in _skips)) + '</div>'
+        rows = sb.get("table") or []
+        if rows:
+            h2 += '<div class="tbl-scroll" style="margin-top:12px"><table class="dt"><thead><tr><th>Segment</th><th>n</th><th>T-Rate</th><th>ΔATE</th><th>SE</th><th>z</th><th>ATE (geshrunken)</th></tr></thead><tbody>'
+            for r in rows:
+                _f = lambda v, fmt: (fmt.format(v) if isinstance(v, (int, float)) else "–")
+                _z = r.get("z")
+                _z_style = ' style="font-weight:700"' if isinstance(_z, (int, float)) and abs(_z) >= 2 else ""
+                h2 += (f'<tr><td>{escape(str(r.get("segment", "")))}</td><td>{r.get("n", 0):,}</td>'
+                       f'<td>{_f(r.get("t_rate"), "{:.3f}")}</td><td>{_f(r.get("ate"), "{:+.4f}")}</td>'
+                       f'<td>{_f(r.get("se"), "{:.4f}")}</td><td{_z_style}>{_f(_z, "{:+.2f}")}</td>'
+                       f'<td>{_f(r.get("ate_shrunk"), "{:+.4f}")}</td></tr>')
+            h2 += '</tbody></table></div>'
+            h2 += '<div style="font-size:11px;color:var(--text-f);margin-top:6px">|z| ≥ 2 fett. Segmente ohne beide Arme oder mit zu wenig Zeilen erhalten den Gesamt-ATE (kein eigenes z).</div>'
+            _drift = sb.get("t_rate_drift")
+            if isinstance(_drift, (int, float)) and _drift > 0.03:
+                h2 += (f'<div style="font-size:12px;color:#b35900;margin-top:6px"><strong>Treatment-Raten-Drift über die Segmente: '
+                       f'{_drift*100:.1f}pp.</strong> Kein einheitlich randomisiertes Design über diese Segmente — '
+                       f'balance_treatments gleicht nur zwischen Dateien aus. Diff-in-Means je Segment bleibt intern valide; '
+                       f'gepoolte Metriken (ATE, Qini) mischen Designs.</div>')
+        h2 += ('<details style="margin-top:10px"><summary style="font-size:12px;color:var(--text-f);cursor:pointer">'
+               'Wie entsteht der Segment-Benchmark — und was sagt er aus?</summary>'
+               '<div style="font-size:12px;color:var(--text-l);line-height:1.7;margin-top:8px">'
+               'Der Benchmark-Score weist jeder Eval-Zeile den geschätzten Treatment-Effekt ihres Segments zu und '
+               'läuft dann durch dieselbe Evaluation wie die Modelle. Er beantwortet: <em>Wie viel Qini wäre allein '
+               'die Kenntnis dieser Segmente wert?</em> — der ehrliche Deckel, an dem die Modelle zu messen sind. '
+               'Drei Ehrlichkeits-Regeln: (1) Segment-ATEs kommen nie aus den Eval-Zeilen (sonst Gewinner-Fluch), '
+               '(2) Standardfehler sind bei Gruppen-Folds cluster-robust (zeilenweise SEs überverkaufen Signifikanz), '
+               '(3) Empirical-Bayes-Shrinkage (DerSimonian-Laird) zieht unsichere Zell-ATEs Richtung Gesamt-ATE — '
+               'kleine Segmente mit großen Zufalls-Effekten können den Benchmark nicht kapern; ohne belegbare '
+               'Heterogenität wird der Score konstant und sein Qini ehrlich ≈ 0. '
+               'Lesart: Benchmark im Rauschband → aus den Segmenten ist nichts zu holen; Benchmark deutlich darüber, '
+               'Modell darunter → Lern-Problem; Modell ≈ Benchmark → bekannte Moderation eingefangen.'
+               '</div></details>')
+        h2 += '</div>'
 
     return h2
 
@@ -1534,7 +1629,14 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
             best_per_met[met] = max(vals) if _metric_higher(met, higher) else min(vals)
 
     _study_type = cs.get("study_type", "rct")
+    _qn = getattr(collector, "qini_noise_info", {}) or {}
     h = '<p class="expl">' + (('Uplift-Metriken basierend auf <strong>Out-of-Fold-Predictions</strong> (externe K-Fold Cross-Validation über den Gesamtdatensatz), ausgewertet <strong>ausschließlich auf dem eval_mask-Subset (TMES)</strong>. Die Eval-Zeilen fließen in das Training der übrigen Folds ein.' if _is_tmes else 'Uplift-Metriken basierend auf dem <strong>externen Evaluationsdatensatz</strong>. Modelle wurden auf den Trainingsdaten trainiert und hier auf ungesehenen Daten evaluiert.') if is_external else 'Uplift-Metriken basierend auf Out-of-Fold-Predictions (externe K-Fold Cross-Validation für alle Modelle).') + ' Champion ist hervorgehoben. <span class="best-marker-legend">Bester Wert</span> je Metrik ist markiert.</p>'
+    if _qn:
+        _two_fn = 2.0 * float(_qn.get("sd", 0.0))
+        h += (f'<p class="expl"><strong>Qini-Rauschband:</strong> ±{_two_fn:.4f} (2σ, Permutations-Null auf diesem '
+              f'Eval-Kontext{", gruppenweise" if _qn.get("grouped") else ""}) — Qini-Werte innerhalb dieses Bands sind '
+              f'von Zufall nicht unterscheidbar. Details in der Heterogenitäts-Sektion. Trainings-/Tuning-OOF-Metriken '
+              f'sind selektionsverzerrt (Maximum über viele Trials) und nicht mit diesen Eval-Werten vergleichbar.</p>')
     if _study_type == "rct":
         h += '<p class="expl">Alle Metriken basieren auf randomisierten Daten und sind direkt als kausale Effekte interpretierbar. Qini, AUUC und Policy Value messen die tatsächliche Wirksamkeit der modellbasierten Targeting-Strategie.</p>'
     else:

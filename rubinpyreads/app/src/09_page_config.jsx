@@ -18,7 +18,7 @@ const PConfig = ({cfg,set}) => {
       <div style={{color:"#57606a",fontSize:10}}>└── .rubin_cache/ — Reports, Pipeline-Cache</div>
     </div>
     </>) : (
-      <div style={{fontSize:11,color:"#6b7280",background:"#f9fafb",padding:"8px 12px",borderRadius:8,border:"1px solid #e5e7eb",lineHeight:1.5}}>Server-Verbindung wird hergestellt — Pfad wird automatisch angezeigt.</div>
+      <div style={{fontSize:11,color:"#6b7280",background:"#f9fafb",padding:"8px 12px",borderRadius:8,border:"1px solid #e5e7eb",lineHeight:1.5}}>Standard: ./runs — bei verbundenem Server wird hier der effektive Pfad angezeigt.</div>
     )}
     <Inp label="Eigenes Arbeitsverzeichnis (optional)" type="text" value={cfg.workDir||""} onChange={v=>set({...cfg,workDir:v||null})} help="Überschreibt den Standard-Pfad ./runs. Leer lassen für den Standard."/>
   </Sec>

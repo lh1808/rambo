@@ -827,6 +827,29 @@ class DataPrepPipeline:
         self._group_vals = None
         if dp.group_column:
             _gcol = str(dp.group_column).upper()
+            # Kombination mit Deduplizierung: auf DERSELBEN Spalte ist die
+            # Gruppierung wirkungslos (nach Dedup ist jede Gruppe ein
+            # Singleton → Gruppen-CV == normale CV) — fast sicher ein
+            # Konfigurationsfehler. Auf VERSCHIEDENEN Spalten ist die Kombi
+            # legitim (z. B. exakte Duplikate je LEAD_ID entfernen UND
+            # Mehrfach-Leads je PARTNER_ID in den Folds zusammenhalten).
+            if dp.deduplicate and dp.deduplicate_id_column:
+                _dcol = str(dp.deduplicate_id_column).upper()
+                if _dcol == _gcol:
+                    self._logger.warning(
+                        "deduplicate_id_column und group_column zeigen beide auf '%s': "
+                        "Nach der Deduplizierung ist jede Gruppe ein Singleton — die "
+                        "Gruppen-Folds sind damit wirkungslos (identisch zu normaler CV). "
+                        "Gemeint ist fast immer ENTWEDER Deduplizieren ODER Gruppen-Folds.",
+                        _gcol,
+                    )
+                else:
+                    self._logger.info(
+                        "Deduplizierung (je '%s') UND Gruppen-Folds (je '%s') kombiniert: "
+                        "exakte Duplikate werden entfernt, die verbleibenden Mehrfach-Samples "
+                        "je Gruppe bleiben in den Folds zusammen.",
+                        _dcol, _gcol,
+                    )
             if _gcol not in df.columns:
                 raise ValueError(
                     f"data_prep.group_column '{dp.group_column}' nicht in den eingelesenen "

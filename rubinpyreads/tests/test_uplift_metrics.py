@@ -496,3 +496,175 @@ class TestOrientHistoricalScore:
         s = np.array([np.nan, np.nan])
         o = orient_historical_score(s, higher_is_better=False)
         assert np.all(o == 0.0) and np.isnan(s).all()  # Fallback + Input unverändert
+
+
+class TestHistoricalScoreAnomalies:
+    """Guards für reale Stolperfallen beim historischen Score.
+
+    Realfall: BEA_SCORE_WERT_HIST — Rang-Klassen 1..10 (1 = beste, Y-Rate 20%
+    fallend auf 8%) PLUS upstream imputierter Mittelwert 3.655734 auf 48% der
+    Zeilen. Mit rubin-Default higher_is_better=true wird der Score verkehrt
+    gemessen, und der Tie-Block deckelt den Qini strukturell. Beide Muster
+    müssen diagnostizierbar sein.
+    """
+
+    def _realcase(self, seed=0):
+        """Synthetisches Abbild des Realfalls: invers + 48%-Mittelwert-Block."""
+        rng = np.random.default_rng(seed)
+        n = 20_000
+        # 48% Block auf 3.655734, Rest Klassen 1..10
+        is_block = rng.random(n) < 0.48
+        s_raw = np.where(is_block, 3.655734, rng.integers(1, 11, n).astype(float))
+        # Y-Rate fällt mit der Klasse (1 = beste): p = 0.20 - 0.013*(klasse-1)
+        klasse = np.where(is_block, 5.0, s_raw)
+        p = np.clip(0.20 - 0.013 * (klasse - 1.0), 0.02, 0.98)
+        y = (rng.random(n) < p).astype(int)
+        t = (rng.random(n) < 0.75).astype(int)
+        return s_raw, y, t
+
+    def test_dominance_detected_on_real_pattern(self):
+        from rubin.evaluation.uplift_metrics import (
+            historical_score_anomalies, orient_historical_score)
+        s_raw, y, t = self._realcase()
+        s = orient_historical_score(s_raw, higher_is_better=False)
+        d = historical_score_anomalies(s, y, t, higher_is_better=False)
+        assert d["dominance_suspect"]
+        assert abs(d["dominant_share"] - 0.48) < 0.02
+        # orientierter Blockwert ist -3.655734
+        assert abs(d["dominant_value"] - (-3.655734)) < 1e-9
+
+    def test_orientation_suspect_fires_only_when_wrong(self):
+        from rubin.evaluation.uplift_metrics import (
+            historical_score_anomalies, orient_historical_score)
+        s_raw, y, t = self._realcase()
+        # FALSCH orientiert (rubin-Default true auf lower-better-Rang):
+        wrong = orient_historical_score(s_raw, higher_is_better=True)
+        d_wrong = historical_score_anomalies(wrong, y, t, higher_is_better=True)
+        assert d_wrong["orientation_suspect"]
+        assert d_wrong["control_corr"] < -0.02
+        # KORREKT orientiert: kein Verdacht
+        right = orient_historical_score(s_raw, higher_is_better=False)
+        d_right = historical_score_anomalies(right, y, t, higher_is_better=False)
+        assert not d_right["orientation_suspect"]
+        assert d_right["control_corr"] > 0
+
+    def test_no_false_alarm_on_clean_continuous_score(self):
+        from rubin.evaluation.uplift_metrics import historical_score_anomalies
+        rng = np.random.default_rng(1)
+        n = 5_000
+        s = rng.normal(size=n)
+        y = (rng.random(n) < 0.1 + 0.05 * (s > 0)).astype(int)  # positiv gekoppelt
+        t = (rng.random(n) < 0.5).astype(int)
+        d = historical_score_anomalies(s, y, t)
+        assert not d["dominance_suspect"] and not d["orientation_suspect"]
+
+    def test_small_control_group_stays_silent(self):
+        from rubin.evaluation.uplift_metrics import historical_score_anomalies
+        rng = np.random.default_rng(2)
+        n = 300
+        s = rng.normal(size=n)
+        y = rng.integers(0, 2, n)
+        t = np.ones(n); t[:50] = 0  # nur 50 Kontrollzeilen < min_control
+        d = historical_score_anomalies(s, y, t)
+        assert d["control_corr"] is None and not d["orientation_suspect"]
+
+    def test_constant_score_no_crash_no_orientation_flag(self):
+        from rubin.evaluation.uplift_metrics import historical_score_anomalies
+        n = 1_000
+        s = np.full(n, 7.0)
+        y = np.random.default_rng(3).integers(0, 2, n)
+        t = np.random.default_rng(4).integers(0, 2, n)
+        d = historical_score_anomalies(s, y, t)
+        # Ein-Wert-Score: Dominanz zu 100%, aber len(vals)==1 → kein Verdacht
+        # (kein Imputations-BLOCK, sondern gar kein Score-Signal) und keine
+        # Orientierungsaussage möglich.
+        assert not d["dominance_suspect"] and not d["orientation_suspect"]
+
+    def test_nan_in_score_and_y_handled(self):
+        from rubin.evaluation.uplift_metrics import historical_score_anomalies
+        rng = np.random.default_rng(5)
+        n = 2_000
+        s = rng.normal(size=n); s[:100] = np.nan
+        y = rng.integers(0, 2, n).astype(float); y[100:150] = np.nan
+        t = rng.integers(0, 2, n)
+        d = historical_score_anomalies(s, y, t)  # darf nicht werfen
+        assert d["control_n"] <= int((t == 0).sum())
+
+
+class TestHistScoreGuardsInPipeline:
+    """Die Guards feuern in _evaluate_historical_score (Realfall-Muster)."""
+
+    def test_both_warnings_logged(self, monkeypatch, caplog):
+        import logging
+        import pandas as pd
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import rubin.pipelines.analysis_pipeline as ap
+
+        rng = np.random.default_rng(7)
+        n = 6_000
+        is_block = rng.random(n) < 0.48
+        s_raw = np.where(is_block, 3.655734, rng.integers(1, 11, n).astype(float))
+        klasse = np.where(is_block, 5.0, s_raw)
+        p = np.clip(0.20 - 0.013 * (klasse - 1.0), 0.02, 0.98)
+        Y = (rng.random(n) < p).astype(int)
+        T = (rng.random(n) < 0.75).astype(int)
+        X = pd.DataFrame({"a": rng.normal(size=n)})
+
+        pipe = ap.AnalysisPipeline.__new__(ap.AnalysisPipeline)
+        pipe._logger = logging.getLogger("rubin.test_hist_guards")
+        pipe._eval_scores_ctx = {}
+        pipe._plot_hist_uplift_basics = MagicMock()
+        pipe._plot_models_vs_hist_qini = MagicMock()
+        monkeypatch.setattr(ap, "generate_cate_distribution_plot", lambda **k: None)
+        monkeypatch.setattr(ap, "evaluate_cate_with_plots", MagicMock(return_value=MagicMock()))
+
+        cfg = SimpleNamespace(
+            historical_score=SimpleNamespace(name="hist", higher_is_better=True),
+            study_type="rct",
+            constants=SimpleNamespace(random_seed=42, parallel_level=1),
+            base_learner=SimpleNamespace(fixed_params={}, type="lightgbm"),
+        )
+        with caplog.at_level(logging.WARNING, logger="rubin.test_hist_guards"):
+            eval_summary, pv = pipe._evaluate_historical_score(
+                cfg, X, T, Y, None, {}, s_raw, {}, {}, MagicMock())
+        text = caplog.text
+        # Rang-Score lower-better + Default true → Orientierungs-Verdacht
+        assert "higher_is_better" in text and "verkehrte Orientierung" in text
+        # 48%-Mittelwert-Block → Dominanz-Warnung
+        assert "DECKELT" in text and "3.65573" in text
+        # Kette lief weiter: Qini wurde trotz Warnungen berechnet
+        assert "qini" in eval_summary["hist"]
+
+    def test_silent_on_clean_correctly_oriented_score(self, monkeypatch, caplog):
+        import logging
+        import pandas as pd
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import rubin.pipelines.analysis_pipeline as ap
+
+        rng = np.random.default_rng(8)
+        n = 6_000
+        s_raw = rng.normal(size=n)
+        Y = (rng.random(n) < 0.1 + 0.05 * (s_raw > 0)).astype(int)
+        T = (rng.random(n) < 0.5).astype(int)
+        X = pd.DataFrame({"a": rng.normal(size=n)})
+
+        pipe = ap.AnalysisPipeline.__new__(ap.AnalysisPipeline)
+        pipe._logger = logging.getLogger("rubin.test_hist_guards2")
+        pipe._eval_scores_ctx = {}
+        pipe._plot_hist_uplift_basics = MagicMock()
+        pipe._plot_models_vs_hist_qini = MagicMock()
+        monkeypatch.setattr(ap, "generate_cate_distribution_plot", lambda **k: None)
+        monkeypatch.setattr(ap, "evaluate_cate_with_plots", MagicMock(return_value=MagicMock()))
+
+        cfg = SimpleNamespace(
+            historical_score=SimpleNamespace(name="hist", higher_is_better=True),
+            study_type="rct",
+            constants=SimpleNamespace(random_seed=42, parallel_level=1),
+            base_learner=SimpleNamespace(fixed_params={}, type="lightgbm"),
+        )
+        with caplog.at_level(logging.WARNING, logger="rubin.test_hist_guards2"):
+            pipe._evaluate_historical_score(cfg, X, T, Y, None, {}, s_raw, {}, {}, MagicMock())
+        assert "DECKELT" not in caplog.text
+        assert "verkehrte Orientierung" not in caplog.text

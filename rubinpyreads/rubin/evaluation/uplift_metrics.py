@@ -91,6 +91,153 @@ def orient_historical_score(s, higher_is_better: bool = True) -> np.ndarray:
     return s
 
 
+def historical_score_anomalies(
+    hist_score,
+    y,
+    t,
+    *,
+    higher_is_better: bool = True,
+    dominance_threshold: float = 0.20,
+    corr_threshold: float = -0.02,
+    min_control: int = 200,
+) -> dict:
+    """Plausibilitäts-Diagnose für einen (bereits ORIENTIERTEN) historischen Score.
+
+    Prüft zwei reale Stolperfallen, die den Qini des historischen Scores still
+    zerstören bzw. deckeln:
+
+    1. **Tie-Block-Dominanz**: Ein einzelner Score-Wert stellt einen großen
+       Anteil der Zeilen — typisch ein upstream imputierter Mittelwert/Default
+       für Zeilen OHNE echten Score (z. B. "Mittelwert pro Score" bei
+       Neukunden). Dieser Block ist im Ranking unsortierbar und deckelt den
+       erreichbaren Qini der Gesamtpopulation strukturell.
+    2. **Orientierungs-Verdacht**: Ein Affinitäts-/Response-Score korreliert
+       nach korrekter Orientierung normalerweise POSITIV mit Y. Die Korrelation
+       wird in der KONTROLLGRUPPE gemessen (t == 0), damit der Treatment-Effekt
+       nicht hineinspielt. Deutlich negative Korrelation spricht für ein falsch
+       gesetztes ``historical_score.higher_is_better`` — z. B. Rang-/Klassen-
+       Scores mit "1 = beste Klasse" beim Default ``true``.
+
+    Gibt ein Dict mit den Messwerten und bool-Flags zurück; loggt selbst nicht.
+    Erwartet den Score NACH ``orient_historical_score`` (so wie er auch in die
+    Qini-/Plot-Kette geht).
+    """
+    out = {
+        "dominant_value": None,
+        "dominant_count": 0,
+        "dominant_share": 0.0,
+        "dominance_suspect": False,
+        "control_corr": None,
+        "control_n": 0,
+        "orientation_suspect": False,
+        "higher_is_better": bool(higher_is_better),
+    }
+    hs = np.asarray(hist_score, dtype=float)
+    y = np.asarray(y, dtype=float)
+    t = np.asarray(t, dtype=float)
+    hs_ok = ~np.isnan(hs)
+    vals, cnts = np.unique(hs[hs_ok], return_counts=True)
+    if len(cnts):
+        i = int(np.argmax(cnts))
+        out["dominant_value"] = float(vals[i])
+        out["dominant_count"] = int(cnts[i])
+        out["dominant_share"] = float(cnts[i] / max(1, len(hs)))
+        out["dominance_suspect"] = bool(
+            out["dominant_share"] > dominance_threshold and len(vals) > 1
+        )
+    ctrl = (t == 0) & hs_ok & ~np.isnan(y)
+    out["control_n"] = int(ctrl.sum())
+    if (
+        out["control_n"] >= min_control
+        and len(vals) > 1
+        and np.std(y[ctrl]) > 0
+        and np.std(hs[ctrl]) > 0
+    ):
+        r = float(np.corrcoef(hs[ctrl], y[ctrl])[0, 1])
+        out["control_corr"] = r
+        out["orientation_suspect"] = bool(r < corr_threshold)
+    return out
+
+
+
+def qini_null_band(
+    y,
+    t,
+    *,
+    n_permutations: int = 200,
+    groups=None,
+    seed: int = 42,
+    n_grid: int = 101,
+    quantiles=(0.025, 0.975),
+) -> dict:
+    """Permutations-Nullverteilung des Qini auf FESTEN (y, t)-Daten.
+
+    Beantwortet: "Wie groß wäre der Qini eines Scores OHNE jedes Signal?"
+    Dafür wird der Score ``n_permutations``-mal rein zufällig vergeben und
+    jedes Mal Qini-Koeffizient und Qini-KURVE berechnet. Das Band hängt nur
+    von (y, t, n) ab — es gilt also für JEDEN Score auf demselben
+    Eval-Kontext (Modelle, historischer Score, Benchmarks) gleichermaßen.
+
+    Mit ``groups`` wird GRUPPENWEISE randomisiert: jede Gruppe (z. B.
+    Partner) erhält EINEN zufälligen Score, alle ihre Zeilen erben ihn.
+    Reale Scores sind innerhalb einer Gruppe stark korreliert (gleiche
+    Features) — zeilenweises Permutieren unterschätzte das Rauschband dann
+    systematisch, derselbe Fehler wie zeilenweise CIs bei geclusterten Daten.
+
+    Rückgabe (dict):
+    - ``sd``, ``mean``, ``lo``, ``hi``: Verteilung des Qini-Koeffizienten
+      unter der Null (lo/hi = ``quantiles``).
+    - ``frac_grid`` (n_grid Punkte in [0, 1]), ``curve_lo``, ``curve_hi``:
+      punktweises Quantil-Envelope der Qini-KURVE (absolute inkrementelle
+      Einheiten, wie in den rubin-Qini-Plots); ``curve_random`` ist die
+      Zufallsdiagonale, ``total_inc`` ihr Endwert (score-unabhängig).
+    - ``grouped``, ``n``, ``n_groups``, ``n_permutations``, ``seed``.
+    """
+    y = np.asarray(y, dtype=float).ravel()
+    t = np.asarray(t).ravel()
+    n = len(y)
+    rng = np.random.default_rng(seed)
+    grid = np.linspace(0.0, 1.0, int(n_grid))
+
+    codes = None
+    if groups is not None:
+        codes = np.unique(np.asarray(groups).astype(str), return_inverse=True)[1]
+        n_groups = int(codes.max()) + 1 if len(codes) else 0
+        if n_groups <= 1:
+            codes = None
+    coeffs = np.empty(int(n_permutations), dtype=float)
+    curves = np.empty((int(n_permutations), int(n_grid)), dtype=float)
+    for b in range(int(n_permutations)):
+        if codes is not None:
+            score = rng.random(int(codes.max()) + 1)[codes]
+        else:
+            score = rng.random(n)
+        curve = uplift_curve(y=y, t=t, score=score)
+        coeffs[b] = qini_coefficient(curve)
+        n_c_safe = np.maximum(curve.n_control, 1)
+        y_qini = curve.y_treat - curve.y_control * curve.n_treat / n_c_safe
+        curves[b] = np.interp(grid, np.r_[0.0, curve.fraction], np.r_[0.0, y_qini])
+    total_inc = float(np.median(curves[:, -1]))
+    lo_q, hi_q = float(quantiles[0]), float(quantiles[1])
+    return {
+        "sd": float(np.std(coeffs)),
+        "mean": float(np.mean(coeffs)),
+        "lo": float(np.quantile(coeffs, lo_q)),
+        "hi": float(np.quantile(coeffs, hi_q)),
+        "frac_grid": grid,
+        "curve_lo": np.quantile(curves, lo_q, axis=0),
+        "curve_hi": np.quantile(curves, hi_q, axis=0),
+        "curve_random": grid * total_inc,
+        "total_inc": total_inc,
+        "grouped": bool(codes is not None),
+        "n": int(n),
+        "n_groups": int(codes.max()) + 1 if codes is not None else int(n),
+        "n_permutations": int(n_permutations),
+        "seed": int(seed),
+    }
+
+
+
 def uplift_curve_mt_argmax(
     y: np.ndarray,
     t: np.ndarray,
