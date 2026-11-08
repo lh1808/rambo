@@ -537,6 +537,13 @@ const ProgressTracker = ({currentStep,error,steps,enabled,completedSteps,stepPro
 
 // ── Column Role Picker ──
 
+// Listen-Eingabefelder: Der State darf ROHTEXT (während des Tippens) oder
+// Array (aus YAML-Import/Defaults) sein. Niemals im onChange parsen+joinen —
+// das frisst Kommas und Leerzeichen beim Tippen (kontrollierter Input
+// normalisiert jeden Tastendruck weg). Konsumenten nutzen listify().
+const listify = v => Array.isArray(v) ? v : String(v==null?"":v).split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean);
+const listText = v => Array.isArray(v) ? v.join(", ") : (v==null ? "" : String(v));
+
 const DEFAULT_CFG = {studyType:"rct",expName:"rubin",seed:42,tuningSeed:18,models:["NonParamDML","DRLearner","SLearner","TLearner","XLearner","ParamDML","CausalForestDML","CausalForest"],baseLearner:"catboost",ensembleEnabled:true,tuningEnabled:false,tuningTrials:50,tuningSingleFold:false,tuningModels:[],fmtEnabled:false,fmtModels:[],fmtSingleFold:false,fmtTrials:50,fmtMaxRows:0,fmtOverfitPenalty:0.0,fmtOverfitTolerance:0.1,fmtOverfitMaxGap:1.0,fmtScorer:"auto",cfTune:false,cfTrials:50,cfSingleFold:false,cfScorer:"auto",cfTuneModels:[],cfOverfitPenalty:0.0,cfOverfitTolerance:0.1,cfOverfitMaxGap:1.0,bundleEnabled:false,bundleDir:"runs/bundles",bundleMlflow:true,surrEnabled:false,surrMinLeaf:50,surrLeaves:31,surrDepth:0,fsEnabled:false,fsMethods:["catboost_importance"],fsCorrThresh:0.9,fsMaxFeatures:77,fsAlwaysKeep:[],qiniNoiseBand:true,qiniNoisePerms:200,benchSegCols:[],downsample:false,dfFrac:0.1,reduceMem:true,validateOn:"cross",cvSplits:5,treatmentType:"binary",refGroup:0,selMetric:"qini",higherBetter:true,manualChamp:null,hasNaN:false,nanCols:[],explEnabled:false,explSampleSize:10000,explTopN:20,shapModels:[],shapBins:10,histScoreName:"historical_score",histScoreCol:"S",histScoreHigher:true,outputDir:"",blFixed:{},fmtFixed:{},cfFixed:{},tuningTimeout:0,tuningMaxRows:0,fmtTimeout:0,maxPredRows:0,parallelLevel:3,workDir:null,mcIters:null,mcAgg:"mean",dmlCrossfitFolds:5,overfitPenalty:0.0,overfitTolerance:0.2,overfitMaxGap:1.0};
 
 
@@ -2021,14 +2028,6 @@ const PData = ({cfg,set,setCfg,activeBase,setActiveBase,activeAddons,setActiveAd
           </Row>
         </Sec>}
 
-        <Sec title="Qini-Einordnung (Rauschband & Segment-Benchmark)">
-          <Info>Zwei Referenzpunkte, die jede Qini-Zahl im Report einordnen: Das <b>Rauschband</b> zeigt als graue Zone in den Qini-Plots, welche Werte ein Score ganz ohne Signal erreicht (Permutations-Null auf den Eval-Daten; bei Gruppen-Folds gruppenweise) — Werte innerhalb sind von Zufall nicht unterscheidbar. Der <b>Segment-Benchmark</b> misst, wie viel Qini allein die Kenntnis deklarierter Segmente wert wäre (z. B. einer Missing-Flag oder der Lead-Art): Segment-Effekte werden nur aus Trainingsdaten geschätzt (cross-fitted, Cluster-SEs, Shrinkage) — der ehrliche Deckel, an dem die Modelle zu messen sind.</Info>
-          <Row>
-            <Col><Toggle label="Qini-Rauschband" checked={cfg.qiniNoiseBand!==false} onChange={v=>set({...cfg,qiniNoiseBand:v})} help="Permutations-Nullband in Qini-Plots, mlflow (qini_noise_sd) und Report-Einordnung"/></Col>
-            <Col><Inp label="Permutationen" type="number" value={cfg.qiniNoisePerms===0?0:(cfg.qiniNoisePerms||200)} onChange={v=>set({...cfg,qiniNoisePerms:v})} help="Anzahl Score-Permutationen für das Band (Default 200)"/></Col>
-          </Row>
-          <Inp label="Segment-Benchmark-Spalten (optional)" value={(cfg.benchSegCols||[]).join(", ")} onChange={v=>set({...cfg,benchSegCols:v.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean)})} placeholder="NEUKUNDE_FLAG, LEAD_ART" help="Diskrete Spalten aus X (Groß-/Kleinschreibung egal, max. 25 Ausprägungen je Spalte). Das Kreuzprodukt bildet die Segmente; der Benchmark erscheint als eigene Zeile im Modellvergleich und mit ΔATE-Tabelle (inkl. z-Werten) im Report. Leer = aus."/>
-        </Sec>
       </>}
 
       {view==="template"&&(cfg.dpRunName ? (
@@ -2424,6 +2423,15 @@ const PConfig = ({cfg,set}) => {
     {cfg.eval_mask_file && cfg.validateOn==="external" && <Info type="warn"><strong>Konflikt:</strong> eval_mask_file und External Eval aktiv. Maske wird <strong>ignoriert</strong>.</Info>}
   </Sec>
 
+  <Sec title="Qini-Einordnung (Rauschband & Segment-Benchmark)">
+    <Info>Zwei Referenzpunkte, die jede Qini-Zahl im Report einordnen: Das <b>Rauschband</b> zeigt als graue Zone in den Qini-Plots, welche Werte ein Score ganz ohne Signal erreicht (Permutations-Null auf den Eval-Daten; bei Gruppen-Folds gruppenweise) — Werte innerhalb sind von Zufall nicht unterscheidbar. Der <b>Segment-Benchmark</b> misst, wie viel Qini allein die Kenntnis deklarierter Segmente wert wäre (z. B. einer Missing-Flag oder der Lead-Art): Segment-Effekte werden nur aus Trainingsdaten geschätzt (cross-fitted, Cluster-SEs, Shrinkage) — der ehrliche Deckel, an dem die Modelle zu messen sind.</Info>
+    <Row>
+      <Col><Toggle label="Qini-Rauschband" checked={cfg.qiniNoiseBand!==false} onChange={v=>set({...cfg,qiniNoiseBand:v})} help="Permutations-Nullband in Qini-Plots, mlflow (qini_noise_sd) und Report-Einordnung"/></Col>
+      <Col><Inp label="Permutationen" type="number" value={cfg.qiniNoisePerms===0?0:(cfg.qiniNoisePerms||200)} onChange={v=>set({...cfg,qiniNoisePerms:v})} help="Anzahl Score-Permutationen für das Band (Default 200)"/></Col>
+    </Row>
+    <Inp label="Segment-Benchmark-Spalten (optional)" value={listText(cfg.benchSegCols)} onChange={v=>set({...cfg,benchSegCols:v})} placeholder="NEUKUNDE_FLAG, LEAD_ART" help="Diskrete Spalten aus X (Groß-/Kleinschreibung egal, max. 25 Ausprägungen je Spalte). Das Kreuzprodukt bildet die Segmente; der Benchmark erscheint als eigene Zeile im Modellvergleich und mit ΔATE-Tabelle (inkl. z-Werten) im Report. Leer = aus."/>
+  </Sec>
+
   <Sec title="Innere Cross-Validation">
     <Info>{cfg.validateOn === "external"
       ? `Evaluation auf separatem Holdout-Datensatz. Jedes Modell wird EINMAL auf den Trainingsdaten gefittet und direkt auf dem Eval-Set evaluiert — kein äußeres CV. DML/DR-Modelle nutzen intern Cross-Fitting (cv=${cfg.dmlCrossfitFolds||5}) für die Nuisance-Residualisierung.`
@@ -2525,7 +2533,7 @@ const PConfig = ({cfg,set}) => {
       <Divider/>
       <div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:10}}>Korrelationsfilter</div>
       <Sld label="Korrelations-Schwelle" min={0.5} max={1} step={0.05} value={cfg.fsCorrThresh||0.9} onChange={v=>set({...cfg,fsCorrThresh:v})} help="Schwellwert für |r|. Feature-Paare mit höherer Korrelation werden reduziert — das weniger wichtige Feature wird entfernt."/>
-      <Inp label="Immer behalten (optional)" value={(cfg.fsAlwaysKeep||[]).join(", ")} onChange={v=>set({...cfg,fsAlwaysKeep:v.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean)})} placeholder="NEUKUNDE_FLAG, ..." help="Schutzliste: Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung) noch das Feature-Budget. Für Features mit fachlich bekannter kausaler Rolle, die datengetrieben strukturell unterbewertet werden. Typischer Fall: eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) — bei NaN-Imputation mit 'max' duplizieren die Punktmassen der imputierten Spalten ihre Information, die Flag verliert Importance UND die Korrelations-Keeper-Wahl. Komma-getrennt, Groß-/Kleinschreibung egal."/>
+      <Inp label="Immer behalten (optional)" value={listText(cfg.fsAlwaysKeep)} onChange={v=>set({...cfg,fsAlwaysKeep:v})} placeholder="NEUKUNDE_FLAG, ..." help="Schutzliste: Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung) noch das Feature-Budget. Für Features mit fachlich bekannter kausaler Rolle, die datengetrieben strukturell unterbewertet werden. Typischer Fall: eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) — bei NaN-Imputation mit 'max' duplizieren die Punktmassen der imputierten Spalten ihre Information, die Flag verliert Importance UND die Korrelations-Keeper-Wahl. Komma-getrennt, Groß-/Kleinschreibung egal."/>
       <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
         Zwei Korrelationsmaße werden nacheinander berechnet: <strong>Pearson</strong> (lineare Zusammenhänge) und <strong>Spearman</strong> (monotone, auch nicht-lineare Zusammenhänge). Ein Feature-Paar gilt als redundant, sobald es in <em>einem</em> der beiden Maße |r| {">"} {cfg.fsCorrThresh||0.9} erreicht. Die Entfernung läuft als Greedy über die absteigende (je Methode normierte) Wichtigkeit auf der vereinten Paar-Menge beider Maße: jedes entfernte Feature korreliert mit einem BEHALTENEN Feature (keine Ketten-Kaskaden), seine Importance wird auf den überlebenden Partner addiert (Importance-Umverteilung). Features aus „Immer behalten" gewinnen jede Paar-Entscheidung.
       </div>
@@ -3324,7 +3332,7 @@ const buildYaml = (cfg, sp, spFmt) => {
     a("");
   }
   // evaluation nur emittieren, wenn vom Backend-Default abgewichen wird
-  const _benchCols = cfg.benchSegCols||[];
+  const _benchCols = listify(cfg.benchSegCols);
   if(cfg.qiniNoiseBand===false || (cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) || _benchCols.length>0){
     a("evaluation:");
     if(cfg.qiniNoiseBand===false) a("  qini_noise_band: false");
@@ -3349,7 +3357,8 @@ const buildYaml = (cfg, sp, spFmt) => {
   if(cfg.fsEnabled) {
     a(`  methods: [${(cfg.fsMethods||["catboost_importance"]).join(", ")}]`);
     a(`  max_features: ${cfg.fsMaxFeatures||77}`);
-    if((cfg.fsAlwaysKeep||[]).length > 0) a(`  always_keep: [${cfg.fsAlwaysKeep.map(f=>`"${f}"`).join(", ")}]`);
+    const _akList = listify(cfg.fsAlwaysKeep);
+    if(_akList.length > 0) a(`  always_keep: [${_akList.map(f=>`"${f}"`).join(", ")}]`);
     a(`  correlation_threshold: ${cfg.fsCorrThresh||0.9}`);
   }
   a("");

@@ -152,7 +152,7 @@ const buildYaml = (cfg, sp, spFmt) => {
     a("");
   }
   // evaluation nur emittieren, wenn vom Backend-Default abgewichen wird
-  const _benchCols = cfg.benchSegCols||[];
+  const _benchCols = listify(cfg.benchSegCols);
   if(cfg.qiniNoiseBand===false || (cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) || _benchCols.length>0){
     a("evaluation:");
     if(cfg.qiniNoiseBand===false) a("  qini_noise_band: false");
@@ -177,7 +177,8 @@ const buildYaml = (cfg, sp, spFmt) => {
   if(cfg.fsEnabled) {
     a(`  methods: [${(cfg.fsMethods||["catboost_importance"]).join(", ")}]`);
     a(`  max_features: ${cfg.fsMaxFeatures||77}`);
-    if((cfg.fsAlwaysKeep||[]).length > 0) a(`  always_keep: [${cfg.fsAlwaysKeep.map(f=>`"${f}"`).join(", ")}]`);
+    const _akList = listify(cfg.fsAlwaysKeep);
+    if(_akList.length > 0) a(`  always_keep: [${_akList.map(f=>`"${f}"`).join(", ")}]`);
     a(`  correlation_threshold: ${cfg.fsCorrThresh||0.9}`);
   }
   a("");

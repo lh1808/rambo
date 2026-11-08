@@ -1958,7 +1958,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .cat-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 .cat-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-f);white-space:nowrap}
 .cat-divider:first-child{margin-top:0}
-.main{flex:1;max-width:960px;padding:32px 48px 80px}
+.main{width:100%;max-width:1040px;margin:0 auto;padding:32px 48px 80px;box-sizing:border-box}
 .summary-bar{background:linear-gradient(135deg,var(--ruby-d),var(--ruby));border-radius:var(--r);padding:20px 28px;margin-bottom:24px;box-shadow:var(--sh-lg);position:relative;overflow:hidden}
 .summary-bar::after{content:'';position:absolute;right:-20px;top:-20px;width:140px;height:140px;background:rgba(255,255,255,0.04);clip-path:polygon(50% 0%,85% 25%,85% 75%,50% 100%,15% 75%,15% 25%);animation:gem-spin 80s linear infinite}
 @keyframes gem-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}

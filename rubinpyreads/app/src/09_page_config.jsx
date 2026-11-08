@@ -125,6 +125,15 @@ const PConfig = ({cfg,set}) => {
     {cfg.eval_mask_file && cfg.validateOn==="external" && <Info type="warn"><strong>Konflikt:</strong> eval_mask_file und External Eval aktiv. Maske wird <strong>ignoriert</strong>.</Info>}
   </Sec>
 
+  <Sec title="Qini-Einordnung (Rauschband & Segment-Benchmark)">
+    <Info>Zwei Referenzpunkte, die jede Qini-Zahl im Report einordnen: Das <b>Rauschband</b> zeigt als graue Zone in den Qini-Plots, welche Werte ein Score ganz ohne Signal erreicht (Permutations-Null auf den Eval-Daten; bei Gruppen-Folds gruppenweise) — Werte innerhalb sind von Zufall nicht unterscheidbar. Der <b>Segment-Benchmark</b> misst, wie viel Qini allein die Kenntnis deklarierter Segmente wert wäre (z. B. einer Missing-Flag oder der Lead-Art): Segment-Effekte werden nur aus Trainingsdaten geschätzt (cross-fitted, Cluster-SEs, Shrinkage) — der ehrliche Deckel, an dem die Modelle zu messen sind.</Info>
+    <Row>
+      <Col><Toggle label="Qini-Rauschband" checked={cfg.qiniNoiseBand!==false} onChange={v=>set({...cfg,qiniNoiseBand:v})} help="Permutations-Nullband in Qini-Plots, mlflow (qini_noise_sd) und Report-Einordnung"/></Col>
+      <Col><Inp label="Permutationen" type="number" value={cfg.qiniNoisePerms===0?0:(cfg.qiniNoisePerms||200)} onChange={v=>set({...cfg,qiniNoisePerms:v})} help="Anzahl Score-Permutationen für das Band (Default 200)"/></Col>
+    </Row>
+    <Inp label="Segment-Benchmark-Spalten (optional)" value={listText(cfg.benchSegCols)} onChange={v=>set({...cfg,benchSegCols:v})} placeholder="NEUKUNDE_FLAG, LEAD_ART" help="Diskrete Spalten aus X (Groß-/Kleinschreibung egal, max. 25 Ausprägungen je Spalte). Das Kreuzprodukt bildet die Segmente; der Benchmark erscheint als eigene Zeile im Modellvergleich und mit ΔATE-Tabelle (inkl. z-Werten) im Report. Leer = aus."/>
+  </Sec>
+
   <Sec title="Innere Cross-Validation">
     <Info>{cfg.validateOn === "external"
       ? `Evaluation auf separatem Holdout-Datensatz. Jedes Modell wird EINMAL auf den Trainingsdaten gefittet und direkt auf dem Eval-Set evaluiert — kein äußeres CV. DML/DR-Modelle nutzen intern Cross-Fitting (cv=${cfg.dmlCrossfitFolds||5}) für die Nuisance-Residualisierung.`
@@ -226,7 +235,7 @@ const PConfig = ({cfg,set}) => {
       <Divider/>
       <div style={{fontSize:13,fontWeight:600,color:C.dark,marginBottom:10}}>Korrelationsfilter</div>
       <Sld label="Korrelations-Schwelle" min={0.5} max={1} step={0.05} value={cfg.fsCorrThresh||0.9} onChange={v=>set({...cfg,fsCorrThresh:v})} help="Schwellwert für |r|. Feature-Paare mit höherer Korrelation werden reduziert — das weniger wichtige Feature wird entfernt."/>
-      <Inp label="Immer behalten (optional)" value={(cfg.fsAlwaysKeep||[]).join(", ")} onChange={v=>set({...cfg,fsAlwaysKeep:v.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean)})} placeholder="NEUKUNDE_FLAG, ..." help="Schutzliste: Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung) noch das Feature-Budget. Für Features mit fachlich bekannter kausaler Rolle, die datengetrieben strukturell unterbewertet werden. Typischer Fall: eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) — bei NaN-Imputation mit 'max' duplizieren die Punktmassen der imputierten Spalten ihre Information, die Flag verliert Importance UND die Korrelations-Keeper-Wahl. Komma-getrennt, Groß-/Kleinschreibung egal."/>
+      <Inp label="Immer behalten (optional)" value={listText(cfg.fsAlwaysKeep)} onChange={v=>set({...cfg,fsAlwaysKeep:v})} placeholder="NEUKUNDE_FLAG, ..." help="Schutzliste: Diese Features entfernt die Selektion NIE — weder der Korrelationsfilter (sie gewinnen jede Paar-Entscheidung) noch das Feature-Budget. Für Features mit fachlich bekannter kausaler Rolle, die datengetrieben strukturell unterbewertet werden. Typischer Fall: eine binäre Missing-Flag (z. B. Neukunden-Kennzeichen) — bei NaN-Imputation mit 'max' duplizieren die Punktmassen der imputierten Spalten ihre Information, die Flag verliert Importance UND die Korrelations-Keeper-Wahl. Komma-getrennt, Groß-/Kleinschreibung egal."/>
       <div style={{fontSize:11,color:C.textSec,background:"#f9fafb",padding:"8px 12px",borderRadius:8,marginTop:6,lineHeight:1.5,border:"1px solid #e5e7eb"}}>
         Zwei Korrelationsmaße werden nacheinander berechnet: <strong>Pearson</strong> (lineare Zusammenhänge) und <strong>Spearman</strong> (monotone, auch nicht-lineare Zusammenhänge). Ein Feature-Paar gilt als redundant, sobald es in <em>einem</em> der beiden Maße |r| {">"} {cfg.fsCorrThresh||0.9} erreicht. Die Entfernung läuft als Greedy über die absteigende (je Methode normierte) Wichtigkeit auf der vereinten Paar-Menge beider Maße: jedes entfernte Feature korreliert mit einem BEHALTENEN Feature (keine Ketten-Kaskaden), seine Importance wird auf den überlebenden Partner addiert (Importance-Umverteilung). Features aus „Immer behalten" gewinnen jede Paar-Entscheidung.
       </div>

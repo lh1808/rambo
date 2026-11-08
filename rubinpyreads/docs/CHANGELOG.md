@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Geändert (Analyse-Report: Content-Spalte zentriert statt links an der Seitenleiste)
+- Gemeldet: Die Ergebnis-Sektionen klebten links fest an der Seitenleiste, rechts blieb auf breiten Monitoren eine große tote Fläche. Wurzel: `.main{flex:1;max-width:960px}` im Flex-Layout — die Spalte füllte den Raum von links. Jetzt `.main{width:100%;max-width:1040px;margin:0 auto}`: Die Inhaltsspalte steht zentriert im Raum neben der Sidebar und ist moderat breiter. Golden-Master-Diff = exakt diese eine CSS-Zeile (beide Goldens aktualisiert); Print- und Mobile-Regeln unverändert.
+
+### Geändert (UI: Qini-Einordnung von „Daten" zu „Pipeline-Einstellungen" verschoben)
+- Die Sektion „Qini-Einordnung (Rauschband & Segment-Benchmark)" lag auf der Daten-Seite (historische Nähe zur Benchmark-Sektion des hist. Scores), ist aber Evaluations-METHODIK, keine Datenangabe — sie sitzt jetzt auf „Pipeline-Einstellungen" direkt hinter dem Evaluierungsmodus, neben CV-Folds und Tuning-Regularisierung. Die hist.-Score-Sektion „Benchmark (optional)" bleibt bei Daten (dateigebunden an s_file). Backend-Hinweis zur ursprünglichen Nutzerfrage: Die Benchmark-Spalten funktionieren unabhängig von der Feature-Selektion — sie werden vor der Selektion aus dem vollen X gesichert und bleiben auch nutzbar, wenn die FS sie verwirft. Per Playwright verifiziert (Sektion am neuen Ort tippbar, auf der Daten-Seite entfernt).
+
+### Behoben (UI: Listen-Eingabefelder verschluckten Kommas und Leerzeichen beim Tippen)
+- **Gemeldet: Im Segment-Benchmark-Feld lassen sich kein Komma und Leerzeichen eingeben.** Wurzel: Das kontrollierte Input parste bei JEDEM Tastendruck (`split` → `trim` → `filter`) und renderte die Liste re-joined zurück — ein getipptes `,` oder ein Leerzeichen nach dem Komma wurde im selben Tastendruck wegnormalisiert; mehrere Spalten waren nur per Paste eingebbar. **Derselbe Fehler steckte seit seiner Einführung auch im `always_keep`-Feld** (das Benchmark-Feld hatte ihn per Copy-Paste geerbt).
+- **Fix: Dual-Form-State mit einer Quelle der Wahrheit.** Während des Tippens hält der State den ROHTEXT unverändert; neue globale Helper `listify()`/`listText()` (02_components) normalisieren erst bei den Konsumenten (YAML-Export beider Felder) bzw. rendern Arrays aus dem YAML-Import als `", "`-Join. Verifiziert per Playwright-Tipptest (zeichenweises `type()` von `"NEUKUNDE_FLAG, LEAD_ART_DETAIL"` bzw. `"FLAG_A, FLAG_B; FLAG_C"` — Feldinhalt bleibt exakt erhalten, Config-Vorschau zeigt beide als saubere Inline-Listen) und Node-Smoke (Rohtext→Export, Import→Anzeige→Re-Export in beiden Formen).
+
 ### Geändert (UI: Gesamt-Audit aller Seiten per Playwright-Screenshots)
 - Alle neun Seiten visuell + Code auf die Banner-/State-Anti-Muster geprüft (geteilte Busy-/Fehler-States, doppelte Props, Doppel-Click-Labels): keine weiteren Vorkommen. Zwei kleine Funde behoben: (1) Die Config-Vorschau emittierte immer `s_file: null`, auch ohne historischen Score — der Key erscheint jetzt nur noch, wenn eine S-Datei gesetzt ist (Backend-Default identisch; Export/Import-Roundtrip per Node-Smoke verifiziert). (2) Der Arbeitsverzeichnis-Hinweis behauptete dauerhaft „Server-Verbindung wird hergestellt …", auch wenn kein Server erreichbar ist — jetzt zustandsneutral („Standard: ./runs — bei verbundenem Server wird hier der effektive Pfad angezeigt").
 
