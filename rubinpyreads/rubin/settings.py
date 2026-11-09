@@ -125,6 +125,12 @@ class EvaluationConfig(BaseModel):
     benchmark_max_levels: int = 25
     benchmark_name: str = "segment_benchmark"
     benchmark_min_rows: int = 20
+    # Relevanzschwelle für die absolute Einordnung je Segment (in Y-Einheiten).
+    # 0.0 (Default) = "wirkt überhaupt": wirksam belegt (CI > 0), belegt
+    # unwirksam (CI < 0), sonst unentscheidbar. Mit Kosten: Break-even-Effekt
+    # setzen (z. B. 0.002 = Ausspielung lohnt erst ab +0.2pp) — dann heißt
+    # "unter Schwelle belegt": Depriorisieren/Abschalten ist gerechtfertigt.
+    benchmark_min_effect: float = 0.0
 
 
 class DataPrepConfig(BaseModel):

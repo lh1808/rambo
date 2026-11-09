@@ -208,6 +208,22 @@ Segmente wert?* — der Deckel, an dem die Modelle zu messen sind. Drei Ehrlichk
    kleine Segmente mit großen Zufalls-Effekten (der klassische „3,6pp ± 4,0"-Fall) können
    den Benchmark nicht kapern.
 
+**Priorisierung & Depriorisierung je Segment** (`benchmark_min_effect`, Default 0): Die
+ΔATE-Tabelle beantwortet je Segment zwei getrennte Fragen. *Absolut:* Liegt das 95%-CI komplett
+über der Relevanzschwelle → „wirksam belegt"; komplett darunter → „unter Schwelle belegt" (der
+einzige Zustand, der Depriorisieren/Abschalten rechtfertigt); sonst „unentscheidbar" — nicht
+belegt wirksam ist NICHT belegt unwirksam. Bei Schwelle 0 heißt das schlicht „wirkt überhaupt";
+mit bekannten Kosten trägt man den Break-even-Effekt ein. *Relativ:* Jedes Segment wird gegen
+alle übrigen Zeilen kontrastiert (eigenes CI, cluster-robuste SEs); die Richtung ▲/▼ gilt erst
+nach **Benjamini-Hochberg-Korrektur** über alle Segmente als belegt — beide p-Werte (roh/adj.)
+stehen in der Tabelle, sodass man sieht, wie knapp ein Segment an der Belegbarkeit ist.
+Roh-auffällige, aber unkorrigiert nicht belegte Segmente erscheinen als (▲)/(▼)-Tendenz —
+Kandidaten für eine vorregistrierte Einzelhypothese in der nächsten Welle (ohne
+Multiplizitätsstrafe), nie als nachträglicher Beleg. Ein **Forest-Plot** (Punkt + CI je Segment,
+Linien bei Schwelle und Gesamt-ATE) zeigt beides grafisch; alle Regeln stehen im Report in
+ausklappbaren Erklärkästen direkt an der Tabelle. Diese Spalten sind reine Diagnose — der
+Benchmark-SCORE (Q-Test + Shrinkage) bleibt unverändert.
+
 Der Report zeigt die ΔATE-Tabelle je Segment (n, T-Rate, ΔATE, SE, z, geshrunkener ATE),
 den Homogenitätstest-p-Wert und eine automatische Drei-Stufen-Diagnose: Benchmark im
 Rauschband → aus den Segmenten ist nichts zu holen; Benchmark darüber, Modell darunter →

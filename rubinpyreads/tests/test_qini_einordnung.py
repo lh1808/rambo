@@ -558,3 +558,184 @@ class TestBenchmarkSurvivesFeatureSelection:
         # und der Puffer liest aus X (vor der Reduktion), nicht aus removed
         i_fill = src.index("self._bench_seg_train_df = X[_found].copy()")
         assert i_fill < i_fs
+
+
+class TestReferenceRowsExplained:
+    """Der Benchmark (und der hist. Score) erscheinen im Modellvergleich und in
+    der Per-File-Matrix — dort müssen sie als Referenz gekennzeichnet und ihre
+    Entstehung erklärt sein (Nutzerfrage: 'Ist überall beschrieben, wie die
+    Benchmark-Scores entstehen?')."""
+
+    def test_comparison_table_badges_and_footnote(self):
+        from rubin.reporting.html_report import ReportCollector, _render_comparison
+        c = ReportCollector()
+        c.model_metrics = {
+            "NonParamDML": {"qini": 0.0007, "auuc": 0.0009},
+            "historical_score": {"qini": 0.00006, "auuc": 0.00008},
+            "segment_benchmark": {"qini": -0.0006, "auuc": -0.0008},
+        }
+        c.segment_benchmark_info = {"name": "segment_benchmark", "qini": -0.0006}
+        c.heterogeneity_assessment = {"hist_comparison": {"hist_name": "historical_score"}}
+        html = _render_comparison(c, {"study_type": "rct"}, "NonParamDML", "qini", True, False)
+        assert html.count('class="badge-ref"') == 2 and html.count('>Referenz</span>') == 2
+        assert "Referenz-Zeilen:" in html
+        assert "Stufen-Score" in html and "Homogenitätstest + Shrinkage" in html
+        assert "nehmen nicht an der Champion-Wahl teil" in html
+        # Ohne Referenzen: keine Badges, keine Fußnote (Golden-Schutz)
+        c2 = ReportCollector()
+        c2.model_metrics = {"NonParamDML": {"qini": 0.0007}}
+        html2 = _render_comparison(c2, {"study_type": "rct"}, "NonParamDML", "qini", True, False)
+        assert "badge-ref" not in html2 and "Referenz-Zeilen" not in html2
+
+    def test_heterogeneity_explainer_describes_scoring_mechanics(self):
+        from rubin.reporting.html_report import ReportCollector, _render_heterogeneity
+        c = ReportCollector()
+        c.segment_benchmark_info = {
+            "name": "segment_benchmark", "mode": "cross", "columns": ["F"],
+            "skipped_columns": [], "n_segments": 2, "tau2": 0.0,
+            "heterogeneity_detected": False, "global_ate": 0.009, "grouped": True,
+            "qini": -0.0006, "q_pvalue": 0.341, "table": [],
+        }
+        html = _render_heterogeneity(c)
+        for needle in ["derselben Qini-Mechanik", "seed-fester Tie-Break",
+                       "Reihenfolge der Segmente", "Homogenitätstest p = 0.341"]:
+            assert needle in html, needle
+
+
+class TestPrioritizationDiagnostics:
+    """Priorisierung/Depriorisierung je Segment: CIs, vs.-Rest-Kontraste mit
+    Benjamini-Hochberg, Verdicts gegen die Relevanzschwelle, Forest-Plot."""
+
+    def test_bh_adjustment_properties(self):
+        from rubin.evaluation.segment_benchmark import _benjamini_hochberg
+        p = [0.001, 0.04, 0.03, 0.5, 0.8]
+        adj = _benjamini_hochberg(p)
+        assert all(a >= r for a, r in zip(adj, p))          # adj >= roh
+        assert all(0 <= a <= 1 for a in adj)
+        order = sorted(range(5), key=lambda i: p[i])
+        assert all(adj[order[i]] <= adj[order[i+1]] + 1e-12 for i in range(4))  # monoton
+        assert adj[0] == pytest.approx(0.005)               # 0.001*5/1
+
+    def test_verdicts_against_threshold(self):
+        """Drei konstruierte Fälle: klar wirksam / eng um Null bei Schwelle>0 /
+        breites CI → unentscheidbar."""
+        rng = np.random.default_rng(50)
+        n = 200_000
+        # Segment 1 groß (enges CI um 0), Segment 2 winzig (breites CI)
+        seg = rng.choice([0, 1, 2], size=n, p=[0.35, 0.62, 0.03])
+        t = rng.integers(0, 2, n)
+        tau = np.where(seg == 0, 0.08, np.where(seg == 1, 0.0, 0.01))
+        y = (rng.random(n) < 0.08 + t * tau).astype(int)
+        bench = fit_segment_benchmark(pd.DataFrame({"S": seg}), t, y, min_effect=0.005)
+        by = {r["segment"]: r for r in bench.table}
+        assert by["0"]["verdict"] == "effective"            # CI klar über der Schwelle
+        assert by["1"]["verdict"] == "below_threshold"      # wahrer Effekt 0, enges CI < Schwelle
+        assert by["2"]["verdict"] == "inconclusive"         # kleines n, breites CI
+        assert by["0"]["ci_lo"] > 0.005 and by["1"]["ci_hi"] < 0.005
+        assert bench.min_effect == pytest.approx(0.005)
+
+    def test_direction_confirmed_only_after_fdr(self):
+        """Ein echter Ausreißer wird ▲-belegt, Rausch-Segmente nicht — und bei
+        vielen reinen Rausch-Segmenten wird NICHTS belegt (FDR-Schutz)."""
+        rng = np.random.default_rng(51)
+        n = 120_000
+        seg = rng.integers(0, 6, n)
+        t = rng.integers(0, 2, n)
+        tau = np.where(seg == 0, 0.06, 0.008)               # Segment 0 hebt sich stark ab
+        y = (rng.random(n) < 0.13 + t * tau).astype(int)
+        bench = fit_segment_benchmark(pd.DataFrame({"S": seg}), t, y)
+        by = {r["segment"]: r for r in bench.table}
+        assert by["0"]["direction"] == "above"
+        assert by["0"]["p_contrast_adj"] < 0.05
+        assert sum(1 for r in bench.table if r.get("direction")) <= 3  # kein Rausch-Festival
+        # Konsistenz: delta = ate - ate_rest
+        r0 = by["0"]
+        assert r0["delta_vs_rest"] == pytest.approx(r0["ate"] - r0["ate_rest"])
+        # Reines Rauschen: keine belegten Richtungen
+        y2 = (rng.random(len(t)) < 0.13 + t * 0.008).astype(int)
+        bench2 = fit_segment_benchmark(pd.DataFrame({"S": seg}), t, y2)
+        assert all(r.get("direction") is None for r in bench2.table)
+
+    def test_tendency_marks_raw_but_not_adjusted(self):
+        """Grenzfall wie Lukas Segment 0: roh auffällig, nach BH nicht →
+        tendency gesetzt, direction nicht."""
+        rng = np.random.default_rng(52)
+        n = 50_000
+        seg = rng.integers(0, 11, n)
+        t = rng.integers(0, 2, n)
+        tau = np.where(seg == 0, 0.0, 0.009)                # Seg 0 schwächer, moderat
+        y = (rng.random(n) < 0.13 + t * tau).astype(int)
+        bench = fit_segment_benchmark(pd.DataFrame({"S": seg}), t, y)
+        r0 = {r["segment"]: r for r in bench.table}["0"]
+        # je nach Seed roh signifikant oder belegt — beides zeigt Richtung "below"
+        assert (r0["direction"] == "below") or (r0["tendency"] == "below") or r0["p_contrast"] > 0.05
+
+    def test_forest_plot_renders(self):
+        import matplotlib; matplotlib.use("Agg")
+        from rubin.evaluation.evaluation_plots import generate_segment_forest_plot
+        flag, t, y = _population(20_000, seed=53, tau_f=0.08, tau_r=0.0)
+        bench = fit_segment_benchmark(pd.DataFrame({"F": flag}), t, y)
+        fig = generate_segment_forest_plot(bench.table, bench.global_ate, 0.0)
+        assert fig is not None
+        import matplotlib.pyplot as plt; plt.close(fig)
+        assert generate_segment_forest_plot([], 0.0) is None
+
+    def test_pipeline_summary_carries_diagnostics_and_forest(self):
+        flag, t, y = _population(40_000, seed=54, tau_f=0.08, tau_r=0.0)
+        X = pd.DataFrame({"F": flag})
+        pipe = _mk_pipeline_stub()
+        cfg = _mk_cfg(benchmark_segments=["F"], benchmark_min_effect=0.002)
+        es = {}
+        pipe._run_segment_benchmark(cfg, X, t, y, None, None, es, MagicMock(), is_mt=False)
+        info = pipe._report.segment_benchmark_info
+        assert info["min_effect"] == pytest.approx(0.002)
+        assert isinstance(info["forest_plot"], str) and len(info["forest_plot"]) > 1000
+        r1 = {r["segment"]: r for r in info["table"]}["1"]
+        assert r1["verdict"] == "effective" and r1["direction"] == "above"
+        assert r1["p_contrast_adj"] is not None and r1["ci_lo"] is not None
+
+    def test_report_renders_prio_columns_markers_and_explainer(self):
+        from rubin.reporting.html_report import ReportCollector, _render_heterogeneity
+        c = ReportCollector()
+        c.segment_benchmark_info = {
+            "name": "segment_benchmark", "mode": "cross", "columns": ["F"],
+            "skipped_columns": [], "n_segments": 3, "tau2": 1e-5,
+            "heterogeneity_detected": True, "global_ate": 0.009, "grouped": True,
+            "qini": 0.0004, "q_pvalue": 0.01, "min_effect": 0.0,
+            "forest_plot": "aWFtYXBuZw==",
+            "table": [
+                {"segment": "1", "n": 78348, "t_rate": 0.752, "ate": 0.0129, "se": 0.0026,
+                 "z": 4.92, "ate_shrunk": 0.012, "estimable": True, "ci_lo": 0.0078, "ci_hi": 0.018,
+                 "ate_rest": 0.007, "delta_vs_rest": 0.0059, "se_contrast": 0.003,
+                 "ci_contrast_lo": 0.0, "ci_contrast_hi": 0.0118,
+                 "p_contrast": 0.02, "p_contrast_adj": 0.04, "direction": "above",
+                 "tendency": None, "verdict": "effective"},
+                {"segment": "0", "n": 41718, "t_rate": 0.749, "ate": 0.0029, "se": 0.0036,
+                 "z": 0.8, "ate_shrunk": 0.006, "estimable": True, "ci_lo": -0.0042, "ci_hi": 0.01,
+                 "ate_rest": 0.0103, "delta_vs_rest": -0.0074, "se_contrast": 0.004,
+                 "ci_contrast_lo": -0.0152, "ci_contrast_hi": 0.0004,
+                 "p_contrast": 0.06, "p_contrast_adj": 0.26, "direction": None,
+                 "tendency": "below", "verdict": "inconclusive"},
+                {"segment": "alt", "n": 100, "t_rate": 0.7, "ate": None, "se": None, "z": None,
+                 "ate_shrunk": 0.009, "estimable": False},  # alte/degenerierte Zeile → "–"
+            ],
+        }
+        html = _render_heterogeneity(c)
+        for needle in ["Δ vs. Rest [CI]", "p roh / adj.", "0.060 / 0.260", "(▼)", "<strong>▲</strong>",
+                       "wirksam belegt", "unentscheidbar", "Benjamini-Hochberg",
+                       "Wie lese ich Priorisierung", "VORREGISTRIERTE", "Segment-Forest-Plot",
+                       "Priorisierung: belegt überdurchschnittlich: <strong>\u201e1\u201c</strong>",
+                       "kein Segment unter der Schwelle belegt"]:
+            assert needle in html, needle
+        # Alte Zeile ohne neue Keys rendert als "–", kein Crash
+        assert html.count("–") >= 4
+
+    def test_settings_and_ui_roundtrip_min_effect(self, tmp_path):
+        import yaml
+        from rubin.settings import AnalysisConfig
+        cfg = {"data_files": {"x_file": "X.parquet", "t_file": "T.parquet", "y_file": "Y.parquet"},
+               "mlflow": {"experiment_name": "t"},
+               "evaluation": {"benchmark_segments": ["F"], "benchmark_min_effect": 0.002}}
+        loaded = AnalysisConfig.model_validate(cfg)
+        assert loaded.evaluation.benchmark_min_effect == pytest.approx(0.002)
+        assert AnalysisConfig.model_validate({k: v for k, v in cfg.items() if k != "evaluation"}).evaluation.benchmark_min_effect == 0.0

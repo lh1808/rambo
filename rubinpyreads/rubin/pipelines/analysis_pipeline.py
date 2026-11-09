@@ -2184,6 +2184,7 @@ class AnalysisPipeline:
         bench_name = str(getattr(_ev_cfg, "benchmark_name", "segment_benchmark"))
         max_levels = int(getattr(_ev_cfg, "benchmark_max_levels", 25))
         min_rows = int(getattr(_ev_cfg, "benchmark_min_rows", 20))
+        min_effect = float(getattr(_ev_cfg, "benchmark_min_effect", 0.0) or 0.0)
         seed = int(cfg.constants.random_seed)
         groups = getattr(self, "_groups", None)
         if groups is not None and len(groups) != len(Y):
@@ -2236,7 +2237,7 @@ class AnalysisPipeline:
             if miss:
                 self._logger.warning("Segment-Benchmark entfällt: Spalten %s fehlen im Eval-Datensatz.", miss)
                 return
-            bench = fit_segment_benchmark(src_train[cols], T, Y, columns=cols, groups=groups, min_rows=min_rows)
+            bench = fit_segment_benchmark(src_train[cols], T, Y, columns=cols, groups=groups, min_rows=min_rows, min_effect=min_effect)
             if bench is None:
                 return
             score = score_segment_benchmark(bench, src_eval[cols])
@@ -2245,7 +2246,7 @@ class AnalysisPipeline:
         elif eval_mask is not None:
             _m = np.asarray(eval_mask).astype(bool)
             g_tr = groups[~_m] if groups is not None else None
-            bench = fit_segment_benchmark(src_train[cols].loc[~_m], T[~_m], Y[~_m], columns=cols, groups=g_tr, min_rows=min_rows)
+            bench = fit_segment_benchmark(src_train[cols].loc[~_m], T[~_m], Y[~_m], columns=cols, groups=g_tr, min_rows=min_rows, min_effect=min_effect)
             if bench is None:
                 return
             score = score_segment_benchmark(bench, src_train[cols].loc[_m])
@@ -2255,7 +2256,7 @@ class AnalysisPipeline:
             score, bench = fit_score_segment_benchmark_oof(
                 src_train[cols], T, Y, columns=cols, groups=groups,
                 n_splits=int(getattr(cfg.data_processing, "cross_validation_splits", 5)),
-                seed=seed, min_rows=min_rows)
+                seed=seed, min_rows=min_rows, min_effect=min_effect)
             if bench is None or score is None:
                 return
             eval_y, eval_t = np.asarray(Y), np.asarray(T)
@@ -2313,6 +2314,22 @@ class AnalysisPipeline:
                     )
         except Exception:
             self._logger.debug("T-Raten-Drift-Check übersprungen.", exc_info=True)
+        # Forest-Plot (Priorisierung/Depriorisierung auf einen Blick) → mlflow + Report
+        _forest_b64 = None
+        try:
+            import base64, io
+            import matplotlib.pyplot as _plt
+            from rubin.evaluation.evaluation_plots import generate_segment_forest_plot
+            _fig_f = generate_segment_forest_plot(bench.table, bench.global_ate, min_effect)
+            if _fig_f is not None:
+                _log_figure_fast(mlflow, _fig_f, f"segment_forest__{bench_name}.png")
+                _buf = io.BytesIO()
+                _fig_f.savefig(_buf, format="png", dpi=110, bbox_inches="tight")
+                _forest_b64 = base64.b64encode(_buf.getvalue()).decode("ascii")
+                _plt.close(_fig_f)
+        except Exception:
+            self._logger.warning("Segment-Forest-Plot fehlgeschlagen.", exc_info=True)
+
         _summary = {
             "name": bench_name, "mode": mode, "columns": cols,
             "skipped_columns": skipped, "n_segments": bench.n_segments,
@@ -2320,6 +2337,8 @@ class AnalysisPipeline:
             "q_stat": bench.q_stat, "q_pvalue": bench.q_pvalue,
             "t_rate_drift": t_rate_drift,
             "restored_after_fs": restored,
+            "min_effect": min_effect,
+            "forest_plot": _forest_b64,
             "global_ate": bench.global_ate, "grouped": groups is not None,
             "qini": eval_summary[bench_name]["qini"],
             "table": [

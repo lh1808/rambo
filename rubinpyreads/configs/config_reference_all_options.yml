@@ -97,6 +97,7 @@ evaluation:
   benchmark_segments: []             # z. B. ["NEUKUNDE_FLAG", "LEAD_ART"] — diskrete X-Spalten
   benchmark_max_levels: 25           # Kardinalitäts-Guard je Spalte
   benchmark_min_rows: 20             # Mindestzeilen je Segment für eigenen ATE
+  benchmark_min_effect: 0.0          # Relevanzschwelle der Einordnung (0 = "wirkt überhaupt"; sonst Break-even)
   benchmark_name: "segment_benchmark"
 data_processing:
   reduce_memory: true                       # Datentypen downcasten (float64→float32 etc.) – in DataPrep und Analyse-Pipeline aktiv

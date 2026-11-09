@@ -64,6 +64,21 @@ def _cluster_mean_var(vals: np.ndarray, clusters: Optional[np.ndarray]) -> float
     return float((G / (G - 1)) * np.sum(resid**2) / (n**2))
 
 
+def _benjamini_hochberg(pvals: List[float]) -> List[float]:
+    """BH-FDR-Adjustierung (monoton, gekappt bei 1). Eigene Mini-Implementierung,
+    damit kein Import-Pfad die Benchmark-Diagnose reißen kann."""
+    m = len(pvals)
+    order = sorted(range(m), key=lambda i: pvals[i])
+    adj = [0.0] * m
+    prev = 1.0
+    for rank_from_end, i in enumerate(reversed(order)):
+        rank = m - rank_from_end
+        val = min(prev, pvals[i] * m / rank)
+        adj[i] = min(1.0, val)
+        prev = adj[i]
+    return adj
+
+
 @dataclass
 class SegmentBenchmark:
     """Gefittetes Segment-Benchmark (Mapping + Diagnose-Tabelle)."""
@@ -78,6 +93,7 @@ class SegmentBenchmark:
     heterogeneity_detected: bool = False
     q_stat: float = 0.0
     q_pvalue: float = 1.0
+    min_effect: float = 0.0
 
 
 def _segment_keys(seg_df: pd.DataFrame, columns: List[str]) -> pd.Series:
@@ -121,6 +137,7 @@ def fit_segment_benchmark(
     columns: Optional[List[str]] = None,
     groups=None,
     min_rows: int = 20,
+    min_effect: float = 0.0,
 ) -> Optional[SegmentBenchmark]:
     """Schätzt Segment-ATEs (Diff-in-Means) mit Cluster-SEs und DL-Shrinkage.
 
@@ -154,6 +171,14 @@ def fit_segment_benchmark(
             "t_rate": (n_t / n_seg) if n_seg else float("nan"),
             "ate": None, "se": None, "z": None, "ate_shrunk": None,
             "estimable": False,
+            # Priorisierungs-/Depriorisierungs-Diagnose (gefüllt für estimable):
+            "ci_lo": None, "ci_hi": None,
+            "ate_rest": None, "delta_vs_rest": None, "se_contrast": None,
+            "ci_contrast_lo": None, "ci_contrast_hi": None,
+            "p_contrast": None, "p_contrast_adj": None,
+            "direction": None,        # "above"/"below" (BH-belegt) sonst None
+            "tendency": None,         # "above"/"below" (roh p<0.05, adj nicht) sonst None
+            "verdict": "inconclusive",  # vs. min_effect: effective/below_threshold/inconclusive
         }
         if n_seg >= int(min_rows) and n_t >= 2 and n_c >= 2:
             ate = float(y[mt].mean() - y[mc].mean())
@@ -163,6 +188,36 @@ def fit_segment_benchmark(
             row.update(ate=ate, se=se, estimable=se is not None)
             if se:
                 row["z"] = ate / se
+                row["ci_lo"] = ate - 1.96 * se
+                row["ci_hi"] = ate + 1.96 * se
+                # Absolute Einordnung gegen die Relevanzschwelle (Default 0):
+                # NUR "below_threshold" rechtfertigt Depriorisieren/Abschalten —
+                # "inconclusive" heißt: Datenlage reicht nicht, nicht "wirkt nicht".
+                if row["ci_lo"] > float(min_effect):
+                    row["verdict"] = "effective"
+                elif row["ci_hi"] < float(min_effect):
+                    row["verdict"] = "below_threshold"
+                # Relativer Kontrast: Segment vs. alle übrigen Zeilen (Priorisierung).
+                # Hinweis: Cluster, die über Segment-Grenzen spannen, erzeugen eine
+                # (meist kleine) Kovarianz zwischen Segment- und Rest-Schätzer, die
+                # hier vernachlässigt wird — die SEs beider Seiten sind einzeln
+                # cluster-robust.
+                r_mt, r_mc = (~m) & mask_t, (~m) & mask_c
+                if r_mt.sum() >= 2 and r_mc.sum() >= 2:
+                    ate_rest = float(y[r_mt].mean() - y[r_mc].mean())
+                    var_rest = _cluster_mean_var(y[r_mt], groups_arr[r_mt] if groups_arr is not None else None) + \
+                        _cluster_mean_var(y[r_mc], groups_arr[r_mc] if groups_arr is not None else None)
+                    if np.isfinite(var_rest) and var_rest > 0:
+                        se_c = float(np.sqrt(se**2 + var_rest))
+                        delta = ate - ate_rest
+                        row.update(ate_rest=ate_rest, delta_vs_rest=delta, se_contrast=se_c,
+                                   ci_contrast_lo=delta - 1.96 * se_c,
+                                   ci_contrast_hi=delta + 1.96 * se_c)
+                        try:
+                            from scipy.stats import norm
+                            row["p_contrast"] = float(2.0 * norm.sf(abs(delta / se_c)))
+                        except Exception:  # pragma: no cover
+                            row["p_contrast"] = None
         rows.append(row)
 
     est = [r for r in rows if r["estimable"]]
@@ -200,6 +255,22 @@ def fit_segment_benchmark(
         if not r["estimable"]:
             r["ate_shrunk"] = global_ate
 
+    # Benjamini-Hochberg über die vs.-Rest-Kontraste: belegt ist eine Richtung
+    # erst nach FDR-Korrektur (11 Segmente = 55 implizite Paarvergleiche — ohne
+    # Korrektur wäre fast immer irgendetwas "signifikant"). Roh-signifikante,
+    # aber nicht korrigiert belegte Segmente werden als TENDENZ markiert — als
+    # vorregistrierte Einzelhypothese in der nächsten Welle prüfbar.
+    _ctr = [r for r in rows if r.get("p_contrast") is not None]
+    if _ctr:
+        adj = _benjamini_hochberg([r["p_contrast"] for r in _ctr])
+        for r, pa in zip(_ctr, adj):
+            r["p_contrast_adj"] = float(pa)
+            _dir = "above" if r["delta_vs_rest"] > 0 else "below"
+            if pa < 0.05:
+                r["direction"] = _dir
+            elif r["p_contrast"] < 0.05:
+                r["tendency"] = _dir
+
     mapping = {r["segment"]: float(r["ate_shrunk"]) for r in rows}
     rows.sort(key=lambda r: -(r["ate_shrunk"] if r["ate_shrunk"] is not None else -np.inf))
     # "Belegbar" heißt: Der Homogenitätstest (Cochrans Q, chi² mit k−1 df)
@@ -213,6 +284,7 @@ def fit_segment_benchmark(
         tau2=float(tau2), table=rows, n_segments=len(rows),
         heterogeneity_detected=bool(len(est) > 1 and q_pvalue < 0.05),
         q_stat=float(q_stat), q_pvalue=float(q_pvalue),
+        min_effect=float(min_effect),
     )
 
 
@@ -235,6 +307,7 @@ def fit_score_segment_benchmark_oof(
     n_splits: int = 5,
     seed: int = 42,
     min_rows: int = 20,
+    min_effect: float = 0.0,
 ) -> Tuple[Optional[np.ndarray], Optional[SegmentBenchmark]]:
     """Out-of-fold-Benchmark für den Cross-Prediction-Modus.
 
@@ -248,7 +321,7 @@ def fit_score_segment_benchmark_oof(
     t = np.asarray(t).ravel()
     y = np.asarray(y, dtype=float).ravel()
     n = len(y)
-    full = fit_segment_benchmark(seg_df, t, y, columns=columns, groups=groups, min_rows=min_rows)
+    full = fit_segment_benchmark(seg_df, t, y, columns=columns, groups=groups, min_rows=min_rows, min_effect=min_effect)
     if full is None:
         return None, None
     scores = np.full(n, np.nan, dtype=float)

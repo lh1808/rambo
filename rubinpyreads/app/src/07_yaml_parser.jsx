@@ -4,7 +4,7 @@ const YAML_TO_CFG = {
   "data_files.eval_x_file":"eval_x_file","data_files.eval_t_file":"eval_t_file","data_files.eval_y_file":"eval_y_file","data_files.eval_s_file":"eval_s_file","data_files.eval_mask_file":"eval_mask_file","data_files.groups_file":"groups_file",
   "treatment.type":"treatmentType","treatment.reference_group":"refGroup",
   "historical_score.name":"histScoreName","historical_score.column":"histScoreCol","historical_score.higher_is_better":"histScoreHigher",
-  "evaluation.qini_noise_band":"qiniNoiseBand","evaluation.qini_noise_permutations":"qiniNoisePerms","evaluation.benchmark_segments":"benchSegCols",
+  "evaluation.qini_noise_band":"qiniNoiseBand","evaluation.qini_noise_permutations":"qiniNoisePerms","evaluation.benchmark_segments":"benchSegCols","evaluation.benchmark_min_effect":"benchMinEffect",
   "data_processing.validate_on":"validateOn","data_processing.cross_validation_splits":"cvSplits","data_processing.mc_iters":"mcIters","data_processing.mc_agg":"mcAgg","data_processing.dml_crossfit_folds":"dmlCrossfitFolds",
   "data_processing.df_frac":"dfFrac","data_processing.reduce_memory":"reduceMem",
   "feature_selection.enabled":"fsEnabled","feature_selection.methods":"fsMethods","feature_selection.always_keep":"fsAlwaysKeep","feature_selection.correlation_threshold":"fsCorrThresh","feature_selection.max_features":"fsMaxFeatures",

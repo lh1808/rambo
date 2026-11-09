@@ -563,6 +563,9 @@ def _render_per_file_qini(collector) -> str:
         " sortierbar; die GESAMT-Zeile bleibt unten."
         + (" Zeilen mit Rolle <em>Training</em> sind auf den leakage-freien OOF-Predictions der jeweiligen"
            " Datei gerechnet; GESAMT und die Report-Hauptmetriken beziehen sich auf die Evaluation." if has_role else "")
+        + (" Die Detail-Matrix \u201ealle Modelle\u201c enth\u00e4lt auch die Referenz-Scores (historischer"
+           " Score, Segment-Benchmark) \u2014 mit identischer Qini-Mechanik auf denselben Zeilen bewertet."
+           if any(k in models for k in ((hist,) if hist else ()) ) or any("benchmark" in str(k) for k in models) else "")
         + "</p>"
         f"<div id='pfq-wrap'><table id='pfq-tbl'><thead><tr>"
         f"<th class='pfq-s'>Datei</th>{role_head}"
@@ -712,23 +715,97 @@ def _render_heterogeneity(collector) -> str:
             h2 += '<div style="font-size:12px;color:#b35900;margin-top:6px">Übersprungen: ' + escape("; ".join(f'{x["column"]} ({x["reason"]})' for x in _skips)) + '</div>'
         rows = sb.get("table") or []
         if rows:
-            h2 += '<div class="tbl-scroll" style="margin-top:12px"><table class="dt"><thead><tr><th>Segment</th><th>n</th><th>T-Rate</th><th>ΔATE</th><th>SE</th><th>z</th><th>ATE (geshrunken)</th></tr></thead><tbody>'
+            # Zusammenfassungszeile: Priorisierung (BH-belegt ▲/▼) + absolute Einordnung
+            _up = [r["segment"] for r in rows if r.get("direction") == "above"]
+            _down = [r["segment"] for r in rows if r.get("direction") == "below"]
+            _tend = [r["segment"] for r in rows if r.get("tendency")]
+            _below = [r["segment"] for r in rows if r.get("verdict") == "below_threshold"]
+            _eff = sum(1 for r in rows if r.get("verdict") == "effective")
+            _inc = sum(1 for r in rows if r.get("verdict") == "inconclusive")
+            _has_prio = any(r.get("p_contrast") is not None for r in rows)
+            if _has_prio:
+                _parts = []
+                _fmt_names = lambda xs: ", ".join("\u201e" + escape(str(x)) + "\u201c" for x in xs)
+                _parts.append("Priorisierung: " + (("belegt überdurchschnittlich: <strong>" + _fmt_names(_up) + "</strong>") if _up else "kein Segment belegt überdurchschnittlich"))
+                if _down:
+                    _parts.append("belegt unterdurchschnittlich: <strong>" + _fmt_names(_down) + "</strong>")
+                if _tend:
+                    _parts.append("Tendenzen (unkorrigiert auffällig): " + _fmt_names(_tend))
+                _parts.append("Depriorisierung: " + (("<strong>unter Schwelle belegt: " + _fmt_names(_below) + "</strong>") if _below else "kein Segment unter der Schwelle belegt"))
+                _parts.append(f"wirksam belegt: {_eff} · unentscheidbar: {_inc} von {len(rows)}")
+                h2 += ('<div style="font-size:12.5px;color:var(--text);background:var(--ruby-bg);border:1px solid var(--border);'
+                       'border-radius:8px;padding:10px 14px;margin-top:12px;line-height:1.6">' + " · ".join(_parts) + "</div>")
+            _dirm = {"above": "▲", "below": "▼"}
+            _verd = {
+                "effective": '<span style="font-size:10px;font-weight:700;color:#1a7f37;background:#e8f5ec;padding:2px 8px;border-radius:10px;white-space:nowrap">wirksam belegt</span>',
+                "below_threshold": '<span style="font-size:10px;font-weight:700;color:#9B111E;background:#fef2f2;padding:2px 8px;border-radius:10px;white-space:nowrap">unter Schwelle</span>',
+                "inconclusive": '<span style="font-size:10px;font-weight:600;color:#57606a;background:#eef2f7;padding:2px 8px;border-radius:10px;white-space:nowrap">unentscheidbar</span>',
+            }
+            h2 += ('<div class="tbl-scroll" style="margin-top:10px"><table class="dt"><thead><tr>'
+                   '<th>Segment</th><th>n</th><th>T-Rate</th><th>ΔATE</th><th>CI 95%</th><th>z</th>'
+                   '<th>Δ vs. Rest [CI]</th><th>p roh / adj.</th><th>Richtung</th><th>Einordnung</th>'
+                   '<th>ATE (geshrunken)</th></tr></thead><tbody>')
             for r in rows:
                 _f = lambda v, fmt: (fmt.format(v) if isinstance(v, (int, float)) else "–")
                 _z = r.get("z")
                 _z_style = ' style="font-weight:700"' if isinstance(_z, (int, float)) and abs(_z) >= 2 else ""
+                _ci = ("[" + _f(r.get("ci_lo"), "{:+.4f}") + ", " + _f(r.get("ci_hi"), "{:+.4f}") + "]") if r.get("ci_lo") is not None else "–"
+                if r.get("delta_vs_rest") is not None:
+                    _vs = (_f(r.get("delta_vs_rest"), "{:+.4f}") + " [" + _f(r.get("ci_contrast_lo"), "{:+.4f}") + ", " + _f(r.get("ci_contrast_hi"), "{:+.4f}") + "]")
+                else:
+                    _vs = "–"
+                _pp = (_f(r.get("p_contrast"), "{:.3f}") + " / " + _f(r.get("p_contrast_adj"), "{:.3f}")) if r.get("p_contrast") is not None else "–"
+                if r.get("direction"):
+                    _dcell = f'<strong>{_dirm[r["direction"]]}</strong>'
+                elif r.get("tendency"):
+                    _dcell = f'({_dirm[r["tendency"]]})'
+                else:
+                    _dcell = "·"
+                _vcell = _verd.get(r.get("verdict") or "", "–") if r.get("ci_lo") is not None else "–"
                 h2 += (f'<tr><td>{escape(str(r.get("segment", "")))}</td><td>{r.get("n", 0):,}</td>'
                        f'<td>{_f(r.get("t_rate"), "{:.3f}")}</td><td>{_f(r.get("ate"), "{:+.4f}")}</td>'
-                       f'<td>{_f(r.get("se"), "{:.4f}")}</td><td{_z_style}>{_f(_z, "{:+.2f}")}</td>'
+                       f'<td style="font-family:var(--mono);font-size:11px">{_ci}</td><td{_z_style}>{_f(_z, "{:+.2f}")}</td>'
+                       f'<td style="font-family:var(--mono);font-size:11px">{_vs}</td>'
+                       f'<td style="font-family:var(--mono);font-size:11px">{_pp}</td>'
+                       f'<td style="text-align:center">{_dcell}</td><td>{_vcell}</td>'
                        f'<td>{_f(r.get("ate_shrunk"), "{:+.4f}")}</td></tr>')
             h2 += '</tbody></table></div>'
-            h2 += '<div style="font-size:11px;color:var(--text-f);margin-top:6px">|z| ≥ 2 fett. Segmente ohne beide Arme oder mit zu wenig Zeilen erhalten den Gesamt-ATE (kein eigenes z).</div>'
+            h2 += ('<div style="font-size:11px;color:var(--text-f);margin-top:6px">|z| ≥ 2 fett (Effekt ≠ 0 im Segment). '
+                   'Richtung vs. Rest: <strong>▲/▼</strong> = nach Benjamini-Hochberg belegt über-/unterdurchschnittlich · '
+                   '(▲)/(▼) = Tendenz (roh p &lt; 0.05, nach Korrektur nicht) · „·" = nichts erkennbar. '
+                   'Einordnung = absolute Lage des 95%-CI zur Relevanzschwelle'
+                   + (f' ({sb.get("min_effect"):g})' if isinstance(sb.get("min_effect"), (int, float)) and sb.get("min_effect") else " (0 = wirkt überhaupt)")
+                   + '. Segmente ohne beide Arme oder mit zu wenig Zeilen erhalten den Gesamt-ATE (kein eigenes z).</div>')
+            if sb.get("forest_plot"):
+                h2 += (f'<div style="margin:14px 0;text-align:center"><img src="data:image/png;base64,{sb["forest_plot"]}" '
+                       f'alt="Segment-Forest-Plot" style="max-width:720px;width:100%;border-radius:8px;border:1px solid var(--border)" loading="lazy"></div>')
             _drift = sb.get("t_rate_drift")
             if isinstance(_drift, (int, float)) and _drift > 0.03:
                 h2 += (f'<div style="font-size:12px;color:#b35900;margin-top:6px"><strong>Treatment-Raten-Drift über die Segmente: '
                        f'{_drift*100:.1f}pp.</strong> Kein einheitlich randomisiertes Design über diese Segmente — '
                        f'balance_treatments gleicht nur zwischen Dateien aus. Diff-in-Means je Segment bleibt intern valide; '
                        f'gepoolte Metriken (ATE, Qini) mischen Designs.</div>')
+        h2 += ('<details style="margin-top:10px"><summary style="font-size:12px;color:var(--text-f);cursor:pointer">'
+               'Wie lese ich Priorisierung &amp; Depriorisierung? (CI, vs. Rest, Benjamini-Hochberg)</summary>'
+               '<div style="font-size:12px;color:var(--text-l);line-height:1.7;margin-top:8px">'
+               'Die Tabelle beantwortet zwei GETRENNTE Fragen je Segment. <strong>Absolut (Einordnung):</strong> '
+               'Liegt das 95%-CI des Segment-Effekts komplett über der Relevanzschwelle → „wirksam belegt"; komplett '
+               'darunter → „unter Schwelle" — nur DIESER Zustand rechtfertigt Depriorisieren/Abschalten; sonst '
+               '„unentscheidbar" = die Datenlage reicht nicht. Wichtig: <em>Nicht belegt wirksam ist NICHT dasselbe '
+               'wie belegt unwirksam</em> — ein breites CI deckt oft beides ab. '
+               '<strong>Relativ (Δ vs. Rest, für Priorisierung):</strong> Jedes Segment wird gegen alle übrigen Zeilen '
+               'verglichen (Kontrast mit eigenem CI). Weil 11 Segmente implizit 55 Paarvergleiche bedeuten, wäre ohne '
+               'Korrektur fast immer irgendetwas „signifikant" — die Richtung ▲/▼ wird deshalb erst nach '
+               '<strong>Benjamini-Hochberg-Korrektur</strong> (FDR über alle Segmente) als belegt markiert. '
+               'Beide p-Werte stehen daneben: Am Abstand zwischen roh und adjustiert sieht man, WIE knapp ein Segment '
+               'an der Belegbarkeit ist. Eine (▲)/(▼)-<strong>Tendenz</strong> (roh auffällig, korrigiert nicht) ist '
+               'kein Befund, aber die richtige Kandidatin für eine VORREGISTRIERTE Einzelhypothese in der nächsten '
+               'Welle — dort entfällt die Multiplizitätsstrafe. Ein nachträglich aus der Tabelle gepicktes Paar ist '
+               'dagegen kein Beleg. <strong>Forest-Plot:</strong> Punkt = ΔATE, Balken = 95%-CI; die durchgezogene '
+               'Linie ist die Schwelle, die gestrichelte der Gesamt-ATE — ein Balken, der eine Linie nicht schneidet, '
+               'ist die grafische Form von „belegt". Das Shrinkage für den Benchmark-SCORE bleibt davon unberührt: '
+               'Diese Spalten sind Diagnose, kein Ranking.'
+               '</div></details>')
         h2 += ('<details style="margin-top:10px"><summary style="font-size:12px;color:var(--text-f);cursor:pointer">'
                'Wie entsteht der Segment-Benchmark — und was sagt er aus?</summary>'
                '<div style="font-size:12px;color:var(--text-l);line-height:1.7;margin-top:8px">'
@@ -740,7 +817,7 @@ def _render_heterogeneity(collector) -> str:
                '(3) Empirical-Bayes-Shrinkage (DerSimonian-Laird) zieht unsichere Zell-ATEs Richtung Gesamt-ATE — '
                'kleine Segmente mit großen Zufalls-Effekten können den Benchmark nicht kapern; ohne belegbare '
                'Heterogenität wird der Score konstant und sein Qini ehrlich ≈ 0. '
-               'Lesart: Benchmark im Rauschband → aus den Segmenten ist nichts zu holen; Benchmark deutlich darüber, '
+               'Bewertet wird der Benchmark-Score mit exakt derselben Qini-Mechanik, denselben Eval-Zeilen und demselben Rauschband wie die Modelle (eigene Zeile im Modellvergleich). Innerhalb eines Segments ist die Reihenfolge bewusst zufällig (seed-fester Tie-Break) — die gesamte Ranking-Information steckt allein in der Reihenfolge der Segmente. Lesart: Benchmark im Rauschband → aus den Segmenten ist nichts zu holen; Benchmark deutlich darüber, '
                'Modell darunter → Lern-Problem; Modell ≈ Benchmark → bekannte Moderation eingefangen.'
                '</div></details>')
         h2 += '</div>'
@@ -1636,6 +1713,17 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
 
     _study_type = cs.get("study_type", "rct")
     _qn = getattr(collector, "qini_noise_info", {}) or {}
+    # Referenz-Scores (kein trainiertes Modell): historischer Score + Segment-Benchmark.
+    _ref_names = set()
+    _sb_cmp = getattr(collector, "segment_benchmark_info", {}) or {}
+    if _sb_cmp.get("name"):
+        _ref_names.add(str(_sb_cmp["name"]))
+    _hc_cmp = (collector.heterogeneity_assessment or {}).get("hist_comparison") or {}
+    if _hc_cmp.get("hist_name"):
+        _ref_names.add(str(_hc_cmp["hist_name"]))
+    if getattr(collector, "per_file_qini_hist_name", ""):
+        _ref_names.add(str(collector.per_file_qini_hist_name))
+    _refs_in_table = sorted(_ref_names & set(collector.model_metrics.keys()))
     h = '<p class="expl">' + (('Uplift-Metriken basierend auf <strong>Out-of-Fold-Predictions</strong> (externe K-Fold Cross-Validation über den Gesamtdatensatz), ausgewertet <strong>ausschließlich auf dem eval_mask-Subset (TMES)</strong>. Die Eval-Zeilen fließen in das Training der übrigen Folds ein.' if _is_tmes else 'Uplift-Metriken basierend auf dem <strong>externen Evaluationsdatensatz</strong>. Modelle wurden auf den Trainingsdaten trainiert und hier auf ungesehenen Daten evaluiert.') if is_external else 'Uplift-Metriken basierend auf Out-of-Fold-Predictions (externe K-Fold Cross-Validation für alle Modelle).') + ' Champion ist hervorgehoben. <span class="best-marker-legend">Bester Wert</span> je Metrik ist markiert.</p>'
     if _qn:
         _two_fn = 2.0 * float(_qn.get("sd", 0.0))
@@ -1643,6 +1731,15 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
               f'Eval-Kontext{", gruppenweise" if _qn.get("grouped") else ""}) — Qini-Werte innerhalb dieses Bands sind '
               f'von Zufall nicht unterscheidbar. Details in der Heterogenitäts-Sektion. Trainings-/Tuning-OOF-Metriken '
               f'sind selektionsverzerrt (Maximum über viele Trials) und nicht mit diesen Eval-Werten vergleichbar.</p>')
+    if _refs_in_table:
+        _ref_expl = []
+        if _hc_cmp.get("hist_name") in _refs_in_table or (collector.per_file_qini_hist_name in _refs_in_table):
+            _ref_expl.append('der <strong>historische Score</strong> (Bestands-Score aus der S-Datei, gemäß higher_is_better orientiert)')
+        if _sb_cmp.get("name") in _refs_in_table:
+            _ref_expl.append('der <strong>Segment-Benchmark</strong> (Stufen-Score: jede Eval-Zeile erhält den out-of-fold aus Trainingszeilen geschätzten, per Homogenitätstest + Shrinkage stabilisierten Treatment-Effekt ihres Segments — Entstehung im Detail in der Heterogenitäts-Sektion)')
+        h += ('<p class="expl"><strong>Referenz-Zeilen:</strong> ' + " und ".join(_ref_expl) +
+              ' sind keine trainierten Modelle, sondern Vergleichsmaßstäbe. Sie werden mit identischer '
+              'Qini-Mechanik auf denselben Eval-Zeilen bewertet und nehmen nicht an der Champion-Wahl teil.</p>')
     if _study_type == "rct":
         h += '<p class="expl">Alle Metriken basieren auf randomisierten Daten und sind direkt als kausale Effekte interpretierbar. Qini, AUUC und Policy Value messen die tatsächliche Wirksamkeit der modellbasierten Targeting-Strategie.</p>'
     else:
@@ -1664,6 +1761,8 @@ def _render_comparison(collector, cs, champ, sel_met, higher, is_external, _is_t
         ic = mn == champ
         tr_cls = ' class="champ-row"' if ic else ''
         champ_badge = ' <span class="badge-c">Champion</span>' if ic else ''
+        if mn in _ref_names:
+            champ_badge += ' <span class="badge-ref" title="Referenz-Score, kein trainiertes Modell — nimmt nicht an der Champion-Wahl teil">Referenz</span>'
         h += f'<tr{tr_cls}><td><strong>{escape(mn)}</strong>{champ_badge}</td>'
         for met in all_mets:
             v = mx.get(met)
@@ -2004,6 +2103,7 @@ body{font-family:var(--font);font-size:15px;line-height:1.7;color:var(--text);ba
 .dt .na{color:var(--text-f)}
 .champ-row td{background:var(--ruby-pale) !important;font-weight:600}
 .badge-c{background:var(--ruby);color:#fff;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700}
+.badge-ref{background:#eef2f7;color:#3b556e;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px;font-weight:700}
 .champ-callout{background:var(--card);border-radius:var(--r);padding:0;margin-bottom:20px;box-shadow:var(--sh);overflow:hidden;border-left:4px solid var(--gold)}
 .champ-callout-inner{padding:18px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .champ-callout-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gold-text);background:rgba(212,168,83,0.12);padding:3px 10px;border-radius:6px}

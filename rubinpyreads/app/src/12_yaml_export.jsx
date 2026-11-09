@@ -153,11 +153,12 @@ const buildYaml = (cfg, sp, spFmt) => {
   }
   // evaluation nur emittieren, wenn vom Backend-Default abgewichen wird
   const _benchCols = listify(cfg.benchSegCols);
-  if(cfg.qiniNoiseBand===false || (cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) || _benchCols.length>0){
+  if(cfg.qiniNoiseBand===false || (cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) || _benchCols.length>0 || (cfg.benchMinEffect||0)!==0){
     a("evaluation:");
     if(cfg.qiniNoiseBand===false) a("  qini_noise_band: false");
     if(cfg.qiniNoisePerms && cfg.qiniNoisePerms!==200) a(`  qini_noise_permutations: ${cfg.qiniNoisePerms}`);
     if(_benchCols.length>0) a(`  benchmark_segments: [${_benchCols.map(f=>`"${f}"`).join(", ")}]`);
+    if((cfg.benchMinEffect||0)!==0) a(`  benchmark_min_effect: ${cfg.benchMinEffect}`);
     a("");
   }
   a("data_processing:");

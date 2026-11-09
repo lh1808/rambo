@@ -479,6 +479,54 @@ def _native_qini_curve(
         return None
 
 
+def generate_segment_forest_plot(table, global_ate, min_effect=0.0, title="Segment-Effekte (Forest-Plot)"):
+    """Forest-Plot der Segment-ATEs: Punkt + 95%-CI je Segment, Referenzlinien
+    bei der Relevanzschwelle und beim Gesamt-ATE. Farbkodierung nach Verdict:
+    grün = wirksam belegt (CI komplett über der Schwelle), rot = unter der
+    Schwelle belegt (einziger Zustand, der Depriorisieren rechtfertigt),
+    grau = unentscheidbar. ▲/▼ markieren BH-belegt über-/unterdurchschnittliche
+    Segmente, (▲)/(▼) Tendenzen."""
+    try:
+        from rubin.utils.plot_theme import apply_rubin_theme
+        apply_rubin_theme()
+        rows = [r for r in (table or []) if r.get("ate") is not None and r.get("se")]
+        if not rows:
+            return None
+        rows = sorted(rows, key=lambda r: r["ate"])
+        n = len(rows)
+        fig, ax = plt.subplots(figsize=(8.5, max(2.6, 0.5 * n + 1.6)))
+        colors = {"effective": "#1a7f37", "below_threshold": "#9B111E", "inconclusive": "#9ca3af"}
+        for i, r in enumerate(rows):
+            c = colors.get(r.get("verdict") or "inconclusive", "#9ca3af")
+            lo = r.get("ci_lo"); hi = r.get("ci_hi")
+            if lo is not None and hi is not None:
+                ax.plot([lo, hi], [i, i], color=c, linewidth=2, alpha=0.75, zorder=2)
+            ax.scatter([r["ate"]], [i], color=c, s=42, zorder=3)
+        ax.axvline(float(min_effect), color="#374151", linewidth=1.2, linestyle="-",
+                   label=f"Schwelle ({min_effect:g})" if min_effect else "0 (kein Effekt)")
+        if global_ate is not None:
+            ax.axvline(float(global_ate), color="#D4A853", linewidth=1.4, linestyle="--",
+                       label=f"Gesamt-ATE ({global_ate:+.4f})")
+        _mark = {"above": "▲", "below": "▼"}
+        labels = []
+        for r in rows:
+            m = ""
+            if r.get("direction"):
+                m = " " + _mark[r["direction"]]
+            elif r.get("tendency"):
+                m = " (" + _mark[r["tendency"]] + ")"
+            labels.append(f'{r["segment"]} (n={r["n"]:,}){m}')
+        ax.set_yticks(range(n)); ax.set_yticklabels(labels, fontsize=9)
+        ax.set_xlabel("Treatment-Effekt (ΔATE) mit 95%-CI")
+        ax.set_title(title)
+        ax.legend(loc="lower right", fontsize=8)
+        fig.tight_layout()
+        return fig
+    except Exception as e:
+        _logger.warning("Segment-Forest-Plot fehlgeschlagen: %s", e)
+        return None
+
+
 def generate_uplift_plots(
     cate_preds_val: np.ndarray,
     T_val: np.ndarray,

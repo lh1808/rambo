@@ -132,6 +132,9 @@ const PConfig = ({cfg,set}) => {
       <Col><Inp label="Permutationen" type="number" value={cfg.qiniNoisePerms===0?0:(cfg.qiniNoisePerms||200)} onChange={v=>set({...cfg,qiniNoisePerms:v})} help="Anzahl Score-Permutationen für das Band (Default 200)"/></Col>
     </Row>
     <Inp label="Segment-Benchmark-Spalten (optional)" value={listText(cfg.benchSegCols)} onChange={v=>set({...cfg,benchSegCols:v})} placeholder="NEUKUNDE_FLAG, LEAD_ART" help="Diskrete Spalten aus X (Groß-/Kleinschreibung egal, max. 25 Ausprägungen je Spalte). Das Kreuzprodukt bildet die Segmente; der Benchmark erscheint als eigene Zeile im Modellvergleich und mit ΔATE-Tabelle (inkl. z-Werten) im Report. Die Spalten bleiben für den Benchmark auch dann nutzbar, wenn die Feature-Selektion sie aus X entfernt (sie werden vorher gesichert) — sollen sie zusätzlich MODELL-Feature bleiben, gehören sie in die always_keep-Schutzliste der Feature-Selektion. Leer = aus."/>
+    <div style={{maxWidth:420}}>
+      <Inp label="Relevanzschwelle (optional)" type="number" value={cfg.benchMinEffect===0?0:(cfg.benchMinEffect||0)} onChange={v=>set({...cfg,benchMinEffect:v})} help="Absolute Einordnung je Segment: 0 (Default) = 'wirkt überhaupt' — wirksam belegt (CI komplett über 0) / belegt unwirksam (CI komplett unter 0) / unentscheidbar. Mit bekannten Kosten: Break-even-Effekt eintragen (z. B. 0.002 = lohnt ab +0.2pp); 'unter Schwelle belegt' rechtfertigt dann Depriorisieren. Die Priorisierungs-Spalte (Segment vs. Rest, Benjamini-Hochberg-korrigiert) ist davon unabhängig."/>
+    </div>
   </Sec>
 
   <Sec title="Innere Cross-Validation">
