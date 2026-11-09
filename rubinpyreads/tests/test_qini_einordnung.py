@@ -481,3 +481,80 @@ class TestBalanceDedupGroupInteraction:
             pipe._run_segment_benchmark(cfg, pd.DataFrame({"F": flag}), t, y, None, None, {}, MagicMock(), is_mt=False)
         assert "driften" not in caplog.text
         assert pipe._report.segment_benchmark_info.get("t_rate_drift") is not None
+
+
+class TestBenchmarkSurvivesFeatureSelection:
+    """Realer Vorfall: FEATURES_FEHLEN_FLG war explizit als Benchmark-Segment
+    deklariert, wurde aber von der Feature-Selektion aus X entfernt → der
+    Benchmark entfiel still mit 'nicht in X gefunden'. Garantie jetzt: Die
+    Benchmark-Spalten werden in run() VOR der Selektion gepuffert und in
+    _run_segment_benchmark aus dem Puffer wiederhergestellt."""
+
+    def _data(self, n=30_000, seed=40):
+        rng = np.random.default_rng(seed)
+        flag = (rng.random(n) < 0.106).astype(int)
+        t = (rng.random(n) < 0.75).astype(int)
+        y = (rng.random(n) < 0.131 + 0.042 * flag + t * (0.007 + 0.07 * flag)).astype(int)
+        X_full = pd.DataFrame({"FEATURES_FEHLEN_FLG": flag,
+                               "A": rng.normal(size=n), "B": rng.normal(size=n)})
+        return X_full, t, y
+
+    def test_restored_from_buffer_cross_mode(self, caplog):
+        X_full, t, y = self._data()
+        X_after_fs = X_full[["A", "B"]]  # FS hat die Flag entfernt
+        pipe = _mk_pipeline_stub()
+        pipe._bench_seg_train_df = X_full[["FEATURES_FEHLEN_FLG"]].copy()
+        cfg = _mk_cfg(benchmark_segments=["features_fehlen_flg"])
+        eval_summary = {}
+        with caplog.at_level(logging.INFO, logger="rubin.test_einordnung"):
+            pipe._run_segment_benchmark(cfg, X_after_fs, t, y, None, None, eval_summary, MagicMock(), is_mt=False)
+        assert "segment_benchmark" in eval_summary
+        assert eval_summary["segment_benchmark"]["qini"] > 0
+        assert "wiederhergestellt" in caplog.text and "always_keep" in caplog.text
+        info = pipe._report.segment_benchmark_info
+        assert info["restored_after_fs"] == ["FEATURES_FEHLEN_FLG"]
+        assert info["columns"] == ["FEATURES_FEHLEN_FLG"]
+
+    def test_restored_in_tmes_and_external(self):
+        X_full, t, y = self._data(20_000)
+        X_after = X_full[["A"]]
+        # TMES
+        mask = np.zeros(len(y), dtype=bool); mask[:6000] = True
+        pipe = _mk_pipeline_stub()
+        pipe._bench_seg_train_df = X_full[["FEATURES_FEHLEN_FLG"]].copy()
+        cfg = _mk_cfg(benchmark_segments=["FEATURES_FEHLEN_FLG"])
+        es = {}
+        pipe._run_segment_benchmark(cfg, X_after, t, y, None, mask, es, MagicMock(), is_mt=False)
+        assert "segment_benchmark" in es and pipe._report.segment_benchmark_info["mode"] == "tmes"
+        # External: Spalte auch im Eval-X vom Alignment entfernt → Eval-Puffer
+        Xe_full, te, ye = self._data(8_000, seed=41)
+        pipe2 = _mk_pipeline_stub()
+        pipe2._bench_seg_train_df = X_full[["FEATURES_FEHLEN_FLG"]].copy()
+        pipe2._bench_seg_eval_df = Xe_full[["FEATURES_FEHLEN_FLG"]].copy()
+        es2 = {}
+        holdout = (Xe_full[["A"]], te, ye, None)
+        pipe2._run_segment_benchmark(cfg, X_after, t, y, holdout, None, es2, MagicMock(), is_mt=False)
+        assert "segment_benchmark" in es2 and pipe2._report.segment_benchmark_info["mode"] == "external"
+        assert len(pipe2._eval_scores_ctx["segment_benchmark"][0]) == 8_000
+
+    def test_without_buffer_still_skips_with_warning(self, caplog):
+        X_full, t, y = self._data(5_000)
+        pipe = _mk_pipeline_stub()  # kein Puffer gesetzt
+        cfg = _mk_cfg(benchmark_segments=["FEATURES_FEHLEN_FLG"])
+        es = {}
+        with caplog.at_level(logging.WARNING, logger="rubin.test_einordnung"):
+            pipe._run_segment_benchmark(cfg, X_full[["A", "B"]], t, y, None, None, es, MagicMock(), is_mt=False)
+        assert es == {} and "entfällt" in caplog.text
+
+    def test_buffer_is_filled_before_feature_selection_in_run(self):
+        """Quelltext-Garantie: Der Puffer-Block steht in run() VOR dem
+        _run_feature_selection-Aufruf (sonst puffert er das beschnittene X)."""
+        import inspect
+        import rubin.pipelines.analysis_pipeline as ap
+        src = inspect.getsource(ap.AnalysisPipeline)
+        i_buf = src.index("self._bench_seg_train_df = None")
+        i_fs = src.index("self._run_feature_selection(cfg, X, T, Y, mlflow)")
+        assert i_buf < i_fs
+        # und der Puffer liest aus X (vor der Reduktion), nicht aus removed
+        i_fill = src.index("self._bench_seg_train_df = X[_found].copy()")
+        assert i_fill < i_fs

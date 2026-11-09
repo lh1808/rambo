@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Behoben (Segment-Benchmark: explizit deklarierte Spalte entfiel still, wenn die Feature-Selektion sie entfernte)
+- **Gemeldet (Realfall): FEATURES_FEHLEN_FLG war als benchmark_segments deklariert, flog in der Feature-Selektion aus X — der Benchmark wurde mit „nicht in X gefunden" übersprungen.** Die frühere Doku-Aussage, die Spalten würden „vor der Selektion gesichert", war falsch: run() ersetzt X durch das reduzierte X (und das External-Alignment reduziert auch das Eval-X), und die Spalten-Auflösung lief erst zur Eval-Zeit gegen das beschnittene X.
+- **Fix — der Puffer existiert jetzt wirklich:** run() sichert die deklarierten Benchmark-Spalten VOR der Feature-Selektion aus dem vollen X (und bei External zusätzlich aus dem vollen Eval-X). `_run_segment_benchmark` baut seine Segment-Quelle aus X plus Puffer-Fallback (zeilengleich, da die Selektion nur Spalten entfernt) — in allen drei Modi (cross/TMES/external). Wiederhergestellte Spalten werden geloggt, im Report unter der ΔATE-Tabelle ausgewiesen („nur Segmentierung, kein Modell-Feature") und im Summary (`restored_after_fs`) geführt. Bewusst KEIN automatisches always_keep: Benchmark-Segment und Modell-Feature sind getrennte Entscheidungen (eine Reporting-Dimension wie die Lead-Art muss kein Feature sein) — Log, Report-Hinweis und UI-Hilfetext verweisen auf `feature_selection.always_keep`, wenn beides gewollt ist. 4 neue Dauertests: Wiederherstellung in cross/TMES/external (inkl. Eval-Puffer), Skip-Warnung ohne Puffer, Quelltext-Positionsgarantie „Puffer vor Selektion".
+
 ### Geändert (Analyse-Report: Content-Spalte zentriert statt links an der Seitenleiste)
 - Gemeldet: Die Ergebnis-Sektionen klebten links fest an der Seitenleiste, rechts blieb auf breiten Monitoren eine große tote Fläche. Wurzel: `.main{flex:1;max-width:960px}` im Flex-Layout — die Spalte füllte den Raum von links. Jetzt `.main{width:100%;max-width:1040px;margin:0 auto}`: Die Inhaltsspalte steht zentriert im Raum neben der Sidebar und ist moderat breiter. Golden-Master-Diff = exakt diese eine CSS-Zeile (beide Goldens aktualisiert); Print- und Mobile-Regeln unverändert.
 

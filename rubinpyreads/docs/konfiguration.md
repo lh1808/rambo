@@ -189,7 +189,11 @@ entsteht schon ohne jedes Signal und ist nie mit den Eval-Werten vergleichbar.
 
 **Segment-Benchmark (`benchmark_segments`)** — das ehrliche „Mini-Oracle": Diskrete Spalten
 aus X (case-insensitiv, max. `benchmark_max_levels` Ausprägungen je Spalte, Kreuzprodukt =
-Segmente). Jede Eval-Zeile erhält den geschätzten Treatment-Effekt ihres Segments als Score;
+Segmente). Die Spalten werden **vor der Feature-Selektion gesichert**: Entfernt die Selektion
+sie aus X, bleiben sie für den Benchmark trotzdem nutzbar (er braucht sie nur zum
+Segmentieren, nicht als Modell-Feature) — der Report weist die Wiederherstellung aus. Sollen
+sie zusätzlich Modell-Feature bleiben, gehören sie in `feature_selection.always_keep` (bewusst
+getrennte Hebel: ein Benchmark-Segment wie die Lead-Art muss kein Modell-Feature sein). Jede Eval-Zeile erhält den geschätzten Treatment-Effekt ihres Segments als Score;
 der Benchmark läuft als eigene Zeile durch die normale Evaluation (Modellvergleich,
 per-File-Qini, Plots) und beantwortet: *Wie viel Qini wäre allein die Kenntnis dieser
 Segmente wert?* — der Deckel, an dem die Modelle zu messen sind. Drei Ehrlichkeits-Regeln:

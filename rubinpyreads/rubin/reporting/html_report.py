@@ -701,6 +701,12 @@ def _render_heterogeneity(collector) -> str:
                f'({sb.get("n_segments", 0)} Segmente) · Schätzung {escape(_mode_txt)} · '
                f'{"Cluster-robuste SEs (Gruppen)" if sb.get("grouped") else "zeilenweise SEs"} · '
                f'Benchmark-Qini: <strong>{sb.get("qini", 0):.4f}</strong><br>{_het_txt}</div>')
+        _restored = sb.get("restored_after_fs") or []
+        if _restored:
+            h2 += ('<div style="font-size:12px;color:var(--text-l);margin-top:6px">ℹ ' + escape(", ".join(_restored)) +
+                   ' wurde(n) von der Feature-Selektion aus X entfernt und für den Benchmark aus dem Original-X '
+                   'wiederhergestellt (nur Segmentierung, kein Modell-Feature). Als Modell-Feature behalten → '
+                   '<code>feature_selection.always_keep</code>.</div>')
         _skips = sb.get("skipped_columns") or []
         if _skips:
             h2 += '<div style="font-size:12px;color:#b35900;margin-top:6px">Übersprungen: ' + escape("; ".join(f'{x["column"]} ({x["reason"]})' for x in _skips)) + '</div>'

@@ -2189,7 +2189,37 @@ class AnalysisPipeline:
         if groups is not None and len(groups) != len(Y):
             groups = None
 
-        cols, skipped = resolve_benchmark_columns(cols_req, list(X.columns), max_levels, X)
+        def _seg_source(df, buffer):
+            """Schmales DataFrame der angefragten Benchmark-Spalten.
+
+            Spalten kommen aus df; fehlt eine (z. B. von der Feature-Selektion
+            entfernt), wird sie aus dem VOR der Selektion gesicherten Puffer
+            ergänzt (zeilengleich, da die Selektion nur Spalten entfernt)."""
+            parts, restored = {}, []
+            by_up = {str(c).upper(): c for c in df.columns}
+            buf_up = {str(c).upper(): c for c in (buffer.columns if buffer is not None else [])}
+            for name in cols_req:
+                u = str(name).upper()
+                if u in by_up:
+                    parts[by_up[u]] = df[by_up[u]]
+                elif u in buf_up and buffer is not None and len(buffer) == len(df):
+                    parts[buf_up[u]] = buffer[buf_up[u]]
+                    restored.append(buf_up[u])
+            src = pd.DataFrame(parts, index=df.index) if parts else None
+            return src, restored
+
+        src_train, restored = _seg_source(X, getattr(self, "_bench_seg_train_df", None))
+        if restored:
+            self._logger.info(
+                "Segment-Benchmark: Spalte(n) %s wurden von der Feature-Selektion aus X entfernt — "
+                "für den Benchmark aus dem Original-X wiederhergestellt (der Benchmark braucht sie "
+                "nur zum Segmentieren). Sollen sie auch MODELL-Feature bleiben, gehören sie in "
+                "feature_selection.always_keep.", restored,
+            )
+        if src_train is None:
+            self._logger.warning("Segment-Benchmark entfällt: keine der Spalten %s in X oder im Puffer gefunden.", cols_req)
+            return
+        cols, skipped = resolve_benchmark_columns(cols_req, list(src_train.columns), max_levels, src_train)
         for sk in skipped:
             self._logger.warning("Segment-Benchmark: Spalte '%s' übersprungen (%s).", sk["column"], sk["reason"])
         if not cols:
@@ -2197,30 +2227,33 @@ class AnalysisPipeline:
             return
 
         if holdout_data is not None:
-            # External: fit auf Train, score auf Holdout (Spalten dort nötig)
-            eval_X_h = holdout_data[0]
-            miss = [c for c in cols if c not in eval_X_h.columns]
+            # External: fit auf Train, score auf Holdout (Spalten dort nötig —
+            # das Feature-Alignment kann sie entfernt haben → Eval-Puffer)
+            src_eval, restored_ev = _seg_source(holdout_data[0], getattr(self, "_bench_seg_eval_df", None))
+            if restored_ev:
+                self._logger.info("Segment-Benchmark: Spalte(n) %s im Eval-Datensatz aus dem Original-Eval-X wiederhergestellt.", restored_ev)
+            miss = [c for c in cols if src_eval is None or c not in src_eval.columns]
             if miss:
                 self._logger.warning("Segment-Benchmark entfällt: Spalten %s fehlen im Eval-Datensatz.", miss)
                 return
-            bench = fit_segment_benchmark(X[cols], T, Y, columns=cols, groups=groups, min_rows=min_rows)
+            bench = fit_segment_benchmark(src_train[cols], T, Y, columns=cols, groups=groups, min_rows=min_rows)
             if bench is None:
                 return
-            score = score_segment_benchmark(bench, eval_X_h[cols])
+            score = score_segment_benchmark(bench, src_eval[cols])
             eval_y, eval_t = np.asarray(holdout_data[2]), np.asarray(holdout_data[1])
             mode = "external"
         elif eval_mask is not None:
             _m = np.asarray(eval_mask).astype(bool)
             g_tr = groups[~_m] if groups is not None else None
-            bench = fit_segment_benchmark(X[cols].loc[~_m], T[~_m], Y[~_m], columns=cols, groups=g_tr, min_rows=min_rows)
+            bench = fit_segment_benchmark(src_train[cols].loc[~_m], T[~_m], Y[~_m], columns=cols, groups=g_tr, min_rows=min_rows)
             if bench is None:
                 return
-            score = score_segment_benchmark(bench, X[cols].loc[_m])
+            score = score_segment_benchmark(bench, src_train[cols].loc[_m])
             eval_y, eval_t = np.asarray(Y[_m]), np.asarray(T[_m])
             mode = "tmes"
         else:
             score, bench = fit_score_segment_benchmark_oof(
-                X[cols], T, Y, columns=cols, groups=groups,
+                src_train[cols], T, Y, columns=cols, groups=groups,
                 n_splits=int(getattr(cfg.data_processing, "cross_validation_splits", 5)),
                 seed=seed, min_rows=min_rows)
             if bench is None or score is None:
@@ -2286,6 +2319,7 @@ class AnalysisPipeline:
             "tau2": bench.tau2, "heterogeneity_detected": bench.heterogeneity_detected,
             "q_stat": bench.q_stat, "q_pvalue": bench.q_pvalue,
             "t_rate_drift": t_rate_drift,
+            "restored_after_fs": restored,
             "global_ate": bench.global_ate, "grouped": groups is not None,
             "qini": eval_summary[bench_name]["qini"],
             "table": [
@@ -4480,6 +4514,31 @@ class AnalysisPipeline:
                     X[_m], np.asarray(T)[_m], np.asarray(Y)[_m],
                     (np.asarray(S)[_m] if S is not None else None),
                 )
+
+            # ── Segment-Benchmark-Spalten VOR der Feature-Selektion sichern ──
+            # Der Benchmark braucht die Spalten nur zum Segmentieren, nicht als
+            # Modell-Feature: Entfernt die Selektion sie aus X (und beim
+            # External-Alignment aus dem Eval-X), bleiben sie hier für den
+            # Benchmark erhalten (realer Vorfall: explizit deklarierte
+            # FEATURES_FEHLEN_FLG flog aus X → Benchmark entfiel still).
+            self._bench_seg_train_df = None
+            self._bench_seg_eval_df = None
+            try:
+                _ev_cfg_b = getattr(cfg, "evaluation", None)
+                _bcols_req = list(getattr(_ev_cfg_b, "benchmark_segments", None) or []) if _ev_cfg_b is not None else []
+                if _bcols_req:
+                    _by_up = {str(c).upper(): c for c in X.columns}
+                    _found = [_by_up[str(n).upper()] for n in _bcols_req if str(n).upper() in _by_up]
+                    if _found:
+                        self._bench_seg_train_df = X[_found].copy()
+                    if holdout_data is not None:
+                        _xh_b = holdout_data[0]
+                        _by_up_h = {str(c).upper(): c for c in _xh_b.columns}
+                        _found_h = [_by_up_h[str(n).upper()] for n in _bcols_req if str(n).upper() in _by_up_h]
+                        if _found_h:
+                            self._bench_seg_eval_df = _xh_b[_found_h].copy()
+            except Exception:
+                self._logger.warning("Segment-Benchmark-Spalten-Puffer fehlgeschlagen.", exc_info=True)
 
             _progress("Feature-Selektion")
             # Kategorischer Patch für Feature-Selektion: IMMER "both" weil
