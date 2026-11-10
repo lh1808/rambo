@@ -1,5 +1,3 @@
-Wie in Abb. 4 aufgezeigt wird, ist vor allem eine gute Kalibrierung entscheidend, um Mehrwerte rein modellbasiert valide messen zu können. Bei der vorliegenden Kalibrierung werden out-of-sample gruppierte durchschnittliche CATEs, also kundenindividuelle Uplift-Vorhersagen, ihren tatsächlichen gruppierten ATEs gegenübergestellt. Wenn dies gut funktioniert, ist eine Mehrwertmessung basierend auf diesem Modell valide.
-
-Der Grund dafür ist, dass die modellbasierte Mehrwertmessung den Mehrwert einer Maßnahme als Summe der vorhergesagten CATEs der angesprochenen Kunden berechnet. Diese Summe entspricht nur dann dem tatsächlich erzielten inkrementellen Effekt, wenn die Vorhersagen nicht nur die richtige Reihenfolge der Kunden, sondern auch das richtige Niveau des Effekts treffen. Genau das prüft die Kalibrierung: Die tatsächlichen Gruppen-ATEs stammen aus dem randomisierten Experiment und sind daher unverzerrte Schätzungen des wahren kausalen Effekts. Stimmen die durchschnittlichen Vorhersagen je Gruppe out-of-sample mit diesen überein, über- oder unterschätzt das Modell den Effekt in keinem Bereich des Scores systematisch. Die aufsummierten Vorhersagen für eine anhand des Scores ausgewählte Kundengruppe sind dann ein erwartungstreuer Schätzer ihres tatsächlichen Uplifts, auch ohne eigene Kontrollgruppe im Betrieb.
-
-Ein gutes Ranking allein (z. B. eine gute Qini-Kurve) würde dafür nicht ausreichen: Ein Modell kann Kunden korrekt sortieren und den Effekt dennoch durchgängig zu hoch oder zu niedrig ausweisen, was den gemessenen Mehrwert direkt verzerren würde.
+PKW: KH, VK, TK
+HUS: Feuer, LW, Sturm
+PH: PH
