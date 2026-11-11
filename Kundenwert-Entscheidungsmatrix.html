@@ -1,0 +1,404 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Kundenwert-Entscheidungsmatrix</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: Kopf, darunter die Matrix der Dimensionen mit je drei Auspraegungen, Keine Bewertung, nur Beschreibung. */
+:root{
+  --bg:#f1f5f6; --surface:#ffffff; --map:#f8fafb; --band:#edf2f4;
+  --ink:#001631; --muted:#3f5868; --line:#bccdd3; --edge:#001631;
+  --acc:#2f6c7a; --acc-bg:#d9e8eb; --acc2:#7ca5ae;
+  --night:#001631; --on-night:#ffffff; --dimbg:#e6eef1; --yellow:#ffed00; --red:#bf0643;
+  --font-display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#001631; --surface:#0d2a49; --map:#061f3c; --band:#00122a;
+    --ink:#eaf1f3; --muted:#9fb6be; --line:#2b4a64; --edge:#d2e1e5;
+    --acc:#5fa3b2; --acc-bg:#123748; --acc2:#4f93a3;
+    --night:#d2e1e5; --on-night:#001631; --dimbg:#0a2340; --yellow:#ffed00; --red:#e2457b;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#001631; --surface:#0d2a49; --map:#061f3c; --band:#00122a;
+  --ink:#eaf1f3; --muted:#9fb6be; --line:#2b4a64; --edge:#d2e1e5;
+  --acc:#5fa3b2; --acc-bg:#123748; --acc2:#4f93a3;
+  --night:#d2e1e5; --on-night:#001631; --dimbg:#0a2340; --yellow:#ffed00; --red:#e2457b;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.5}
+.page{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px;display:flex;flex-direction:column;gap:30px;max-width:1500px;margin:0 auto}
+
+/* Kopf */
+.head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:24px 56px;align-items:start}
+@media (max-width:980px){.head{grid-template-columns:minmax(0,1fr)}}
+.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--acc);margin:0}
+h1{font-family:var(--font-display);font-weight:700;font-size:clamp(28px,4vw,40px);line-height:1.1;margin:8px 0 12px;text-wrap:balance;color:var(--night)}
+.lede{margin:0;font-size:17px;max-width:62ch}
+.howto{margin:16px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:14.5px;color:var(--muted)}
+.howto b{color:var(--ink);font-weight:600}
+.key{background:var(--night);color:var(--on-night);border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;font-size:14.5px}
+.key h2{font-family:var(--font-display);font-size:16px;margin:0;display:flex;align-items:center;gap:10px}
+.key h2::after{content:"";flex:1;height:2px;background:var(--yellow);opacity:.9}
+.key ol{margin:0;padding:0;list-style:none;counter-reset:k;display:flex;flex-direction:column;gap:7px}
+.key ol li{counter-increment:k;display:flex;gap:10px;align-items:baseline;opacity:.92}
+.key ol li>span{min-width:0}
+.key ol li::before{content:counter(k);flex:none;width:26px;font-family:var(--font-mono);font-size:12px;font-weight:600;color:#001631;background:var(--yellow);border-radius:4px;text-align:center;padding:1px 0;line-height:1.4}
+.key ol b{font-weight:600}
+
+/* Matrix */
+h2.sec{font-family:var(--font-display);font-weight:700;font-size:24px;margin:0 0 4px}
+p.sub{margin:0 0 14px;font-size:15px;color:var(--muted);max-width:80ch}
+.matrix{display:flex;flex-direction:column;gap:14px}
+.blk{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;padding:14px 4px 0}
+.blk b{font-family:var(--font-display);font-weight:700;font-size:19px;color:var(--night);padding-left:12px;border-left:4px solid var(--yellow)}
+.blk span{font-size:14px;color:var(--muted)}
+.blk:first-of-type{padding-top:0}
+.mhead{display:grid;grid-template-columns:minmax(220px,1.05fr) minmax(0,3fr);gap:14px;padding:0 4px}
+.mhead div{font-family:var(--font-mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:2px solid var(--line);padding-bottom:8px}
+.row{display:grid;grid-template-columns:minmax(220px,1.05fr) repeat(3,minmax(0,1fr));gap:14px;background:var(--map);border:1px solid var(--line);border-radius:10px;padding:16px}
+.row.two{grid-template-columns:minmax(220px,1.05fr) repeat(2,minmax(0,1fr))}
+.row.asp{grid-template-columns:minmax(220px,1.05fr) minmax(0,1fr) minmax(0,2fr)}
+.lbl{display:block;font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.cell.fixed{border-top-color:var(--night)}
+.cell.fixed .lbl{color:var(--acc)}
+.grp{min-width:0;display:flex;flex-direction:column;gap:8px;border:1px dashed var(--acc2);border-radius:10px;padding:10px 10px 10px}
+.grp-cells{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;flex:1}
+.grp-cells .cell{height:100%}
+.dim{min-width:0;display:flex;flex-direction:column;gap:8px;background:var(--dimbg);border-radius:8px;padding:14px 14px 14px;margin:-4px 0 -4px -4px}
+.dim .n{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;color:var(--on-night);background:var(--night);text-transform:uppercase;width:max-content;padding:2px 8px;border-radius:4px}
+.dim h3{font-family:var(--font-display);font-weight:700;font-size:21px;line-height:1.15;margin:0}
+.dim .q{margin:0;font-size:15px;color:var(--muted)}
+.dim .cpl{margin:4px 0 0;font-size:13.5px;color:var(--ink);background:var(--surface);border-left:3px solid var(--acc);padding:8px 10px;border-radius:0 6px 6px 0}
+.dim .cpl b{font-weight:600;color:var(--acc)}
+.cell{min-width:0;display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--acc2);border-radius:8px;padding:12px 13px 13px}
+.cell h4{font-family:var(--font-display);font-weight:600;font-size:17px;line-height:1.2;margin:0;color:var(--night)}
+.cell p{margin:0;font-size:14.5px}
+.cell .when{font-size:13.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px;margin-top:auto}
+.cell .when b{color:var(--acc);font-weight:600}
+@media (max-width:1100px){
+  .mhead{display:none}
+  .row,.row.two,.row.asp{grid-template-columns:minmax(0,1fr)}
+  .grp-cells{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Wechselwirkungen */
+.xwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
+table.x{border-collapse:separate;border-spacing:0;min-width:1150px;width:100%;font-size:13.5px;line-height:1.35}
+table.x th,table.x td{border:1px solid var(--line);padding:9px 10px;vertical-align:top;text-align:left}
+table.x th{background:var(--map);font-family:var(--font-display);font-weight:600;font-size:14px}
+table.x thead th{font-family:var(--font-mono);font-weight:500;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+table.x thead th b{display:block;font-family:var(--font-display);font-size:14px;letter-spacing:0;text-transform:none;color:var(--ink);margin-top:2px;font-weight:600}
+table.x th.corner{background:var(--acc-bg);color:var(--ink);font-family:var(--font-mono);font-weight:500;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase}
+table.x tbody th{width:120px;min-width:120px}
+table.x td.on{background:var(--acc-bg)}
+table.x td.no{background:var(--surface)}
+table.x tbody th span{display:block;font-family:var(--font-mono);font-weight:400;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+table.x td.self{background:var(--band);color:var(--muted);text-align:center;font-family:var(--font-mono);font-size:12px}
+table.x td{min-width:105px;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:10px 0 0;padding:0;list-style:none;font-size:13.5px;color:var(--muted)}
+.legend b{color:var(--ink);font-weight:600}
+</style>
+
+<div class="page">
+  <header class="head">
+    <div>
+      <p class="eyebrow">Kundenwert · Modellwahl</p>
+      <h1>Kundenwert-Entscheidungsmatrix</h1>
+      <p class="lede">Zehn Dimensionen bestimmen, wie ein Kundenwertmodell gebaut wird. Die Matrix zeigt je Dimension die möglichen Ausprägungen, was sie nach sich ziehen und wo sie mit anderen Dimensionen zusammenhängen. Welche Kombination den besten Ausgleich zwischen Performance und Aufwand bringt, ist damit noch nicht entschieden, aber sichtbar, woran es hängt.</p>
+      <ul class="howto">
+        <li><b>Zeilen:</b> die zehn Dimensionen in drei Blöcken: was der Wert leisten muss, Zeit, Daten und Modell. Vorne steht, was vom Use Case gesetzt wird und auf alles Weitere wirkt.</li>
+        <li><b>Spalten:</b> zwei oder drei Ausprägungen je Dimension, geordnet von kurz nach lang beziehungsweise von wenig nach viel. Die Reihenfolge ist keine Wertung.</li>
+        <li><b>Unterste Zeile jeder Zelle:</b> was die Ausprägung voraussetzt oder nach sich zieht.</li>
+      </ul>
+    </div>
+    <aside class="key" aria-label="Die zehn Dimensionen">
+      <h2>Die zehn Dimensionen</h2>
+      <ol>
+        <li><span><b>Zwei Aspekte des Kundenwerts:</b> allgemein ohne Intervention und Delta durch jetzigen Abschluss, getrennt gelernt. Offen ist, wie weit das Delta reicht.</span></li>
+        <li><span><b>Ranking oder absolute Bemessung:</b> muss die Rangfolge stimmen oder der Betrag in Euro.</span></li>
+        <li><span><b>Ebene:</b> je Vertrag, je Produkt oder je Partner.</span></li>
+        <li><span><b>Produktumfang:</b> welche Produkte in den Kundenwert eingehen.</span></li>
+        <li><span><b>Betrachtungshorizont:</b> wie weit die Vorhersage in die Zukunft schaut.</span></li>
+        <li><span><b>Trainingsdatenhorizont:</b> wie weit die Trainingsdaten zurückreichen.</span></li>
+        <li><span><b>Zeitliche Drifts:</b> wie mit Verschiebungen über die Zeit umgegangen wird.</span></li>
+        <li><span><b>Daten und Merkmale:</b> welche Quellen und wie tief.</span></li>
+        <li><span><b>HDS-Einwilligung:</b> wie Kunden ohne Einwilligung in Training und Produktion behandelt werden.</span></li>
+        <li><span><b>Neukunde und Bestandskunde:</b> gemeinsam oder getrennt, und wie die Güte ausgewiesen wird.</span></li>
+      </ol>
+    </aside>
+  </header>
+
+  <section aria-label="Matrix der Dimensionen">
+    <h2 class="sec">Dimensionen und Ausprägungen</h2>
+    <p class="sub">Je Zeile eine Dimension mit Leitfrage, links der Punkt, der sie mit anderen Zeilen verbindet, rechts die Ausprägungen.</p>
+    <div class="matrix">
+      <div class="mhead">
+        <div>Dimension</div>
+        <div>Mögliche Ausprägungen</div>
+      </div>
+
+      <div class="blk"><b>Was der Wert leisten muss</b><span>Vom Use Case gesetzt. Diese Dimensionen wirken auf alle weiteren.</span></div>
+
+      <!-- 1 Aspekte -->
+      <div class="row asp">
+        <div class="dim">
+          <span class="n">Dimension 1</span>
+          <h3>Zwei Aspekte des Kundenwerts</h3>
+          <p class="q">Gesetzt ist: Beide Aspekte werden getrennt gelernt. Der allgemeine Wert ist der wahrscheinliche Kundenwert ohne jetzige Intervention, also alles, was ab jetzt ohnehin kommt. Der Vertriebswert ist ein Delta: Kundenwert über den Horizont mit jetzigem Abschluss minus ohne. Offen ist nur der Vertriebswert: wie weit das Delta reicht.</p>
+          <p class="cpl"><b>Verbindung:</b> Der Vertriebswert wird mit dem Kausalscore einer Maßnahme multipliziert. Der Kausalscore misst die Wirkung auf den Abschluss des Zielprodukts; alles, was der Abschluss danach auslöst, gehört in den Vertriebswert, nicht in den Kausalscore, sonst wird es doppelt gezählt.</p>
+        </div>
+        <div class="cell fixed">
+          <span class="lbl">Aspekt A · gesetzt, keine Ausprägung</span>
+          <h4>Allgemeiner Kundenwert</h4>
+          <p>Wahrscheinlicher Kundenwert über den Horizont ohne jetzige Intervention. Direkt am tatsächlichen Kundenwert gelernt, über alle Kunden; Abschlüsse und Kündigungen im Folgezeitraum stecken im Ergebnis.</p>
+          <p class="when"><b>Verwendung:</b> Priorisierung, Gesamtpotenzial, Bestandswert. Immer vorhanden, unabhängig von der Wahl rechts.</p>
+        </div>
+        <div class="grp">
+          <span class="lbl">Aspekt B · Vertriebswert, zu entscheiden: wie weit reicht das Delta?</span>
+          <div class="grp-cells">
+            <div class="cell">
+              <h4>Nur das Zielprodukt</h4>
+              <p>Das Delta nur im Zielprodukt. Ohne Abschluss ist dessen Wert null, das Delta ist also der Wert des neuen Vertrags über den Horizont: Beiträge, Schäden, Kosten und Verbleib. Gelernt auf Kunden, die das Produkt abgeschlossen haben.</p>
+              <p class="when"><b>Zieht nach sich:</b> Ein Modell je Produkt oder Produktgruppe. Folgewirkungen auf den übrigen Kunden bleiben außen vor, der allgemeine Wert bleibt davon unberührt.</p>
+            </div>
+            <div class="cell">
+              <h4>Zielprodukt und Folgewirkungen</h4>
+              <p>Das Delta auf den Partner gesamt: Kundenwert über den Horizont mit Abschluss minus ohne Abschluss, über alle Verträge. Enthält Folgeabschlüsse (etwa Wohngebäude zieht Privathaftpflicht nach), geänderten Verbleib anderer Verträge und Bündeleffekte.</p>
+              <p class="when"><b>Zieht nach sich:</b> Ebene Kunde gesamt statt je Produkt. Abschließer und Nichtabschließer unterscheiden sich auch ohne den Abschluss; der Vergleich braucht eine Adjustierung, etwa über vergleichbare Kunden oder ein kausales Modell mit dem Abschluss als Treatment.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2 Ranking oder absolute Bemessung -->
+      <div class="row two">
+        <div class="dim">
+          <span class="n">Dimension 2</span>
+          <h3>Ranking oder absolute Bemessung</h3>
+          <p class="q">Muss die Reihenfolge der Kunden stimmen, oder der Betrag in Euro? Die Anforderung kommt aus dem Use Case und wird je Aspekt und je Ebene getrennt gestellt: Der allgemeine Wert kann sortiert werden, während das Delta des Vertriebswerts in Euro gebraucht wird.</p>
+          <p class="cpl"><b>Verbindung:</b> Rangfolgen und Beträge altern unterschiedlich. Niveauverschiebungen durch Preise, Schäden oder Kosten ändern Beträge, lassen die Reihenfolge aber oft unberührt. Beträge verlangen deshalb mehr an Daten, Drift und Prüfung als Rangfolgen.</p>
+        </div>
+        <div class="cell">
+          <h4>Ranking</h4>
+          <p>Nur die Rangfolge der Kunden muss stimmen. Das Niveau der Werte ist zweitrangig, ein konstanter Fehler über alle Kunden stört nicht.</p>
+          <p class="when"><b>Zieht nach sich:</b> Rangmaße (Rangkorrelation, Lift in den oberen Dezilen). Werte aus verschiedenen Modellen oder Ebenen lassen sich nicht addieren, wenn nur ihre Ränge stimmen. Die Rangverteilung der Kundengruppen ist zu prüfen.</p>
+        </div>
+        <div class="cell">
+          <h4>Absolute Bemessung</h4>
+          <p>Der Betrag in Euro muss stimmen: im Mittel größerer Kundenmengen und in der Summe, bei einer Schwelle je Kunde (etwa „Delta mal Kausalscore größer als Kosten je Brief“) auch im Einzelfall.</p>
+          <p class="when"><b>Zieht nach sich:</b> Niveaumaße (Kalibrierung je Dezil, Bias, Summenabgleich mit dem Portfolio), bei Schwellen je Kunde auch in den Randbereichen. Kosten müssen vollständig in der Zielgröße stecken, Niveau-Drift muss behandelt werden. Große Einzelschäden und seltene Abschlüsse schlagen durch. Summen über Verträge oder Produkte werden möglich.</p>
+        </div>
+      </div>
+      <!-- 3 Ebene -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 3</span>
+          <h3>Ebene</h3>
+          <p class="q">Auf welcher Ebene wird der Kundenwert gelernt und ausgegeben: je Vertrag, je Produkt oder je Partner, also Kunde gesamt? Hat ein Kunde mehrere Verträge, etwa zwei Kfz-Verträge, lassen sie sich auf Partner-Ebene nicht unterscheiden.</p>
+          <p class="cpl"><b>Verbindung:</b> Lern- und Ausgabeebene können auseinanderfallen. Fein gelernte Werte lassen sich zum Partner summieren; ein auf Partner-Ebene gelernter Wert lässt sich nicht ohne Weiteres auf Verträge aufteilen.</p>
+        </div>
+        <div class="cell">
+          <h4>Vertrag</h4>
+          <p>Zielgröße je Vertrag: Beiträge, Schäden, Kosten und Verbleib dieses Vertrags. Mehrere Verträge im selben Produkt bleiben unterscheidbar.</p>
+          <p class="when"><b>Zieht nach sich:</b> Kosten und Zielgröße müssen je Vertrag zuordenbar sein. Der Partnerwert ist die Summe der Verträge. Wechselwirkungen zwischen Verträgen, etwa Bündelung oder Folgeabschlüsse, liegen außerhalb des einzelnen Vertragswerts.</p>
+        </div>
+        <div class="cell">
+          <h4>Produkt oder Sparte</h4>
+          <p>Zielgröße je Produkt des Kunden. Mehrere Verträge im selben Produkt werden zusammengefasst.</p>
+          <p class="when"><b>Zieht nach sich:</b> Verträge im selben Produkt sind nicht unterscheidbar. Die Schadenerwartung muss auf die Produktebene passen, je nachdem, wie sie geliefert wird. Der Partnerwert ist die Summe über die Produkte.</p>
+        </div>
+        <div class="cell">
+          <h4>Partner</h4>
+          <p>Zielgröße Kunde gesamt über alle Verträge.</p>
+          <p class="when"><b>Zieht nach sich:</b> Weder Verträge noch Produkte sind unterscheidbar, ein Wert je Produkt entsteht nur durch nachträgliche Aufteilung. Produkte mit und ohne Schadenmodell liegen im selben Wert. Wechselwirkungen zwischen Verträgen sind im Wert enthalten. Kosten müssen nicht je Vertrag zugeordnet werden.</p>
+        </div>
+      </div>
+
+      <!-- 4 Produktumfang -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 4</span>
+          <h3>Produktumfang</h3>
+          <p class="q">Welche Produkte gehen in den Kundenwert ein? Alles außerhalb des Umfangs fehlt im Partnerwert, im Potenzial und in den Folgewirkungen.</p>
+          <p class="cpl"><b>Verbindung:</b> Jedes aufgenommene Produkt bringt eigene Vertragsdaten, Kostenlogik und entweder eine Schadenerwartung oder keine. Der Umfang legt damit fest, wie viele Produktfälle mit und ohne Schadenmodell im Wert zusammentreffen.</p>
+        </div>
+        <div class="cell">
+          <h4>Aktueller Umfang</h4>
+          <p>PKW: KH, VK, TK. HUS: Feuer, Leitungswasser, Sturm. PH: Privathaftpflicht.</p>
+          <p class="when"><b>Zieht nach sich:</b> Der Kundenwert deckt einen Teil des Bestands ab. Potenzial und Folgewirkungen sind nur zwischen diesen Produkten sichtbar, Cross-Selling in andere Produkte fehlt im Delta. Je Produkt ist zu klären, ob eine Schadenerwartung vorliegt.</p>
+        </div>
+        <div class="cell">
+          <h4>Alle Produkte außer Leben und Kranken</h4>
+          <p>Das gesamte Kompositgeschäft: übrige Kfz-Deckungen, Wohngebäude und Hausrat vollständig, Unfall, Rechtsschutz und weitere Sparten.</p>
+          <p class="when"><b>Zieht nach sich:</b> Mehr Produktfälle ohne Schadenmodell, also mehr Ersatzgrößen oder Rückfall. Produktpfade über das ganze Kompositgeschäft werden sichtbar. Je Sparte eigene Vertragslogik, Kostenzuordnung und Drift.</p>
+        </div>
+        <div class="cell">
+          <h4>Mit Leben und Kranken</h4>
+          <p>Zusätzlich die Personenversicherungen mit Laufzeiten über Jahrzehnte.</p>
+          <p class="when"><b>Zieht nach sich:</b> Beiträge minus Schäden minus Kosten je Jahr beschreibt den Wert dort nicht; es braucht eine eigene Wertlogik (Laufzeit, Storno, Rückstellungen, Abschlusskosten) und eigene Horizonte. Andere Datenquellen und Systeme, bei Kranken zusätzliche Anforderungen an die Verwendung von Gesundheitsdaten.</p>
+        </div>
+      </div>
+
+      <!-- 5 Betrachtungshorizont -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 5</span>
+          <h3>Betrachtungshorizont</h3>
+          <p class="q">Wie weit schaut die Vorhersage in die Zukunft? Es können mehrere Horizonte nebeneinander gebraucht werden, als eigenes Modell je Horizont oder als ein Modell mit dem Horizont als Merkmal.</p>
+          <p class="cpl"><b>Verbindung:</b> Der Horizont legt fest, wie alt der jüngste vollständige Trainingsstichtag ist. Bei drei Jahren Horizont liegt er drei Jahre zurück, weil erst dann der tatsächliche Kundenwert über den ganzen Horizont beobachtet ist.</p>
+        </div>
+        <div class="cell">
+          <h4>1 Jahr</h4>
+          <p>Ein Jahr Beiträge, Schäden und Kosten. Verbleib und Abschluss wirken nur über ein Jahr.</p>
+          <p class="when"><b>Zieht nach sich:</b> Trainingsstichtage ab einem Jahr zurück. Der Wert ist nahe am Jahresergebnis des Kunden.</p>
+        </div>
+        <div class="cell">
+          <h4>3 Jahre</h4>
+          <p>Mehrjährig. Kündigungen und Abschlüsse innerhalb des Zeitraums prägen den Wert deutlich.</p>
+          <p class="when"><b>Zieht nach sich:</b> Trainingsstichtage ab drei Jahren zurück. Tarif- und Produktänderungen in der Zwischenzeit liegen in den Trainingsdaten.</p>
+        </div>
+        <div class="cell">
+          <h4>5 Jahre und mehr</h4>
+          <p>Näher an einem Kundenlebenswert. Verbleib, Abschlüsse und Produktwechsel bestimmen einen großen Teil des Werts.</p>
+          <p class="when"><b>Zieht nach sich:</b> Trainingsstichtage aus einer älteren Tarif- und Produktwelt. Der tatsächliche Kundenwert zum Vergleich liegt erst nach fünf Jahren vor.</p>
+        </div>
+      </div>
+
+      <div class="blk"><b>Zeit</b><span>Wie weit nach vorn und nach hinten geschaut wird, und was die Zeit mit den Daten macht.</span></div>
+
+      <!-- 6 Trainingsdatenhorizont -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 6</span>
+          <h3>Trainingsdatenhorizont</h3>
+          <p class="q">Wie viele Trainingsstichtage werden genutzt, und wie weit reichen sie zurück? Die Frage stellt sich je Betrachtungshorizont getrennt.</p>
+          <p class="cpl"><b>Grundsatz:</b> nur so weit zurück wie sinnvoll. Ältere Stichtage kommen nur dazu, wenn sie im Rückblick messbar bessere Werte liefern. Ohne diesen Nachweis bringen sie vor allem mehr Drift und mehr Datenaufbereitung in das Modell.</p>
+          <p class="cpl"><b>Verbindung:</b> Jeder weitere Stichtag bringt mehr Beispiele je Kunde und mehr Abschlüsse, liegt aber ein Jahr weiter von der Gegenwart entfernt. Für jeden Stichtag müssen alle Quellen mit dem damaligen Stand vorliegen.</p>
+        </div>
+        <div class="cell">
+          <h4>Nur der jüngste Stichtag</h4>
+          <p>Ein Datenstand, eine Zielgröße, eine Beobachtung je Kunde.</p>
+          <p class="when"><b>Zieht nach sich:</b> Kein Vergleich zwischen Stichtagen, Drift ist nicht messbar. Seltene Ereignisse wie Abschlüsse in kleinen Produkten sind dünn besetzt.</p>
+        </div>
+        <div class="cell">
+          <h4>Mehrere Stichtage, jahresweise versetzt</h4>
+          <p>Zwei bis drei Datenstände, jeweils mit eigenem Folgezeitraum.</p>
+          <p class="when"><b>Zieht nach sich:</b> Rückwirkende Datenstände je Stichtag, auch für Schadenerwartung und MDM. Drift zwischen den Stichtagen ist messbar, Kunden treten mehrfach auf.</p>
+        </div>
+        <div class="cell">
+          <h4>Alle verfügbaren Stichtage</h4>
+          <p>So weit zurück, wie die Datenbasis reicht.</p>
+          <p class="when"><b>Zieht nach sich:</b> Die ältesten Stichtage liegen in anderen Tarifen, Produkten und Preisniveaus. Zu entscheiden ist, ob und wie alte Stichtage gewichtet werden. Ob sie überhaupt etwas beitragen, zeigt nur der Vergleich mit einem Training auf weniger Stichtagen.</p>
+        </div>
+      </div>
+
+      <!-- 7 Drift -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 7</span>
+          <h3>Zeitliche Drifts</h3>
+          <p class="q">Beiträge, Schäden, Kosten und Abschlussverhalten verschieben sich über die Jahre. Wie geht das Modell damit um?</p>
+          <p class="cpl"><b>Verbindung:</b> Wie viel Drift überhaupt entsteht, legen Betrachtungs- und Trainingsdatenhorizont fest. Drift wirkt auf Beträge (Niveau) anders als auf Rangfolgen (Reihenfolge der Kunden).</p>
+        </div>
+        <div class="cell">
+          <h4>Kein eigener Umgang</h4>
+          <p>Einmal trainieren und unverändert anwenden. Niveauverschiebungen wie Beitragsanpassungen oder Schadeninflation gehen in die Beträge ein.</p>
+          <p class="when"><b>Zieht nach sich:</b> Beträge altern mit dem Modell. Rangfolgen sind davon weniger betroffen als Beträge.</p>
+        </div>
+        <div class="cell">
+          <h4>Standardmaßnahmen</h4>
+          <p>Beträge auf ein Preisniveau bereinigen, Stichtag als Merkmal oder neuere Stichtage höher gewichten, regelmäßiges Neutraining, Niveau der Vorhersagen gegen das Portfolio prüfen.</p>
+          <p class="when"><b>Zieht nach sich:</b> Einen festen Rhythmus für Neutraining und Niveauprüfung im Betrieb.</p>
+        </div>
+        <div class="cell">
+          <h4>Explizite Driftkorrektur</h4>
+          <p>Rekalibrierung auf das aktuelle Niveau, Stabilitätstests je Merkmal, Ausschluss driftender Merkmale, Trendkomponenten, Monitoring je Produktfall.</p>
+          <p class="when"><b>Zieht nach sich:</b> Eigene Verfahren und Kennzahlen für Drift, die mit dem Modell gepflegt werden.</p>
+        </div>
+      </div>
+
+      <div class="blk"><b>Daten und Modell</b><span>Was eingeht und wie das Modell geschnitten wird.</span></div>
+
+      <!-- 8 Daten -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 8</span>
+          <h3>Daten und Merkmale</h3>
+          <p class="q">Welche Quellen gehen ein, und wie tief? HF3 nur implizit über die Best-Estimate-Ausgaben oder zusätzlich mit direkt angespielten Merkmalen für eigene Modellierung, dazu MDM und Versicherungshistorie.</p>
+          <p class="cpl"><b>Grundsatz:</b> nur so viele Merkmale wie nötig. Jede Quelle muss für jeden Trainingsstichtag rückwirkend vorliegen und in der Produktion laufend geliefert und überwacht werden.</p>
+          <p class="cpl"><b>Zugang zu HF3:</b> Im Raum steht eine direkte Kopie des HF3 Feature Store, um die Best-Estimate-Modelle selbst abzufragen. Der Feature Store dient dann nur dazu, die Modelle anzusprechen. Merkmale, die dauerhaft im Kundenwert verwendet werden sollen, werden direkt aus dem DWH gezogen.</p>
+        </div>
+        <div class="cell">
+          <h4>Historie und Best Estimate</h4>
+          <p>Versicherungshistorie je Jahr rückwirkend (Verträge, Beiträge, Schäden, Kündigungen, daraus Dauer und Schadenhäufigkeit) plus die Schadenerwartung der Best-Estimate-Modelle, wo sie vorliegt: geliefert oder über die Kopie des Feature Store selbst abgefragt.</p>
+          <p class="when"><b>Zieht nach sich:</b> Für Kunden mit kurzer Historie und für künftige Produkte gibt es wenig Merkmale. HF3 geht nur als fertige Modellausgabe ein, keine HF3-Merkmale im Kundenwertmodell.</p>
+        </div>
+        <div class="cell">
+          <h4>Dazu das MDM</h4>
+          <p>Alles, was im MDM vorliegt: Produktbesitz, Vertragswerte der Sparten, marketingbezogene Kundendaten. HF3 weiterhin nur implizit über den Best Estimate.</p>
+          <p class="when"><b>Zieht nach sich:</b> Rückwirkende Stände des MDM je Stichtag. Welche Merkmale das Modell davon tatsächlich nutzt, entscheidet sich im Training.</p>
+        </div>
+        <div class="cell">
+          <h4>Dazu direkte HF3-Merkmale</h4>
+          <p>Risiko- und Tarifmerkmale für eigene Schadenmodellierung, dauerhaft über das DWH gezogen, nicht aus dem Feature Store.</p>
+          <p class="when"><b>Zieht nach sich:</b> Eigene DWH-Abzüge je Merkmal in Entwicklung und Produktion, mehr Merkmale, die driften können, und eine Abgrenzung zur Schadenerwartung des Aktuariats, die dieselben Merkmale bereits verarbeitet.</p>
+        </div>
+      </div>
+
+      <!-- 9 HDS-Einwilligung -->
+      <div class="row two">
+        <div class="dim">
+          <span class="n">Dimension 9</span>
+          <h3>HDS-Einwilligung</h3>
+          <p class="q">Bei Kunden mit HDS-Einwilligung dürfen Daten aus dem gesamten Konzern zusammengezogen werden, bei den übrigen nicht. Heute wird nur auf HDS-Kunden trainiert, etwa zwei Drittel des Bestands, mit steigendem Anteil. Offen ist, wie Kunden ohne Einwilligung im Training und in der Produktion behandelt werden.</p>
+          <p class="cpl"><b>Verbindung:</b> Der Status ist eine Eigenschaft des Partners und gilt für alle seine Verträge. Er ist nicht zufällig verteilt: Kunden mit und ohne Einwilligung unterscheiden sich, was auf Training und Güte durchschlägt. Welche Daten ohne Einwilligung genutzt werden dürfen, auch rückwirkend für frühere Stichtage, ist zu klären.</p>
+        </div>
+        <div class="cell">
+          <h4>Nur HDS-Kunden</h4>
+          <p>Training und Anwendung ausschließlich auf Kunden mit Einwilligung. Kunden ohne Einwilligung erhalten keinen Kundenwert.</p>
+          <p class="when"><b>Zieht nach sich:</b> Etwa ein Drittel des Bestands bleibt ohne Wert, mit sinkendem Anteil. Alle Use Cases decken nur diesen Teil ab. Die Güte beschreibt nur Kunden mit Einwilligung.</p>
+        </div>
+        <div class="cell">
+          <h4>Auf HDS trainieren, auf alle anwenden</h4>
+          <p>Ein Modell, gelernt auf HDS-Kunden, angewendet auf alle. Für Kunden ohne Einwilligung stehen nur die Merkmale zur Verfügung, die ohne Einwilligung zulässig sind. Ein Weg dorthin ist ein Teacher-Student-Ansatz: Das volle Modell (Teacher) liefert die Vorhersagen, ein Entscheidungsbaum mit fester Mindestgröße je Blatt (Student) lernt sie auf den zulässigen Merkmalen nach und wird auf Kunden ohne Einwilligung angewendet.</p>
+          <p class="when"><b>Zieht nach sich:</b> Ein Student je Teacher, der mit jedem Neutraining nachgezogen wird. Die Mindestgröße je Blatt gibt vor, wie grob der Student wird; die Werte beider Gruppen sind unterschiedlich belastbar. Zu prüfen ist, ob ein auf HDS-Kunden gelerntes Modell für die anderen gilt.</p>
+        </div>
+      </div>
+
+      <!-- 10 Kundengruppen -->
+      <div class="row">
+        <div class="dim">
+          <span class="n">Dimension 10</span>
+          <h3>Neukunde und Bestandskunde</h3>
+          <p class="q">Ein Modell für beide Gruppen oder getrennte Modelle? Die Güte wird in jedem Fall je Kundengruppe getrennt ausgewiesen.</p>
+          <p class="cpl"><b>Verbindung:</b> Neukunden haben kaum Historie, ihre Merkmale kommen aus dem MDM. Bestandskunden haben Historie und, für Produkte mit Schadenmodell, eine Schadenerwartung. Die Gruppe wird am Stichtag bestimmt.</p>
+        </div>
+        <div class="cell">
+          <h4>Ein Modell, Güte getrennt</h4>
+          <p>Gemeinsames Training mit der Kundendauer als Merkmal. Rang- und Niveaumaße getrennt je Gruppe, dazu die Verteilung der Gruppen über die Ränge.</p>
+          <p class="when"><b>Zieht nach sich:</b> Das Modell gleicht die unterschiedliche Datenlage der Gruppen intern aus. Unterschiede in der Güte werden sichtbar, aber nicht behandelt.</p>
+        </div>
+        <div class="cell">
+          <h4>Ein Modell, Anpassung je Gruppe</h4>
+          <p>Gemeinsames Training, aber Niveau oder Merkmalsauswahl je Gruppe angepasst, etwa eine eigene Kalibrierung für Neukunden.</p>
+          <p class="when"><b>Zieht nach sich:</b> Einen zweiten Schritt nach dem Training, der je Gruppe gepflegt wird.</p>
+        </div>
+        <div class="cell">
+          <h4>Getrennte Modelle</h4>
+          <p>Je Kundengruppe ein eigenes Modell mit eigener Merkmalsbasis.</p>
+          <p class="when"><b>Zieht nach sich:</b> Zwei Trainings und zwei Betriebe. Die Werte beider Modelle müssen zueinander passen, sonst mischt die gemeinsame Rangfolge zwei Skalen.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+</div>
+
+</body></html>
