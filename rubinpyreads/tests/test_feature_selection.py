@@ -431,68 +431,62 @@ class TestFeatureReductionPipelineIntegration:
 
 
 
-class TestCausalForestSmallGroupBias:
-    """Realer Vorfall: Ein binäres Feature mit starker kausaler Information
-    (Effekt-Moderator) flog in der Selektion raus, obwohl GRF lief. Wurzel:
-    Mit min_samples_leaf=20 jagt der Forest Rausch-Heterogenität in kleinen
-    Blättern kontinuierlicher Features (~n Schwellen-Kandidaten je Feature);
-    der ehrliche Ein-Split-Kontrast des Binärs verlor dagegen (gemessen:
-    Rang 36/36 hinter purem Rauschen bei n=6k; mehr Bäume helfen NICHT).
-    Fix: adaptive Mindest-Blattgröße ~2.5% der Zeilen, nur für den
-    Importance-Fit."""
+class TestCausalForestLeafSizeRevert:
+    """Revert auf Nutzerwunsch: Die zwischenzeitliche adaptive Mindest-
+    Blattgröße (~2.5% der Zeilen, Cap 2500) für den GRF-Importance-Fit
+    unterdrückte Moderatoren, die nur in KLEINEN Segmenten wirken — ein
+    Segment kleiner als die Mindest-Blattgröße kann kein eigenes Blatt
+    bilden, der Split auf dieses Feature ist strukturell verboten und
+    seine Importance fällt auf ~0. Der Fit nutzt wieder fix
+    min_samples_leaf=20; der bekannte Trade-off (Kleine-Gruppen-Bias
+    bei kleinem n zugunsten binärer Moderatoren) ist bewusst akzeptiert,
+    fachlich gesetzte Features schützt feature_selection.always_keep."""
 
-    def _data(self, n=12000, seed=1, tau_lift=0.06):
+    def _small_segment_data(self, n=12000, seed=5, frac=0.08, lift=0.25):
+        """Moderator wirkt NUR in einem kleinen Segment (~frac·n Zeilen)."""
         rng = np.random.default_rng(seed)
-        B = rng.integers(0, 2, n).astype(float)
-        X = pd.DataFrame({"B_MOD": B})
+        S = (rng.random(n) < frac).astype(float)
+        X = pd.DataFrame({"S_SEG": S})
         for i in range(12):
             X[f"N{i}"] = rng.normal(size=n)
-        for i in range(2):
-            X[f"P{i}"] = rng.normal(size=n)
-        base = 0.30 + 0.05 * np.tanh(X["P0"]) + 0.05 * np.tanh(X["P1"])
         T = rng.integers(0, 2, n)
-        Y = (rng.random(n) < np.clip(base + (0.02 + tau_lift * B) * T, 0.01, 0.95)).astype(float)
+        Y = (rng.random(n) < np.clip(0.30 + (0.01 + lift * S) * T, 0.01, 0.95)).astype(float)
         return X, T, Y
 
-    def test_binary_moderator_ranks_high_with_adaptive_leaf(self):
-        """A/B auf IDENTISCHEN Daten: alte fixe 20er-Blätter vs. neue adaptive
-        Blattgröße — der binäre Moderator muss mit dem Fix klar besser und
-        absolut vorne ranken."""
+    def test_fit_uses_fixed_leaf_20(self):
+        """Quelltext-Garantie: kein adaptiver Blattgrößen-Term mehr im
+        Importance-Fit — fix min_samples_leaf=20."""
+        import inspect
+        from rubin import feature_selection as fs_mod
+        src = inspect.getsource(fs_mod._causal_forest_importance)
+        assert "min_samples_leaf=20" in src
+        assert "_adaptive_leaf" not in src and "// 40" not in src
+
+    def test_small_segment_moderator_survives_with_small_leaves(self):
+        """A/B auf IDENTISCHEN Daten: Ein Moderator eines 8%-Segments
+        (n=12k → ~960 Zeilen) rankt mit dem Produktions-Fit (Blatt 20)
+        auf Rang 1; mit großen Blättern (300 = adaptive Größe bei n=12k)
+        fällt seine Importance auf exakt 0 (gemessen über mehrere Seeds).
+        Mechanismus: min_samples_leaf wirkt im honest-Subsample (~45%
+        der Zeilen, halbiert) — die effektive Sperrschwelle liegt bei
+        Segment-Anteil ≈ Blatt/(0.45·n/2) ≈ 11%, zusätzlich blockt GRFs
+        Balancedness-Regel (Kind ≥ 5% des Knotens) alles unter 5%
+        unabhängig von der Blattgröße. Genau dieser Mechanismus
+        (kleine kausale Segmente werden strukturell unsichtbar)
+        motivierte den Revert."""
         from econml.grf import CausalForest
         from rubin.feature_selection import _causal_forest_importance
-        X, T, Y = self._data(seed=1, tau_lift=0.12)
-        # ALT: fixe 20er-Blätter (das frühere Verhalten), direkt via GRF
-        cf_alt = CausalForest(n_estimators=100, min_samples_leaf=20, random_state=1, n_jobs=-1)
-        cf_alt.fit(X.to_numpy(np.float64), T.astype(float), Y)
-        imp_alt = pd.Series(np.asarray(cf_alt.feature_importances_).ravel(), index=X.columns)
-        rang_alt = int(imp_alt.rank(ascending=False)["B_MOD"])
-        # NEU: Produktionsfunktion mit adaptiver Blattgröße
-        imp_neu = _causal_forest_importance(X, T, Y, seed=1, n_jobs=-1)
-        rang_neu = int(imp_neu.rank(ascending=False)["B_MOD"])
-        assert rang_neu <= 3, (rang_alt, rang_neu)
-        assert rang_neu <= rang_alt, (rang_alt, rang_neu)
-
-    def test_adaptive_leaf_formula(self):
-        """max(20, min(n//40, 2500)): klein-n behält 20, dann ~2.5%, Cap 2500."""
-        for n, expected in ((500, 20), (800, 20), (6000, 150), (20000, 500),
-                            (100000, 2500), (500000, 2500)):
-            assert int(max(20, min(n // 40, 2500))) == expected
-
-    def test_continuous_moderator_not_hurt_by_adaptive_leaf(self):
-        """Gegenprobe: Ein glatter kontinuierlicher Moderator bleibt mit
-        großen Blättern vorne (Kalibrierungsmatrix: gleich gut oder besser)."""
-        from rubin.feature_selection import _causal_forest_importance
-        rng = np.random.default_rng(3)
-        n = 12000
-        C = rng.normal(size=n)
-        X = pd.DataFrame({"C_MOD": C})
-        for i in range(12):
-            X[f"N{i}"] = rng.normal(size=n)
-        T = rng.integers(0, 2, n)
-        tau = 0.02 + 0.06 / (1 + np.exp(-2 * C))
-        Y = (rng.random(n) < np.clip(0.30 + tau * T, 0.01, 0.95)).astype(float)
-        imp = _causal_forest_importance(X, T, Y, seed=3, n_jobs=-1)
-        assert int(imp.rank(ascending=False)["C_MOD"]) <= 3
+        X, T, Y = self._small_segment_data(seed=5)
+        # Produktions-Fit (Blatt 20): kleines kausales Segment bleibt sichtbar
+        imp_prod = _causal_forest_importance(X, T, Y, seed=5, n_jobs=-1)
+        rang_prod = int(imp_prod.rank(ascending=False)["S_SEG"])
+        # Kontrast: große Blätter wie unter der adaptiven Formel (12000//40=300)
+        cf_big = CausalForest(n_estimators=100, min_samples_leaf=300, random_state=5, n_jobs=-1)
+        cf_big.fit(X.to_numpy(np.float64), T.astype(float), Y)
+        imp_big = pd.Series(np.asarray(cf_big.feature_importances_).ravel(), index=X.columns)
+        rang_big = int(imp_big.rank(ascending=False)["S_SEG"])
+        assert rang_prod <= 3, (rang_prod, rang_big)
+        assert rang_prod < rang_big, (rang_prod, rang_big)
 
 
 class TestAlwaysKeep:

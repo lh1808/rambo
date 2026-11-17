@@ -316,32 +316,26 @@ def _causal_forest_importance(
     import random
     random.seed(seed)
 
-    # ── Adaptive Mindest-Blattgröße (gegen Kleine-Gruppen-Bias) ──
-    # Realer Vorfall: Ein binäres Feature mit starkem Moderationseffekt
-    # (2pp→8pp) landete mit min_samples_leaf=20 HINTER 30 reinen
-    # Rauschfeatures (Rang 36/36 bei n=6k, Rang 5-20 bei n=20k). Mechanismus:
-    # Kontinuierliche Features bieten ~n Kandidaten-Schwellen — das Maximum
-    # über so viele Kandidaten findet in kleinen Blättern immer scheinbare
-    # Effekt-Heterogenität (Rauschen), während ein binäres Feature genau
-    # EINEN ehrlichen Split beisteuert. Mehr Bäume helfen dagegen NICHT
-    # (der Bias ist strukturell, keine Varianz; 300 Bäume ranken identisch
-    # oder schlechter). Große Mindest-Blätter (~2.5% der Zeilen) entziehen
-    # der Rausch-Jagd die kleinen Gruppen: binärer Moderator stabil in den
-    # Top-Rängen (n=20k: Rang 4-6 statt 5-20; n=60k: 1-6), und kontinuier-
-    # liche echte Moderatoren werden dadurch nicht schlechter (gemessen
-    # gleich gut oder besser). Gilt NUR für diesen Importance-Fit — die
-    # CATE-Modelle (CausalForest/CausalForestDML) bleiben unberührt.
-    _adaptive_leaf = int(max(20, min(len(X_np) // 40, 2500)))
-    if _adaptive_leaf > 20:
-        _logger.info(
-            "CausalForest FS: min_samples_leaf=%d (adaptiv, ~2.5%% von %d Zeilen) — "
-            "verhindert Kleine-Gruppen-Bias der Importance gegen Features mit "
-            "wenigen Splitpunkten (z. B. binäre Effekt-Moderatoren).",
-            _adaptive_leaf, len(X_np),
-        )
+    # ── Mindest-Blattgröße: fix 20 ──
+    # Historie: Zwischenzeitlich lief hier eine adaptive Blattgröße
+    # (max(20, min(n//40, 2500)), ~2.5% der Zeilen) gegen den Kleine-
+    # Gruppen-Bias der GRF-Importance (binäre Moderatoren verloren bei
+    # kleinem n gegen Schein-Heterogenität kontinuierlicher Features).
+    # Auf Nutzerwunsch ZURÜCKGEBAUT: min_samples_leaf wirkt im honest-
+    # Subsample (~45% der Zeilen, für den Split halbiert) — die
+    # effektive Sperrschwelle liegt bei Segment-Anteil ≈
+    # Blatt/(0.45·n/2). Mit der adaptiven Formel (~2.5% von n) wurden
+    # damit Moderatoren, die nur in Segmenten unter ~10% Anteil wirken,
+    # STRUKTURELL unsichtbar (Importance exakt 0, A/B-gemessen: 8%-
+    # Segment bei n=12k Rang 1 mit Blatt 20, Rang letzt mit Blatt 300)
+    # — kleine kausale Segmente flogen aus der Selektion. Trade-off
+    # bewusst akzeptiert (der Kleine-Gruppen-Bias bei kleinem n kehrt
+    # zurück); GRFs Balancedness-Regel (Kind ≥ 5% des Knotens) blockt
+    # Splits auf Segmente unter ~5% ohnehin, unabhängig vom Blatt.
+    # Fachlich gesetzte Features schützt feature_selection.always_keep.
     cf = CausalForest(
         n_estimators=100,
-        min_samples_leaf=_adaptive_leaf,
+        min_samples_leaf=20,
         random_state=seed,
         n_jobs=effective_n_jobs,
     )
