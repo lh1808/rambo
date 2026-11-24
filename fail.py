@@ -19,3 +19,11 @@ Das Kampagnencontrolling der MA21 ist ein Standardprozess und stellt die korrekt
 
 1.3.3 Aktuelle vs. historische Daten
 Das Modell τ̂ stützt sich auf historische randomisierte Experimentdaten. Die Nutzenmessung selbst nutzt den aktuellen Kundenbestand-Snapshot der jeweiligen Kampagne. Ein Re-Training des Modells auf neueren Experimentdaten erfolgt anlassbezogen; der jeweils verwendete Modellstand wird in der Einzelmessung dokumentiert.
+
+
+
+Hi Luka, Eva und ich haben das DW-Konzept nochmal gelesen. Aufbereitung und Co. alles fein. Ein Wunsch wäre noch: Beim Erkennen des Drifts und der Rekalibrierung neigt das bisherige Vorgehen u.E. zur Überschätzung. Da gäbe es diese Heilungsmöglichkeiten:
+Pauschaler Abschlag
+Ergänzen eines Retraining-Vorgehens inkl. Drift-Grenzen
+Ergänzung, dass diese Überschätzung methodisch bekannt ist und bei einer Weiterführung der Diskussion über die Deckungsbeiträge aufgegriffen werden kann (wenn im Deckungsbeitrag bereits Puffer sind muss das nicht 2x drin sein, wenn hier der Kundenwert reinkäme wäre das anders). 
+Verständlich?
